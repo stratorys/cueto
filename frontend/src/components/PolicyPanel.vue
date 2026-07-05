@@ -16,24 +16,14 @@ import type { Diagnostic } from "../api";
 import { importCompose, vetFiles } from "../api";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { useHighlight } from "../composables/useHighlight";
-import { inputEl, isChecked } from "../eventTarget";
+import { inputEl } from "../eventTarget";
 
-const { files, diagram, setPolicies } = useDiagramCanvas();
+const { files } = useDiagramCanvas();
 const { setHighlight } = useHighlight();
 
-// The governance packs offered as toggles. There is no pack registry - `security`
-// is the sole pack, wired by hand in cue/policy_check.cue. Add packs here when the
-// harness gains them.
-const AVAILABLE_PACKS = ["security"];
-const enabledPacks = computed(() => new Set(diagram.value.policies ?? []));
-
-// Toggle a pack in diagram.policies; the flush to files re-triggers the vet watch.
-function togglePack(pack: string, on: boolean) {
-  const next = new Set(enabledPacks.value);
-  if (on) next.add(pack);
-  else next.delete(pack);
-  setPolicies([...next]);
-}
+// Policies are authored by the user directly in the CUE file (diagram.policies);
+// the panel never injects a platform-default pack. The vet reads the file text, so
+// whatever packs the CUE opts into drive the checks below.
 
 // Imported infra facts (CUE text) to check drift against; null = no drift check.
 const facts = ref<string | null>(null);
@@ -104,23 +94,6 @@ watch([files, facts], scheduleVet, { deep: true });
 
 <template>
   <div class="flex flex-col gap-4 p-4 text-sm">
-    <!-- Governance packs: opt the diagram into policy checks (diagram.policies). -->
-    <div class="flex flex-col gap-1 rounded border border-slate-200 p-2">
-      <span class="font-medium text-slate-600">Policy packs</span>
-      <label
-        v-for="pack in AVAILABLE_PACKS"
-        :key="pack"
-        class="flex cursor-pointer items-center gap-2 text-slate-600"
-      >
-        <input
-          type="checkbox"
-          :checked="enabledPacks.has(pack)"
-          @change="togglePack(pack, isChecked($event))"
-        />
-        {{ pack }}
-      </label>
-    </div>
-
     <!-- Drift: check the diagram against a live docker-compose topology. -->
     <div class="flex flex-col gap-1 rounded border border-slate-200 p-2">
       <div class="flex items-center justify-between">

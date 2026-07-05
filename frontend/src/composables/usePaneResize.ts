@@ -4,26 +4,33 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-// Resizable split between a side pane and the canvas. Returns the current width,
-// a collapsed flag with a toggle, and a pointerdown handler for the divider. `side`
-// picks which edge the pane is anchored to: a left pane grows with the cursor's x,
-// a right pane grows as the cursor moves toward the left. When `storageKey` is set,
-// the width and collapsed state are view-state preferences persisted to localStorage
-// (like saved lenses) so they survive a refresh.
+// Resizable split between a pane and the canvas. Returns the current size (width
+// for a side pane, height for a top/bottom pane), a collapsed flag with a toggle,
+// and a pointerdown handler for the divider. `side` picks which edge the pane is
+// anchored to: a left pane grows with the cursor's x, a right pane as the cursor
+// moves toward the left; a bottom pane grows as the cursor moves up, a top pane
+// with the cursor's y. When `storageKey` is set, the size and collapsed state are
+// view-state preferences persisted to localStorage so they survive a refresh.
 
 import { ref } from "vue";
 
 export function usePaneResize(
   initialWidth = 560,
-  side: "left" | "right" = "left",
+  side: "left" | "right" | "top" | "bottom" = "left",
   storageKey?: string,
 ) {
+  const horizontal = side === "left" || side === "right";
   const paneWidth = ref(loadWidth(storageKey) ?? initialWidth);
   const collapsed = ref(loadCollapsed(storageKey));
 
   function onResize(event: PointerEvent) {
-    const raw = side === "left" ? event.clientX : window.innerWidth - event.clientX;
-    paneWidth.value = Math.min(Math.max(raw, 220), window.innerWidth - 320);
+    if (horizontal) {
+      const raw = side === "left" ? event.clientX : window.innerWidth - event.clientX;
+      paneWidth.value = Math.min(Math.max(raw, 220), window.innerWidth - 320);
+    } else {
+      const raw = side === "top" ? event.clientY : window.innerHeight - event.clientY;
+      paneWidth.value = Math.min(Math.max(raw, 120), window.innerHeight - 200);
+    }
   }
 
   function stopResize() {
@@ -40,7 +47,7 @@ export function usePaneResize(
     window.addEventListener("pointermove", onResize);
     window.addEventListener("pointerup", stopResize);
     document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = horizontal ? "col-resize" : "row-resize";
   }
 
   function toggleCollapse() {

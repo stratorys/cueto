@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Canvas selection and the property mutators driven by the inspector: label,
-// color, node/edge governance, policies, and resize. Every mutator commits one
+// color, node/edge governance, and resize. Every mutator commits one
 // undoable step, rebuilds the view, and flushes the model back to CUE text.
 // Module-level singleton, shared with the other canvas composables.
 
@@ -179,16 +179,6 @@ function commitEdgeReverse(id: string) {
   syncTextFromModel();
 }
 
-// Set the governance packs the diagram opts into. An empty list clears the field
-// so a bare diagram emits no `policies` key (emit() drops undefined).
-function setPolicies(policies: string[]) {
-  commit((draft) => {
-    draft.policies = policies.length ? policies : undefined;
-  });
-  rebuildGraph();
-  syncTextFromModel();
-}
-
 // Persist a node's geometry after a resize handle drag.
 export function commitNodeResize(
   id: string,
@@ -216,6 +206,5 @@ export function useSelection() {
     commitEdgeReverse,
     commitNodeGovernance,
     commitEdgeGovernance,
-    setPolicies,
   };
 }

@@ -17,8 +17,10 @@ import type { Diagram } from "../model";
 import type { DiagramDiff } from "../analysis/diff";
 import { diffDiagrams, isEmptyDiff } from "../analysis/diff";
 import { useHighlight } from "../composables/useHighlight";
+import { useProjects } from "../composables/useProjects";
 
 const { setHighlight } = useHighlight();
+const { currentProjectId } = useProjects();
 
 const versions = ref<VersionMeta[]>([]);
 const baseId = ref("");
@@ -33,8 +35,16 @@ function versionLabel(v: VersionMeta): string {
   return `${shortHash(v.version)} - ${when}`;
 }
 
-onMounted(async () => {
-  const result = await listVersions();
+// Load the current project's saved versions, defaulting the diff selectors to its
+// two newest saves. Re-run whenever the open project changes.
+async function refreshVersions() {
+  versions.value = [];
+  baseId.value = "";
+  compareId.value = "";
+  diff.value = null;
+  error.value = null;
+  if (!currentProjectId.value) return;
+  const result = await listVersions(currentProjectId.value);
   if (!result.ok) {
     error.value = result.error;
     return;
@@ -45,12 +55,15 @@ onMounted(async () => {
     compareId.value = versions.value[0].version;
     baseId.value = versions.value[1].version;
   }
-});
+}
+
+onMounted(refreshVersions);
+watch(currentProjectId, refreshVersions);
 
 // Load a version's stored data.cue and evaluate it into a concrete Diagram,
 // reusing the same eval pipeline the canvas uses (no second parser).
 async function loadDiagram(id: string): Promise<Diagram | null> {
-  const version = await readVersion(id);
+  const version = await readVersion(currentProjectId.value, id);
   if (!version.ok) {
     error.value = version.error;
     return null;

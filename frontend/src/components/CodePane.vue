@@ -9,9 +9,11 @@ SPDX-License-Identifier: MPL-2.0
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import CodeEditor from "./CodeEditor.vue";
+import ProjectSwitcher from "./ProjectSwitcher.vue";
 import type { SaveState } from "../composables/useDiagramCanvas";
 import type { EditorFile } from "../model";
 import type { Diagnostic, Hint } from "../api";
+import { promptDialog } from "../composables/useModal";
 // The hand-owned schema, inlined at build time. The dev server needs
 // server.fs.allow: ['..'] to read it from the sibling cue/ dir.
 import schemaSource from "../../../cue/schema.cue?raw";
@@ -85,10 +87,14 @@ function cycleTab(event: KeyboardEvent) {
 onMounted(() => window.addEventListener("keydown", cycleTab));
 onBeforeUnmount(() => window.removeEventListener("keydown", cycleTab));
 
-// Rename via a prompt (POC-simple). The composable re-validates and ignores an
-// invalid or colliding name.
-function promptRename(name: string) {
-  const next = window.prompt("Rename file", name);
+// Rename via the shared modal. The composable re-validates and ignores an invalid
+// or colliding name.
+async function promptRename(name: string) {
+  const next = await promptDialog({
+    title: "Rename file",
+    defaultValue: name,
+    confirmLabel: "Rename",
+  });
   if (next && next !== name) emit("renameFile", name, next);
 }
 
@@ -101,6 +107,7 @@ const button =
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-slate-900 text-slate-200">
     <div class="flex items-stretch overflow-x-auto border-b border-slate-800">
+      <ProjectSwitcher />
       <button
         v-for="file in files"
         :key="file.name"

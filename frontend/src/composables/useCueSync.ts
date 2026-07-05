@@ -20,13 +20,13 @@ import {
   formatCue,
   fromEval,
   listVersions,
-  readSeed,
   readVersion,
   rewriteFile,
   saveCue,
 } from "../api";
-import { edgesBody, nodeBody } from "../mapping";
+import { edgesBody, nodeBody, toCue } from "../mapping";
 import { useDiagram } from "../useDiagram";
+import { currentProjectId } from "./useProjects";
 import {
   activeFileName,
   edgeOwnerFile,
@@ -177,24 +177,22 @@ export async function runEval() {
   rebuildGraph();
 }
 
-// Load the persisted diagram on mount: the newest saved version if any exist,
-// else the on-disk seed data.cue. The text goes through runEval - the same
-// text -> model -> canvas pipeline typing uses - then history is cleared so the
-// first Undo can't revert to the sample the store was seeded with. On a total
-// read failure (backend unreachable) the sample seed is left in place as an
-// offline fallback.
-export async function loadInitialDiagram() {
-  let text: string | null = null;
-  const list = await listVersions();
-  if (list.ok && list.versions.length) {
-    const version = await readVersion(list.versions[0].version);
-    if (version.ok) text = version.data;
+// Load a project's diagram into the canvas: its newest saved version, or a blank
+// diagram when the project has no versions yet. The text goes through runEval -
+// the same text -> model -> canvas pipeline typing uses - then history is cleared
+// so the first Undo can't revert to the previously shown project. A transport
+// failure leaves whatever is currently shown in place.
+export async function loadProjectDiagram(projectId: string) {
+  const list = await listVersions(projectId);
+  if (!list.ok) return;
+  let text: string;
+  if (list.versions.length) {
+    const version = await readVersion(projectId, list.versions[0].version);
+    if (!version.ok) return;
+    text = version.data;
+  } else {
+    text = toCue({ nodes: [], edges: [] });
   }
-  if (text === null) {
-    const seed = await readSeed();
-    if (seed.ok) text = seed.data;
-  }
-  if (text === null) return;
   files.value = [{ name: "data.cue", text }];
   activeFileName.value = "data.cue";
   await runEval();
@@ -205,9 +203,10 @@ export async function loadInitialDiagram() {
 // invalid text surfaces the same diagnostics as a live eval rather than saving.
 async function save() {
   saveState.value = { status: "saving" };
-  // Versions remain single-file: persist the primary data.cue.
+  // Versions remain single-file: persist the primary data.cue into the current
+  // project's store.
   const primary = files.value.find((f) => f.name === primaryFile());
-  const result = await saveCue(primary?.text ?? "");
+  const result = await saveCue(currentProjectId.value, primary?.text ?? "");
   if (!result.ok) {
     evalError.value = result.error;
     diagnostics.value = result.diagnostics;
@@ -248,6 +247,6 @@ export function useCueSync() {
     save,
     format,
     saveState,
-    loadInitialDiagram,
+    loadProjectDiagram,
   };
 }
