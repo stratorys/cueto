@@ -1,2 +1,5 @@
 # Local environment overrides. Commit .env.example as the template instead.
 .env
+
+# Saved diagram versions (runtime data, default VERSIONS_DIR).
+/versions/
