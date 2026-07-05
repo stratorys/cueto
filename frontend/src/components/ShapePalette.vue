@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 import type { Component } from "vue";
 import { Square, Circle, Diamond, Slash, Type, Table, Box, Waypoints } from "lucide-vue-next";

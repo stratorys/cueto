@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Mapping between the diagram model and its two projections:
 //  - model -> Vue Flow nodes/edges (the canvas view)
 //  - model -> CUE text (the `data.cue` body, graph -> CUE direction)

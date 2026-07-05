@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Starter policy pack: security zones and ownership. A pack is an importable
 // module that checks a diagram structurally and produces a list of violations.
 //

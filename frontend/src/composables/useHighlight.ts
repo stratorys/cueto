@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Cross-panel highlight: one shared "selection" over the canvas, driven by the
 // inspector panels (analysis / history / query). Last write wins; every panel
 // clears it on tab-switch / unmount so highlights never linger.

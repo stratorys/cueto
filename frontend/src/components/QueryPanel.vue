@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 // Query bar + saved lenses: filter the model into a subgraph and dim the rest on
 // the canvas. A query can be saved as a named lens (localStorage).

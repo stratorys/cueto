@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Command backend serves CUE evaluation for the diagram app.
 //
 // The hand-owned schema.cue is loaded fresh from disk (CUE_DIR, default ../cue)

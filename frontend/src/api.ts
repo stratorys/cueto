@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // HTTP client for the Go CUE backend.
 // Base URL is configurable; defaults to the local backend on :8091.
 

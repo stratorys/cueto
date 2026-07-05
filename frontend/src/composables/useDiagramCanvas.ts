@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Canvas orchestration: one place that couples the JSON model, the Vue Flow
 // view, and the CUE text. Module-level singleton so App (CodePane) and
 // DiagramCanvas share one instance.

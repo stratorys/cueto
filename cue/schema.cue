@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Hand-written schema. The canvas never rewrites this file.
 // data.cue holds the concrete diagram instance and is the only file the
 // canvas round-trips.

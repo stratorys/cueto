@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // buildDeco is pure (RawAnnotation[] + doc -> DecorationSet) and never touches the
 // DOM, so it runs under the node test env. These tests lock in the runtime
 // invariants CodeMirror would otherwise only enforce with a throw: ranges in

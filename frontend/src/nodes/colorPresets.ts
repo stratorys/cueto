@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Shared color presets for the node color popover (fill + border). Fill presets
 // are soft tints; "None" clears the fill back to the default. Border presets are
 // saturated; "None" is a transparent (invisible) border.

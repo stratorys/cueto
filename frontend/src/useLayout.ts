@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Auto-layout via elkjs. Pure translation between the diagram model and ELK: it
 // builds a hierarchy-aware ELK graph (containers become nested ELK nodes, edges
 // are attached under the lowest common ancestor of their endpoints), runs the

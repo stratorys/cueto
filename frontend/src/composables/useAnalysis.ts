@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Graph-analysis state for the inspector's Analysis tab. Module-level singleton
 // (matches useDiagram / useHighlight): derives SPOF / cycle / orphan results
 // from the live model and drives the canvas highlight for blast-radius and

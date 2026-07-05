@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Canvas -> code focus: tint the CUE block of the node selected on the canvas.
 // Mirrors editorAnnotations.ts - one StateField of line decorations, fed by a
 // single StateEffect. The tint maps through edits so it tracks the text until the

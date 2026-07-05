@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // The "x-ray" decoration layer for the CUE editor: renders diagnostics and inlay
 // hints as ghost text that lives in the editor but never in the document.
 //

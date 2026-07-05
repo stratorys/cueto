@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Diagram store: the JSON model is the source of truth.
 // Edits go through commit(), which snapshots the previous state for undo.
 // Single-canvas POC, so module-level singleton state is fine.

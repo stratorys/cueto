@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 // Policy + drift panel. Re-vets the current CUE (debounced) and groups the
 // findings: schema errors, policy-pack violations, and infra drift. Rows anchored

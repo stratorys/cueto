@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Locate an element's CUE block by scanning the current editor text (not a
 // model-derived source map), so it stays correct after hand-edits, `Format`, or
 // loading a saved version. A node is emitted by toCue() as a struct keyed by its

@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Resizable split between a side pane and the canvas. Returns the current width
 // and a pointerdown handler for the divider. `side` picks which edge the pane is
 // anchored to: a left pane grows with the cursor's x, a right pane grows as the

@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Command check is the CI entrypoint for architecture validation. It evaluates a
 // diagram (data.cue) against the schema, its opted-in policy packs, and - when
 // infra facts are supplied - drift against the live topology, then exits nonzero

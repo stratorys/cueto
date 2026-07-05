@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Saved lenses: named queries persisted client-side. Lenses are view state, not
 // model state, so they live in localStorage - never in the content-addressed
 // version files (immutable, hashed) or data.cue (comments are dropped on the

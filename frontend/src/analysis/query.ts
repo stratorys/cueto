@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Query the diagram model as a filtered subgraph. A query is a space-separated
 // list of tokens, ANDed together. Pure functions over the typed model - no CUE
 // round-trip, since the model is small typed JSON already in the client.

@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Policy harness. Runs each opted-in pack against the concrete diagram and
 // exposes the result as `policyReport`, a sibling of `diagram`. Because /eval
 // marshals only `diagram`, this field never changes the eval output; Vet reads it

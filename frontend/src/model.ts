@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Diagram model - the JSON source of truth.
 // Mirrors the CUE #Diagram / #Node / #Edge shape. Every node and edge carries a
 // stable id so edits round-trip to CUE.

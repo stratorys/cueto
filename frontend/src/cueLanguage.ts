@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // A minimal CUE language mode for CodeMirror 6.
 // It is a lexer, not a parser - enough to color the two files this app shows
 // (generated data.cue, hand-owned schema.cue). The editor panel is dark in both

@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 // Property editor for the selected node or edge. Authors the governance metadata
 // (role/owner/region/zone on nodes; card/call/protocol/sync on edges) that the

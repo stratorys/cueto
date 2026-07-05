@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 // Right-hand inspector: three tabs over the same diagram model, sharing one
 // canvas highlight. Switching tabs clears the highlight so one lens never leaks

@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Normalized topology that every importer (docker-compose first, then k8s,
 // terraform, openapi) emits. The drift harness compares a diagram against an
 // #Actual value overlaid by the backend during /vet.

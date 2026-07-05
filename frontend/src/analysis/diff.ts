@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Model-level diff of two diagram versions. Unlike a text diff, this keys nodes
 // and edges by their stable id and reports semantic changes: added/removed
 // nodes, per-field node changes, added/removed edges, and edge rewires (same

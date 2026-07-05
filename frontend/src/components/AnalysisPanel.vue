@@ -1,3 +1,11 @@
+<!--
+cueto
+
+Copyright: 2026, Lucas Jahier - Stratorys
+License: Mozilla Public License v2.0 (MPL v2.0)
+SPDX-License-Identifier: MPL-2.0
+-->
+
 <script setup lang="ts">
 // Graph analysis: single points of failure, dependency cycles, orphans, and a
 // what-if simulator that highlights the impact set of taking nodes "down".
