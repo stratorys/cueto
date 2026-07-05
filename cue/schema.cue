@@ -6,16 +6,42 @@ package diagram
 #Diagram: {
 	nodes: [ID=string]: #Node & {id: ID}
 	edges: [...#Edge]
+	// Governance packs this diagram opts into, checked by the policy harness.
+	// e.g. ["security"]. Defaults to none so existing diagrams validate unchanged
+	// and the harness opt-in guard is always concrete.
+	policies: [...string] | *[]
 }
 
 #Node: {
-	id:    string
-	type:  "entity" | "table" | "process" | "decision"
-	x:     number
-	y:     number
+	id:   string
+	type: "entity" | "table" | "process" | "decision" | "shape" | "container"
+	// Id of the containing node when nested; a child's x/y are relative to it.
+	parent?: string
+	x:       number
+	y:       number
+	// Optional explicit size in graph units; the canvas falls back to a
+	// content-derived size when these are absent.
+	width?:  number
+	height?: number
 	label: string
 	// Typed payload for a DB table.
 	columns?: [...#Column]
+	// Annotation payload, set only when type is "shape".
+	shape?: "rectangle" | "ellipse" | "diamond" | "line" | "text"
+	// Optional per-shape colors (any CSS color string).
+	fill?:   string
+	stroke?: string
+	// Line only: drag direction (true = "\", absent = "/").
+	flip?:   bool
+	icon?:   string
+
+	// Domain-architecture metadata (all optional). `role` governs (drives policy
+	// and drift), distinct from the visual `type` which drives rendering. Without
+	// these, rules like "no service crosses a PCI boundary" are not expressible.
+	role?:   "service" | "database" | "queue" | "cache" | "gateway" | "external"
+	owner?:  string // team id, e.g. "payments"
+	region?: string // deployment region, e.g. "eu-west-1"
+	zone?:   string // trust boundary, e.g. "pci" | "public" | "dmz"
 }
 
 #Column: {
@@ -31,6 +57,12 @@ package diagram
 	sourceHandle?: string
 	target:        string
 	targetHandle?: string
-	kind:          "relation" | "arrow" | "inherit"
+	kind:          "relation" | "arrow" | "inherit" | "line"
 	card?:         "1-1" | "1-n" | "n-n"
+
+	// Typed-relationship metadata (all optional), for architecture modeling and
+	// drift checks. `call` names the interaction, `sync` marks synchronous calls.
+	call?:     "calls" | "reads" | "writes" | "publishes" | "subscribes"
+	protocol?: "http" | "grpc" | "amqp" | "sql"
+	sync?:     bool
 }
