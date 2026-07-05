@@ -56,6 +56,12 @@ export interface RewriteOk {
   content: string;
 }
 
+// Result of /repl: the concrete value of a standalone CUE snippet, as JSON.
+export interface ReplOk {
+  ok: true;
+  result: unknown;
+}
+
 export interface EvalErr {
   ok: false;
   error: string;
@@ -100,6 +106,32 @@ export interface VersionDataOk {
   ok: true;
   data: string;
 }
+
+// One project: its slug id, display name, and timestamps (ISO 8601).
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectsOk {
+  ok: true;
+  projects: ProjectMeta[];
+}
+
+export interface ProjectOk {
+  ok: true;
+  project: ProjectMeta;
+}
+
+// A bare success with no payload (project delete).
+export interface OkResult {
+  ok: true;
+}
+
+// What a new project's canvas starts from: empty, or a copy of the seed sample.
+export type ProjectSeed = "blank" | "sample";
 
 // Render diagnostics into a single human-readable string, prefixing positions
 // when present.
@@ -175,6 +207,31 @@ async function get<T>(
   return errorResult(errorBody, response.status);
 }
 
+// sendJSON is post generalized to any mutating method (PATCH/DELETE), with an
+// optional body. Same transport + error shaping as post/get.
+async function sendJSON<T>(
+  method: string,
+  path: string,
+  body: object | undefined,
+  onOk: (response: Response) => Promise<T>,
+): Promise<({ ok: true } & T) | EvalErr> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    return { ok: false, error: `Cannot reach backend: ${String(error)}`, diagnostics: [] };
+  }
+  if (response.ok) {
+    return { ok: true, ...(await onOk(response)) };
+  }
+  const errorBody = await readJson<{ diagnostics?: Diagnostic[]; error?: string }>(response);
+  return errorResult(errorBody, response.status);
+}
+
 // evalCue evaluates data.cue against schema.cue and returns the diagram JSON,
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
@@ -203,6 +260,17 @@ export function evalFiles(files: EditorFile[]): Promise<EvalFilesOk | EvalErr> {
   });
 }
 
+// evalExpr evaluates a standalone CUE snippet for the REPL scratchpad and returns
+// its concrete value as JSON, or diagnostics on a compile/concreteness error.
+// Nothing is persisted: the snippet never joins the editor files, the schema, or
+// any saved version.
+export function evalExpr(source: string): Promise<ReplOk | EvalErr> {
+  return post("/repl", { source }, async (response) => {
+    const body = await readJson<{ result?: unknown }>(response);
+    return { result: body.result ?? null };
+  });
+}
+
 // rewriteFile splices canvas edits into one editable file's source and returns
 // the new text, preserving hand-written CUE and comments. `nodes` maps a node id
 // to its CUE struct body (upserted); `deletes` lists ids to remove; `edges`, when
@@ -220,10 +288,11 @@ export function rewriteFile(op: {
   });
 }
 
-// saveCue validates data and, when valid, persists it as an immutable version,
-// returning the version id (content hash). Invalid data comes back as diagnostics.
-export function saveCue(data: string): Promise<SaveOk | EvalErr> {
-  return post("/save", { data }, async (response) => {
+// saveCue validates data and, when valid, persists it as an immutable version of
+// the given project, returning the version id. Invalid data comes back as
+// diagnostics.
+export function saveCue(projectId: string, data: string): Promise<SaveOk | EvalErr> {
+  return post(`/projects/${projectId}/save`, { data }, async (response) => {
     const body = await readJson<{ version?: string }>(response);
     return { version: body.version ?? "" };
   });
@@ -270,20 +339,50 @@ export function formatCue(source: string): Promise<FormatOk | EvalErr> {
   });
 }
 
-// listVersions returns the saved versions newest-first for the history view.
-export function listVersions(): Promise<VersionsOk | EvalErr> {
-  return get("/versions", async (response) => {
+// listVersions returns a project's saved versions newest-first for the history view.
+export function listVersions(projectId: string): Promise<VersionsOk | EvalErr> {
+  return get(`/projects/${projectId}/versions`, async (response) => {
     const body = await readJson<{ versions?: VersionMeta[] }>(response);
     return { versions: body.versions ?? [] };
   });
 }
 
-// readVersion returns one version's stored data.cue text by its content hash.
-export function readVersion(id: string): Promise<VersionDataOk | EvalErr> {
-  return get(`/versions/${id}`, async (response) => {
+// readVersion returns one of a project's versions' stored data.cue text by its
+// content hash.
+export function readVersion(projectId: string, id: string): Promise<VersionDataOk | EvalErr> {
+  return get(`/projects/${projectId}/versions/${id}`, async (response) => {
     const body = await readJson<{ data?: string }>(response);
     return { data: body.data ?? "" };
   });
+}
+
+// listProjects returns the registered projects (newest-updated first).
+export function listProjects(): Promise<ProjectsOk | EvalErr> {
+  return get("/projects", async (response) => {
+    const body = await readJson<{ projects?: ProjectMeta[] }>(response);
+    return { projects: body.projects ?? [] };
+  });
+}
+
+// createProject registers a new project seeded "blank" or "sample".
+export function createProject(name: string, seed: ProjectSeed): Promise<ProjectOk | EvalErr> {
+  return post("/projects", { name, seed }, async (response) => {
+    const body = await readJson<{ project?: ProjectMeta }>(response);
+    return { project: body.project ?? { id: "", name } };
+  });
+}
+
+// renameProject changes a project's display name.
+export function renameProject(id: string, name: string): Promise<ProjectOk | EvalErr> {
+  return sendJSON("PATCH", `/projects/${id}`, { name }, async (response) => {
+    const body = await readJson<{ project?: ProjectMeta }>(response);
+    return { project: body.project ?? { id, name } };
+  });
+}
+
+// deleteProject removes a project and its version store.
+export function deleteProject(id: string): Promise<OkResult | EvalErr> {
+  return sendJSON("DELETE", `/projects/${id}`, undefined, async () => ({}));
 }
 
 // readSeed returns the on-disk seed data.cue text, the mount-time fallback when
