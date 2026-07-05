@@ -14,6 +14,7 @@ import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import type { ShapeKind } from "../model";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
+import { elementTarget } from "../eventTarget";
 import ShapeNode from "../nodes/ShapeNode.vue";
 import TableNode from "../nodes/TableNode.vue";
 import ContainerNode from "../nodes/ContainerNode.vue";
@@ -55,6 +56,11 @@ const {
   layout,
 } = useDiagramCanvas();
 
+const SHAPE_KINDS: ShapeKind[] = ["rectangle", "ellipse", "diamond", "line", "text"];
+function isShapeKind(value: string): value is ShapeKind {
+  return SHAPE_KINDS.some((k) => k === value);
+}
+
 // Drag a shape or a table from the palette: drop it at the drop point.
 function onDrop(event: DragEvent) {
   const kind = event.dataTransfer?.getData("application/shape");
@@ -67,7 +73,7 @@ function onDrop(event: DragEvent) {
     placeContainer(event.clientX, event.clientY);
     return;
   }
-  placeShape(kind as ShapeKind, event.clientX, event.clientY);
+  if (isShapeKind(kind)) placeShape(kind, event.clientX, event.clientY);
 }
 
 // Palette table button click: drop a table at the canvas center.
@@ -132,13 +138,13 @@ function endpointUnder(
   const el = document.elementFromPoint(clientX, clientY);
   if (overlay) overlay.style.pointerEvents = prev;
 
-  const handle = el?.closest?.(".vue-flow__handle") as HTMLElement | null;
+  const handle = el?.closest?.(".vue-flow__handle") ?? null;
   if (handle) {
     const nodeId = handle.getAttribute("data-nodeid");
     const handleId = handle.getAttribute("data-handleid");
     if (nodeId && handleId) return { nodeId, handleId };
   }
-  const node = el?.closest?.(".vue-flow__node") as HTMLElement | null;
+  const node = el?.closest?.(".vue-flow__node") ?? null;
   // Only shapes and containers expose the t/r/b/l side handles a nearest-side
   // snap would target; tables use per-column handles, so require an exact hit.
   if (
@@ -158,7 +164,7 @@ function endpointUnder(
 
 function onDrawStart(event: PointerEvent) {
   if (!drawTool.value) return;
-  (event.target as HTMLElement).setPointerCapture(event.pointerId);
+  elementTarget(event)?.setPointerCapture(event.pointerId);
   draw.value = { x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY };
 }
 function onDrawMove(event: PointerEvent) {
@@ -190,7 +196,7 @@ function onKeydown(event: KeyboardEvent) {
       disarmTool();
       return;
     }
-    const el = event.target as HTMLElement | null;
+    const el = elementTarget(event);
     if (el?.closest?.(".cm-editor") || el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") {
       return;
     }
@@ -201,7 +207,7 @@ function onKeydown(event: KeyboardEvent) {
     return;
   }
   // Let the CUE editor keep its own text undo/redo when it has focus.
-  const target = event.target as HTMLElement | null;
+  const target = elementTarget(event);
   if (target?.closest?.(".cm-editor")) return;
 
   const mod = event.metaKey || event.ctrlKey;

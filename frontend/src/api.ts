@@ -109,14 +109,24 @@ function summarize(diagnostics: Diagnostic[]): string {
     .join("\n");
 }
 
+// The one JSON trust boundary. Parse a response body into the expected shape,
+// falling back to an empty object when the body is absent or malformed. The
+// `as T` here is the single place an untyped payload is shaped; every endpoint
+// reads its reply through this helper rather than casting inline.
+async function readJson<T>(response: Response): Promise<T> {
+  return (await response.json().catch(() => ({}))) as T;
+}
+
 // Build an EvalErr from an error response body. Falls back to the legacy `error`
 // field, then to the HTTP status, so a transition or proxy error still surfaces.
-function errorResult(body: unknown, status: number): EvalErr {
-  const b = (body ?? {}) as { diagnostics?: Diagnostic[]; error?: string };
-  const diagnostics = b.diagnostics ?? [];
+function errorResult(
+  body: { diagnostics?: Diagnostic[]; error?: string },
+  status: number,
+): EvalErr {
+  const diagnostics = body.diagnostics ?? [];
   const error = diagnostics.length
     ? summarize(diagnostics)
-    : (b.error ?? `HTTP ${status}`);
+    : (body.error ?? `HTTP ${status}`);
   return { ok: false, error, diagnostics };
 }
 
@@ -126,7 +136,7 @@ function errorResult(body: unknown, status: number): EvalErr {
 // transport rules (base URL, headers, error decoding) live in one place.
 async function post<T>(
   path: string,
-  body: unknown,
+  body: object,
   onOk: (response: Response) => Promise<T>,
 ): Promise<({ ok: true } & T) | EvalErr> {
   let response: Response;
@@ -142,7 +152,7 @@ async function post<T>(
   if (response.ok) {
     return { ok: true, ...(await onOk(response)) };
   }
-  const errorBody = await response.json().catch(() => ({}));
+  const errorBody = await readJson<{ diagnostics?: Diagnostic[]; error?: string }>(response);
   return errorResult(errorBody, response.status);
 }
 
@@ -161,7 +171,7 @@ async function get<T>(
   if (response.ok) {
     return { ok: true, ...(await onOk(response)) };
   }
-  const errorBody = await response.json().catch(() => ({}));
+  const errorBody = await readJson<{ diagnostics?: Diagnostic[]; error?: string }>(response);
   return errorResult(errorBody, response.status);
 }
 
@@ -169,10 +179,7 @@ async function get<T>(
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
   return post("/eval", { data }, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as {
-      diagram?: unknown;
-      hints?: Hint[];
-    };
+    const body = await readJson<{ diagram?: unknown; hints?: Hint[] }>(response);
     return { diagram: body.diagram, hints: body.hints ?? [] };
   });
 }
@@ -183,11 +190,11 @@ export function evalCue(data: string): Promise<EvalOk | EvalErr> {
 export function evalFiles(files: EditorFile[]): Promise<EvalFilesOk | EvalErr> {
   const body = { files: files.map((f) => ({ name: f.name, content: f.text })) };
   return post("/eval", body, async (response) => {
-    const parsed = (await response.json().catch(() => ({}))) as {
+    const parsed = await readJson<{
       diagram?: unknown;
       hints?: Hint[];
       provenance?: Provenance;
-    };
+    }>(response);
     return {
       diagram: parsed.diagram,
       hints: parsed.hints ?? [],
@@ -208,7 +215,7 @@ export function rewriteFile(op: {
   edges?: string;
 }): Promise<RewriteOk | EvalErr> {
   return post("/rewrite", op, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { content?: string };
+    const body = await readJson<{ content?: string }>(response);
     return { content: body.content ?? "" };
   });
 }
@@ -217,7 +224,7 @@ export function rewriteFile(op: {
 // returning the version id (content hash). Invalid data comes back as diagnostics.
 export function saveCue(data: string): Promise<SaveOk | EvalErr> {
   return post("/save", { data }, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { version?: string };
+    const body = await readJson<{ version?: string }>(response);
     return { version: body.version ?? "" };
   });
 }
@@ -229,10 +236,7 @@ export function saveCue(data: string): Promise<SaveOk | EvalErr> {
 export function vetCue(data: string, facts?: string): Promise<VetOk | EvalErr> {
   const body = facts === undefined ? { data } : { data, facts };
   return post("/vet", body, async (response) => {
-    const parsed = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      diagnostics?: Diagnostic[];
-    };
+    const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
 }
@@ -243,10 +247,7 @@ export function vetFiles(files: EditorFile[], facts?: string): Promise<VetOk | E
   const mapped = files.map((f) => ({ name: f.name, content: f.text }));
   const body = facts === undefined ? { files: mapped } : { files: mapped, facts };
   return post("/vet", body, async (response) => {
-    const parsed = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      diagnostics?: Diagnostic[];
-    };
+    const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
 }
@@ -255,7 +256,7 @@ export function vetFiles(files: EditorFile[], facts?: string): Promise<VetOk | E
 // to check the diagram against with vetCue(data, facts).
 export function importCompose(source: string): Promise<ImportOk | EvalErr> {
   return post("/import/compose", { source }, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { facts?: string };
+    const body = await readJson<{ facts?: string }>(response);
     return { facts: body.facts ?? "" };
   });
 }
@@ -264,7 +265,7 @@ export function importCompose(source: string): Promise<ImportOk | EvalErr> {
 // Formatting is semantics-preserving, so the caller need not re-evaluate.
 export function formatCue(source: string): Promise<FormatOk | EvalErr> {
   return post("/format", { source }, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { formatted?: string };
+    const body = await readJson<{ formatted?: string }>(response);
     return { formatted: body.formatted ?? "" };
   });
 }
@@ -272,7 +273,7 @@ export function formatCue(source: string): Promise<FormatOk | EvalErr> {
 // listVersions returns the saved versions newest-first for the history view.
 export function listVersions(): Promise<VersionsOk | EvalErr> {
   return get("/versions", async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { versions?: VersionMeta[] };
+    const body = await readJson<{ versions?: VersionMeta[] }>(response);
     return { versions: body.versions ?? [] };
   });
 }
@@ -280,7 +281,7 @@ export function listVersions(): Promise<VersionsOk | EvalErr> {
 // readVersion returns one version's stored data.cue text by its content hash.
 export function readVersion(id: string): Promise<VersionDataOk | EvalErr> {
   return get(`/versions/${id}`, async (response) => {
-    const body = (await response.json().catch(() => ({}))) as { data?: string };
+    const body = await readJson<{ data?: string }>(response);
     return { data: body.data ?? "" };
   });
 }

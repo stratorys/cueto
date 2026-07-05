@@ -20,6 +20,7 @@ import type {
   NodeRole,
 } from "../model";
 import { commitNodeLabel, useDiagramCanvas } from "../composables/useDiagramCanvas";
+import { fieldValue, isChecked } from "../eventTarget";
 
 const { selectedElement, diagram, commitNodeGovernance, commitEdgeGovernance } =
   useDiagramCanvas();
@@ -45,9 +46,11 @@ const PROTOCOLS: EdgeProtocol[] = ["http", "grpc", "amqp", "sql"];
 // Free-string `zone` examples from schema.cue; offered as suggestions, not enforced.
 const ZONES = ["pci", "public", "dmz"];
 
-// Value of a <select>/<input>, or undefined when blank (clears the field).
-function val(event: Event): string | undefined {
-  return (event.target as HTMLSelectElement | HTMLInputElement).value || undefined;
+// Narrow a <select> value to one of a typed option list, or undefined when blank
+// or not a member of the list.
+function pick<T extends string>(event: Event, allowed: readonly T[]): T | undefined {
+  const value = fieldValue(event);
+  return value === undefined ? undefined : allowed.find((option) => option === value);
 }
 
 function setNode(patch: Parameters<typeof commitNodeGovernance>[1]) {
@@ -80,7 +83,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
           class="rounded border border-slate-300 px-2 py-1"
           placeholder="node label"
           :value="node.label"
-          @change="commitNodeLabel(node.id, ($event.target as HTMLInputElement).value)"
+          @change="commitNodeLabel(node.id, fieldValue($event) ?? '')"
         />
       </label>
 
@@ -89,7 +92,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         <select
           class="rounded border border-slate-300 px-2 py-1"
           :value="node.role ?? ''"
-          @change="setNode({ role: val($event) as NodeRole | undefined })"
+          @change="setNode({ role: pick($event, ROLES) })"
         >
           <option value="">(unset)</option>
           <option v-for="r in ROLES" :key="r" :value="r">{{ r }}</option>
@@ -102,7 +105,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
           class="rounded border border-slate-300 px-2 py-1"
           placeholder="team id, e.g. payments"
           :value="node.owner ?? ''"
-          @change="setNode({ owner: val($event) })"
+          @change="setNode({ owner: fieldValue($event) })"
         />
       </label>
 
@@ -112,7 +115,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
           class="rounded border border-slate-300 px-2 py-1"
           placeholder="e.g. eu-west-1"
           :value="node.region ?? ''"
-          @change="setNode({ region: val($event) })"
+          @change="setNode({ region: fieldValue($event) })"
         />
       </label>
 
@@ -123,7 +126,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
           list="zone-suggestions"
           placeholder="trust boundary, e.g. pci"
           :value="node.zone ?? ''"
-          @change="setNode({ zone: val($event) })"
+          @change="setNode({ zone: fieldValue($event) })"
         />
         <datalist id="zone-suggestions">
           <option v-for="z in ZONES" :key="z" :value="z" />
@@ -145,7 +148,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         <select
           class="rounded border border-slate-300 px-2 py-1"
           :value="edge.card ?? ''"
-          @change="setEdge({ card: val($event) as EdgeCard | undefined })"
+          @change="setEdge({ card: pick($event, CARDS) })"
         >
           <option value="">(unset)</option>
           <option v-for="c in CARDS" :key="c" :value="c">{{ c }}</option>
@@ -157,7 +160,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         <select
           class="rounded border border-slate-300 px-2 py-1"
           :value="edge.call ?? ''"
-          @change="setEdge({ call: val($event) as EdgeCall | undefined })"
+          @change="setEdge({ call: pick($event, CALLS) })"
         >
           <option value="">(unset)</option>
           <option v-for="c in CALLS" :key="c" :value="c">{{ c }}</option>
@@ -169,7 +172,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         <select
           class="rounded border border-slate-300 px-2 py-1"
           :value="edge.protocol ?? ''"
-          @change="setEdge({ protocol: val($event) as EdgeProtocol | undefined })"
+          @change="setEdge({ protocol: pick($event, PROTOCOLS) })"
         >
           <option value="">(unset)</option>
           <option v-for="p in PROTOCOLS" :key="p" :value="p">{{ p }}</option>
@@ -180,7 +183,7 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         <input
           type="checkbox"
           :checked="edge.sync ?? false"
-          @change="setEdge({ sync: ($event.target as HTMLInputElement).checked })"
+          @change="setEdge({ sync: isChecked($event) })"
         />
         <span class="font-medium text-slate-600">Synchronous</span>
       </label>

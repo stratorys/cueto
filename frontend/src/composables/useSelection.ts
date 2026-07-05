@@ -1,0 +1,150 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
+// Canvas selection and the property mutators driven by the inspector: label,
+// color, node/edge governance, policies, and resize. Every mutator commits one
+// undoable step, rebuilds the view, and flushes the model back to CUE text.
+// Module-level singleton, shared with the other canvas composables.
+
+import { computed, ref, watch } from "vue";
+import type { DiagramEdge, DiagramNode } from "../model";
+import { useDiagram } from "../useDiagram";
+import { store } from "./flowStore";
+import { rebuildGraph } from "./useGraphView";
+import { syncTextFromModel } from "./useCueSync";
+
+const { diagram, commit } = useDiagram();
+
+// Id of the node or edge currently selected on the canvas, or null. Drives the
+// code pane's block tint (canvas -> code focus). Empty selection -> null.
+export const selectedElementId = ref<string | null>(null);
+
+// Track the selected node or edge so the code pane can tint its block. Both
+// getters are reactive, so a click, a box-select, and a deselect all flow through
+// here; a node wins if both are somehow selected. Empty selection -> null.
+watch(
+  [() => store.getSelectedNodes.value, () => store.getSelectedEdges.value],
+  ([selNodes, selEdges]) => {
+    selectedElementId.value = selNodes[0]?.id ?? selEdges[0]?.id ?? null;
+  },
+);
+
+// The selected node or edge resolved against the model, for the inspector's
+// property editor. null when nothing (or a since-removed element) is selected.
+export const selectedElement = computed<
+  | { kind: "node"; node: DiagramNode }
+  | { kind: "edge"; edge: DiagramEdge }
+  | null
+>(() => {
+  const id = selectedElementId.value;
+  if (!id) return null;
+  const node = diagram.value.nodes.find((n) => n.id === id);
+  if (node) return { kind: "node", node };
+  const edge = diagram.value.edges.find((e) => e.id === id);
+  return edge ? { kind: "edge", edge } : null;
+});
+
+// Persist a node's label after inline (double-click) editing.
+export function commitNodeLabel(id: string, label: string) {
+  commit((draft) => {
+    const target = draft.nodes.find((n) => n.id === id);
+    if (target) target.label = label;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Persist a shape's fill and/or border color from the selection popover. A patch
+// value of undefined clears that field (back to the default look).
+export function commitNodeColor(
+  id: string,
+  patch: { fill?: string; stroke?: string },
+) {
+  commit((draft) => {
+    const target = draft.nodes.find((n) => n.id === id);
+    if (!target) return;
+    if ("fill" in patch) target.fill = patch.fill;
+    if ("stroke" in patch) target.stroke = patch.stroke;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Persist a node's governance metadata from the inspector. A field present in
+// the patch is set, or cleared when its value is empty (so data.cue stays minimal
+// and the field falls back to its optional-absent default). Mirrors
+// commitNodeColor's "key in patch" clear-semantics.
+function commitNodeGovernance(
+  id: string,
+  patch: Partial<Pick<DiagramNode, "role" | "owner" | "region" | "zone">>,
+) {
+  commit((draft) => {
+    const target = draft.nodes.find((n) => n.id === id);
+    if (!target) return;
+    if ("role" in patch) target.role = patch.role || undefined;
+    if ("owner" in patch) target.owner = patch.owner || undefined;
+    if ("region" in patch) target.region = patch.region || undefined;
+    if ("zone" in patch) target.zone = patch.zone || undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Persist an edge's governance metadata from the inspector. Same clear-on-empty
+// semantics as commitNodeGovernance; a false `sync` clears the field.
+function commitEdgeGovernance(
+  id: string,
+  patch: Partial<Pick<DiagramEdge, "card" | "call" | "protocol" | "sync">>,
+) {
+  commit((draft) => {
+    const target = draft.edges.find((e) => e.id === id);
+    if (!target) return;
+    if ("card" in patch) target.card = patch.card || undefined;
+    if ("call" in patch) target.call = patch.call || undefined;
+    if ("protocol" in patch) target.protocol = patch.protocol || undefined;
+    if ("sync" in patch) target.sync = patch.sync || undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Set the governance packs the diagram opts into. An empty list clears the field
+// so a bare diagram emits no `policies` key (emit() drops undefined).
+function setPolicies(policies: string[]) {
+  commit((draft) => {
+    draft.policies = policies.length ? policies : undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Persist a node's geometry after a resize handle drag.
+export function commitNodeResize(
+  id: string,
+  params: { x: number; y: number; width: number; height: number },
+) {
+  commit((draft) => {
+    const target = draft.nodes.find((n) => n.id === id);
+    if (target) {
+      target.x = params.x;
+      target.y = params.y;
+      target.width = Math.round(params.width);
+      target.height = Math.round(params.height);
+    }
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+export function useSelection() {
+  return {
+    selectedElementId,
+    selectedElement,
+    commitNodeGovernance,
+    commitEdgeGovernance,
+    setPolicies,
+  };
+}

@@ -21,7 +21,7 @@
 // without changes here. Result edges are the induced subgraph (both endpoints
 // matched), except n-n which contributes its edges explicitly.
 
-import type { Diagram } from "../model";
+import type { Diagram, DiagramNode } from "../model";
 import { orphans } from "./graph";
 
 export interface QueryResult {
@@ -76,7 +76,7 @@ function matchToken(diagram: Diagram, token: string): TokenMatch {
   if (token === "external") {
     const nodes = new Set(
       diagram.nodes
-        .filter((n) => (n as unknown as Record<string, unknown>).role === "external")
+        .filter((n) => n.role === "external")
         .map((n) => n.id),
     );
     return { nodes, edges: new Set() };
@@ -85,7 +85,7 @@ function matchToken(diagram: Diagram, token: string): TokenMatch {
     const nodes = new Set<string>();
     const edges = new Set<string>();
     for (const edge of diagram.edges) {
-      if ((edge as unknown as Record<string, unknown>).card === "n-n") {
+      if (edge.card === "n-n") {
         nodes.add(edge.source);
         nodes.add(edge.target);
         edges.add(edge.id);
@@ -104,8 +104,10 @@ function matchToken(diagram: Diagram, token: string): TokenMatch {
 
   const nodes = new Set<string>();
   for (const node of diagram.nodes) {
-    const property = (node as unknown as Record<string, unknown>)[field];
-    if (property === undefined || property === null) continue;
+    // A field token may name any node property; a non-key string simply misses
+    // (yields undefined). Casting the key keeps the value fully typed - no unknown.
+    const property = node[field as keyof DiagramNode];
+    if (property === undefined) continue;
     const text = String(property);
     const hit = substring ? text.toLowerCase().includes(value) : text === value;
     if (hit) nodes.add(node.id);

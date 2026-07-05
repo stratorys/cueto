@@ -16,6 +16,7 @@ import type { Diagnostic } from "../api";
 import { importCompose, vetFiles } from "../api";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { useHighlight } from "../composables/useHighlight";
+import { inputEl, isChecked } from "../eventTarget";
 
 const { files, diagram, setPolicies } = useDiagramCanvas();
 const { setHighlight } = useHighlight();
@@ -42,7 +43,8 @@ const infraError = ref<string | null>(null);
 // Load a docker-compose file, import it to facts, and re-vet (the facts watcher
 // fires the drift check).
 async function loadInfra(event: Event) {
-  const input = event.target as HTMLInputElement;
+  const input = inputEl(event);
+  if (!input) return;
   const file = input.files?.[0];
   input.value = ""; // allow re-selecting the same file
   if (!file) return;
@@ -113,7 +115,7 @@ watch([files, facts], scheduleVet, { deep: true });
         <input
           type="checkbox"
           :checked="enabledPacks.has(pack)"
-          @change="togglePack(pack, ($event.target as HTMLInputElement).checked)"
+          @change="togglePack(pack, isChecked($event))"
         />
         {{ pack }}
       </label>
