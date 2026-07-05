@@ -1,0 +1,2 @@
+# Local environment overrides. Commit .env.example as the template instead.
+.env
