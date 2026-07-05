@@ -6,7 +6,7 @@ package diagram
 
 import (
 	"list"
-	sec "github.com/stratorys/cue-diagram/policy/security"
+	sec "github.com/stratorys/cueto/policy/security"
 )
 
 // policyReport is data, not an assertion: the Go backend reads it via /vet, so it

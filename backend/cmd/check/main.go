@@ -27,7 +27,7 @@ const driftHarnessCUE = `package diagram
 
 import (
 	"list"
-	"github.com/stratorys/cue-diagram/infra"
+	"github.com/stratorys/cueto/infra"
 )
 
 actual: infra.#Actual & (%s)

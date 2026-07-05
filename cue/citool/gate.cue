@@ -6,7 +6,7 @@
 // policy pack.
 package citool
 
-import d "github.com/stratorys/cue-diagram:diagram"
+import d "github.com/stratorys/cueto:diagram"
 
 gate: {
 	for pack, violations in d.policyReport {

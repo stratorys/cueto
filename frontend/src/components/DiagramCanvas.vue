@@ -36,6 +36,7 @@ const {
   placeTable,
   placeContainer,
   drawShape,
+  connectShapes,
   onUndo,
   onRedo,
   canUndo,
@@ -79,6 +80,7 @@ function onAddContainer() {
 // draws the shape at that size (a click = default size). The overlay sits above
 // the Vue Flow pane so the drag draws instead of panning.
 const host = ref<HTMLDivElement>();
+const drawLayer = ref<HTMLDivElement>();
 const draw = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
 // The armed *draw* tool: a shape tool, or null when idle or in connect mode.
@@ -106,6 +108,46 @@ const drawFlip = computed(() => {
   return d ? (d.x1 - d.x0) * (d.y1 - d.y0) > 0 : false;
 });
 
+// The draw overlay sits above Vue Flow, so to find what a client point is over
+// (a handle or a node) we momentarily disable the overlay and hit-test the DOM
+// underneath. Returns the exact { nodeId, handleId } when the point is on a
+// handle; when it is on a shape/container body (but no handle) it snaps to that
+// node's nearest side; null over empty canvas or a table body (which has only
+// column handles). This lets the line tool connect between the points you pick.
+function endpointUnder(
+  clientX: number,
+  clientY: number,
+): { nodeId: string; handleId: string } | null {
+  const overlay = drawLayer.value;
+  const prev = overlay?.style.pointerEvents ?? "";
+  if (overlay) overlay.style.pointerEvents = "none";
+  const el = document.elementFromPoint(clientX, clientY);
+  if (overlay) overlay.style.pointerEvents = prev;
+
+  const handle = el?.closest?.(".vue-flow__handle") as HTMLElement | null;
+  if (handle) {
+    const nodeId = handle.getAttribute("data-nodeid");
+    const handleId = handle.getAttribute("data-handleid");
+    if (nodeId && handleId) return { nodeId, handleId };
+  }
+  const node = el?.closest?.(".vue-flow__node") as HTMLElement | null;
+  // Only shapes and containers expose the t/r/b/l side handles a nearest-side
+  // snap would target; tables use per-column handles, so require an exact hit.
+  if (
+    node &&
+    (node.classList.contains("vue-flow__node-shape") ||
+      node.classList.contains("vue-flow__node-container"))
+  ) {
+    const nodeId = node.getAttribute("data-id");
+    if (!nodeId) return null;
+    const r = node.getBoundingClientRect();
+    const side = { t: clientY - r.top, b: r.bottom - clientY, l: clientX - r.left, r: r.right - clientX };
+    const handleId = Object.entries(side).sort((a, b) => a[1] - b[1])[0][0];
+    return { nodeId, handleId };
+  }
+  return null;
+}
+
 function onDrawStart(event: PointerEvent) {
   if (!drawTool.value) return;
   (event.target as HTMLElement).setPointerCapture(event.pointerId);
@@ -119,6 +161,16 @@ function onDrawEnd() {
   const d = draw.value;
   draw.value = null;
   if (!d || !drawTool.value) return;
+  // Line tool: a drag from one shape's handle to another's makes a relation with
+  // the exact points chosen; anything else falls through to a decorative line.
+  if (drawTool.value === "line") {
+    const from = endpointUnder(d.x0, d.y0);
+    const to = endpointUnder(d.x1, d.y1);
+    if (from && to && from.nodeId !== to.nodeId) {
+      connectShapes(from.nodeId, from.handleId, to.nodeId, to.handleId);
+      return;
+    }
+  }
   drawShape(drawTool.value, d.x0, d.y0, d.x1, d.y1);
 }
 
@@ -222,9 +274,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     </VueFlow>
 
     <!-- Draw overlay, only while a shape draw tool is armed (never in connect
-         mode, so handle drags reach Vue Flow). -->
+         mode, so handle drags reach Vue Flow). Transparent, so the line tool's
+         visible handles show through; endpointUnder() hit-tests beneath it. -->
     <div
       v-if="drawTool"
+      ref="drawLayer"
       class="absolute inset-0 z-10 cursor-crosshair"
       @pointerdown.prevent="onDrawStart"
       @pointermove="onDrawMove"

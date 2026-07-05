@@ -9,7 +9,7 @@ export interface Lens {
   query: string;
 }
 
-const STORAGE_KEY = "cue-diagram.lenses";
+const STORAGE_KEY = "cueto.lenses";
 
 export function loadLenses(): Lens[] {
   try {

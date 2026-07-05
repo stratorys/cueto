@@ -782,7 +782,10 @@ function containerAt(
 
 function armTool(tool: Tool) {
   activeTool.value = activeTool.value === tool ? null : tool;
-  connecting.value = activeTool.value === "connect";
+  // Reveal the connection handles for connect mode AND the line tool: the line
+  // tool draws a connector by dragging between two visible handles (empty-space
+  // drags still make a decorative line), so its handles must be discoverable.
+  connecting.value = activeTool.value === "connect" || activeTool.value === "line";
 }
 function disarmTool() {
   activeTool.value = null;
@@ -1064,6 +1067,7 @@ export function useDiagramCanvas() {
     placeTable,
     placeContainer,
     drawShape,
+    connectShapes,
     onUndo,
     onRedo,
     canUndo,

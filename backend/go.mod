@@ -1,4 +1,4 @@
-module github.com/stratorys/cue-diagram/backend
+module github.com/stratorys/cueto/backend
 
 go 1.26.4
 
