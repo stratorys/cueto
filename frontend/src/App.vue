@@ -14,8 +14,18 @@ import InspectorPanel from "./components/InspectorPanel.vue";
 import { usePaneResize } from "./composables/usePaneResize";
 import { useDiagramCanvas } from "./composables/useDiagramCanvas";
 
-const { paneWidth, startResize } = usePaneResize();
-const { paneWidth: inspectorWidth, startResize: startInspectorResize } = usePaneResize(340, "right");
+const {
+  paneWidth,
+  collapsed: editorCollapsed,
+  startResize,
+  toggleCollapse: toggleEditor,
+} = usePaneResize(560, "left", "cueto.editorPaneWidth");
+const {
+  paneWidth: inspectorWidth,
+  collapsed: inspectorCollapsed,
+  startResize: startInspectorResize,
+  toggleCollapse: toggleInspector,
+} = usePaneResize(340, "right", "cueto.inspectorPaneWidth");
 const {
   files,
   activeFileName,
@@ -44,7 +54,10 @@ onMounted(() => void loadInitialDiagram());
 
 <template>
   <div class="flex h-screen w-screen">
-    <aside class="flex flex-none flex-col overflow-hidden" :style="{ width: paneWidth + 'px' }">
+    <aside
+      class="flex flex-none flex-col overflow-hidden"
+      :style="{ width: (editorCollapsed ? 0 : paneWidth) + 'px' }"
+    >
       <CodePane
         :code="activeText"
         :files="files"
@@ -66,17 +79,42 @@ onMounted(() => void loadInitialDiagram());
       />
     </aside>
     <div
-      class="w-1.5 flex-none cursor-col-resize bg-slate-200 transition-colors hover:bg-amber-500"
+      class="group relative w-1.5 flex-none bg-slate-200 transition-colors hover:bg-amber-500"
+      :class="editorCollapsed ? '' : 'cursor-col-resize'"
       @pointerdown.prevent="startResize"
-    />
+    >
+      <button
+        type="button"
+        class="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
+        :title="editorCollapsed ? 'Expand editor' : 'Collapse editor'"
+        @pointerdown.stop
+        @click="toggleEditor"
+      >
+        {{ editorCollapsed ? "›" : "‹" }}
+      </button>
+    </div>
     <div class="relative h-full flex-1 bg-slate-50">
       <DiagramCanvas />
     </div>
     <div
-      class="w-1.5 flex-none cursor-col-resize bg-slate-200 transition-colors hover:bg-amber-500"
+      class="group relative w-1.5 flex-none bg-slate-200 transition-colors hover:bg-amber-500"
+      :class="inspectorCollapsed ? '' : 'cursor-col-resize'"
       @pointerdown.prevent="startInspectorResize"
-    />
-    <aside class="flex flex-none flex-col overflow-hidden" :style="{ width: inspectorWidth + 'px' }">
+    >
+      <button
+        type="button"
+        class="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
+        :title="inspectorCollapsed ? 'Expand inspector' : 'Collapse inspector'"
+        @pointerdown.stop
+        @click="toggleInspector"
+      >
+        {{ inspectorCollapsed ? "‹" : "›" }}
+      </button>
+    </div>
+    <aside
+      class="flex flex-none flex-col overflow-hidden"
+      :style="{ width: (inspectorCollapsed ? 0 : inspectorWidth) + 'px' }"
+    >
       <InspectorPanel />
     </aside>
   </div>
