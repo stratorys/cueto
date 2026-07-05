@@ -7,8 +7,17 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { Handle, Position } from "@vue-flow/core";
-import { connecting } from "../composables/useDiagramCanvas";
+import { connecting, hoveredNodeId } from "../composables/useDiagramCanvas";
+
+const props = defineProps<{ nodeId: string }>();
+
+// Force the handles visible without a CSS :hover: connect mode reveals every
+// node's handles; the line tool reveals only the node under the cursor.
+const revealed = computed(
+  () => connecting.value || hoveredNodeId.value === props.nodeId,
+);
 
 // The four side connection handles shared by shapes, containers and tables. Each
 // is one invisible bar per side that glows amber while the node is hovered (or
@@ -31,6 +40,6 @@ const HANDLES = [
     type="source"
     :position="h.position"
     class="cursor-crosshair rounded-md! border-0! bg-amber-500/30! opacity-0 transition-opacity group-hover:opacity-100"
-    :class="[h.size, connecting ? 'opacity-100!' : '']"
+    :class="[h.size, revealed ? 'opacity-100!' : '']"
   />
 </template>

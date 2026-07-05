@@ -9,7 +9,7 @@
 // Single-canvas POC, so module-level singleton state is fine.
 
 import { computed, ref, toRaw } from "vue";
-import type { Diagram, ShapeKind } from "./model";
+import type { Diagram, ShapeKind, TypedNodeType } from "./model";
 import { sampleDiagram } from "./model";
 
 // The model is pure JSON, so a JSON round-trip deep-clones it and strips Vue's
@@ -119,6 +119,31 @@ function addContainer(
   return id;
 }
 
+// Create a typed domain node (entity/process/decision) at a position with a size,
+// as one undoable step. The id is slugged from the type (entity, entity_2, ...).
+// Unlike a table it carries no payload - TypedNode draws it from its type alone.
+// Returns the new id.
+function addTypedNode(
+  type: TypedNodeType,
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+): string {
+  const taken = new Set(diagram.value.nodes.map((node) => node.id));
+  const id = uniqueId(slugify(type), taken);
+  commit((draft) => {
+    draft.nodes.push({
+      id,
+      type,
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+      label: "",
+    });
+  });
+  return id;
+}
+
 // Replace the whole model as one undoable step (used when CUE text re-evaluates).
 function replace(next: Diagram): void {
   undoStack.value.push(clone(diagram.value));
@@ -154,6 +179,7 @@ export function useDiagram() {
     addShape,
     addTable,
     addContainer,
+    addTypedNode,
     replace,
     resetHistory,
     undo,

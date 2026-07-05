@@ -10,7 +10,7 @@
 // Module-level singleton, shared with the other canvas composables.
 
 import { computed, ref, watch } from "vue";
-import type { DiagramEdge, DiagramNode } from "../model";
+import type { DiagramEdge, DiagramNode, NodeType } from "../model";
 import { useDiagram } from "../useDiagram";
 import { store } from "./flowStore";
 import { rebuildGraph } from "./useGraphView";
@@ -111,6 +111,33 @@ function commitEdgeGovernance(
   syncTextFromModel();
 }
 
+// Switch a node's visual type from the inspector. Payload fields belong to
+// specific types, so drop the ones that no longer apply (keeping data.cue clean):
+// a `shape` needs a concrete silhouette to render, `columns` only make sense on a
+// table. The inspector only offers this for the plain visual types (it excludes
+// table/container), so no children are ever orphaned here.
+function commitNodeType(id: string, type: NodeType) {
+  commit((draft) => {
+    const target = draft.nodes.find((n) => n.id === id);
+    if (!target) return;
+    target.type = type;
+    target.shape = type === "shape" ? (target.shape ?? "rectangle") : undefined;
+    if (type !== "table") target.columns = undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Switch an edge's visual kind (relation/arrow/inherit/line) from the inspector.
+function commitEdgeKind(id: string, kind: DiagramEdge["kind"]) {
+  commit((draft) => {
+    const target = draft.edges.find((e) => e.id === id);
+    if (target) target.kind = kind;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
 // Set the governance packs the diagram opts into. An empty list clears the field
 // so a bare diagram emits no `policies` key (emit() drops undefined).
 function setPolicies(policies: string[]) {
@@ -143,6 +170,8 @@ export function useSelection() {
   return {
     selectedElementId,
     selectedElement,
+    commitNodeType,
+    commitEdgeKind,
     commitNodeGovernance,
     commitEdgeGovernance,
     setPolicies,

@@ -22,8 +22,14 @@ import type {
 import { commitNodeLabel, useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { fieldValue, isChecked } from "../eventTarget";
 
-const { selectedElement, diagram, commitNodeGovernance, commitEdgeGovernance } =
-  useDiagramCanvas();
+const {
+  selectedElement,
+  diagram,
+  commitNodeType,
+  commitEdgeKind,
+  commitNodeGovernance,
+  commitEdgeGovernance,
+} = useDiagramCanvas();
 
 // Narrowed views so the template stays type-safe without discriminating inline.
 const node = computed(() =>
@@ -37,6 +43,13 @@ const edge = computed(() =>
 function nodeLabel(id: string): string {
   return diagram.value.nodes.find((n) => n.id === id)?.label || id;
 }
+
+// The plain visual node types the type picker offers. Excludes table/container,
+// whose payloads (columns / child links) make free switching unsafe; the picker
+// is hidden unless the selected node is already one of these.
+const NODE_TYPES = ["entity", "process", "decision", "shape"] as const;
+const EDGE_KINDS = ["relation", "arrow", "inherit", "line"] as const;
+const canRetype = computed(() => NODE_TYPES.some((t) => t === node.value?.type));
 
 // Option lists mirror the schema unions in model.ts so the dropdowns cannot drift.
 const ROLES: NodeRole[] = ["service", "database", "queue", "cache", "gateway", "external"];
@@ -58,6 +71,14 @@ function setNode(patch: Parameters<typeof commitNodeGovernance>[1]) {
 }
 function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
   if (edge.value) commitEdgeGovernance(edge.value.id, patch);
+}
+function setType(event: Event) {
+  const type = pick(event, NODE_TYPES);
+  if (node.value && type) commitNodeType(node.value.id, type);
+}
+function setKind(event: Event) {
+  const kind = pick(event, EDGE_KINDS);
+  if (edge.value && kind) commitEdgeKind(edge.value.id, kind);
 }
 </script>
 
@@ -85,6 +106,17 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
           :value="node.label"
           @change="commitNodeLabel(node.id, fieldValue($event) ?? '')"
         />
+      </label>
+
+      <label v-if="canRetype" class="flex flex-col gap-1">
+        <span class="font-medium text-slate-600">Type</span>
+        <select
+          class="rounded border border-slate-300 px-2 py-1"
+          :value="node.type"
+          @change="setType($event)"
+        >
+          <option v-for="t in NODE_TYPES" :key="t" :value="t">{{ t }}</option>
+        </select>
       </label>
 
       <label class="flex flex-col gap-1">
@@ -142,6 +174,17 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
         </span>
         <span class="text-xs text-slate-400">{{ edge.kind }} edge</span>
       </div>
+
+      <label class="flex flex-col gap-1">
+        <span class="font-medium text-slate-600">Kind</span>
+        <select
+          class="rounded border border-slate-300 px-2 py-1"
+          :value="edge.kind"
+          @change="setKind($event)"
+        >
+          <option v-for="k in EDGE_KINDS" :key="k" :value="k">{{ k }}</option>
+        </select>
+      </label>
 
       <label class="flex flex-col gap-1">
         <span class="font-medium text-slate-600">Cardinality</span>

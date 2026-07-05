@@ -133,12 +133,14 @@ export function toFlowEdges(
       target: edge.target,
       sourceHandle: edge.sourceHandle,
       targetHandle: edge.targetHandle,
+      // `type` selects the ELK-polyline edge component (orthogonal to the visual
+      // `kind`, which ElkEdge reads from data to pick its marker/dash).
       type: "elk",
       // Endpoints are draggable: reconnect to another handle, or drop in empty
       // space to turn the relation back into a floating line (see useDiagramCanvas).
       updatable: true,
       style: { stroke: "#64748b" },
-      data: { points: edgePoints[edge.id] },
+      data: { points: edgePoints[edge.id], kind: edge.kind },
     }));
 }
 

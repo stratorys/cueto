@@ -8,9 +8,14 @@
 // Mirrors the CUE #Diagram / #Node / #Edge shape. Every node and edge carries a
 // stable id so edits round-trip to CUE.
 
-// A canvas element is a free-form "shape", a DB "table", or a "container" that
-// holds other nodes (children point at it via DiagramNode.parent).
-export type NodeType = "shape" | "table" | "container";
+// A canvas element is a free-form "shape", a DB "table", a "container" that holds
+// other nodes (children point at it via DiagramNode.parent), or one of the typed
+// domain nodes ("entity" / "process" / "decision") that render a fixed silhouette.
+export type NodeType = "shape" | "table" | "container" | "entity" | "process" | "decision";
+
+// The typed domain nodes: a fixed-silhouette subset of NodeType with no per-node
+// payload (unlike table's columns), drawn by TypedNode from its type alone.
+export type TypedNodeType = "entity" | "process" | "decision";
 export type ShapeKind = "rectangle" | "ellipse" | "diamond" | "line" | "text";
 
 // A palette tool: a shape to draw, or the "connect" mode that reveals node
@@ -72,8 +77,10 @@ export interface DiagramEdge {
   // default handle.
   sourceHandle?: string;
   targetHandle?: string;
-  // Single connector kind, kept as a field for the CUE round-trip.
-  kind: "relation";
+  // Visual connector kind. "relation" is a plain link; "arrow" adds a filled
+  // arrowhead; "inherit" a hollow (UML generalization) triangle; "line" is a bare
+  // dashed connector. Drives the marker/dash in ElkEdge and round-trips to CUE.
+  kind: "relation" | "arrow" | "inherit" | "line";
   // Optional domain metadata, round-tripped to CUE for policy/drift checks.
   card?: EdgeCard;
   call?: EdgeCall;

@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Diagram, DiagramEdge, DiagramNode } from "./model";
-import { edgesBody, nodeBody, toCue } from "./mapping";
+import { edgesBody, nodeBody, toCue, toFlowEdges } from "./mapping";
 
 // Governance metadata is authored via the inspector and only reaches the harness
 // through these pure serializers, so lock in that the fields round-trip to CUE
@@ -56,6 +56,37 @@ describe("edgesBody governance fields", () => {
     expect(body).not.toContain("call:");
     expect(body).not.toContain("protocol:");
     expect(body).not.toContain("sync:");
+  });
+});
+
+describe("node type fidelity", () => {
+  it("round-trips the typed node types to CUE", () => {
+    for (const type of ["entity", "process", "decision"] as const) {
+      expect(nodeBody(node({ type }))).toContain(`type: "${type}"`);
+    }
+  });
+
+  it("emits typed node types through toCue", () => {
+    const cue = toCue({ nodes: [node({ id: "review", type: "process" })], edges: [] });
+    expect(cue).toContain('type: "process"');
+  });
+});
+
+describe("edge kind fidelity", () => {
+  it("round-trips every edge kind to CUE", () => {
+    for (const kind of ["relation", "arrow", "inherit", "line"] as const) {
+      expect(edgesBody([edge({ kind })])).toContain(`kind: "${kind}"`);
+    }
+  });
+
+  it("passes the edge kind into the Vue Flow edge data", () => {
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [edge({ source: "a", target: "b", kind: "arrow" })],
+    };
+    const [flow] = toFlowEdges(diagram);
+    expect(flow.type).toBe("elk");
+    expect(flow.data?.kind).toBe("arrow");
   });
 });
 

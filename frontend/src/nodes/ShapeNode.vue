@@ -180,6 +180,6 @@ function onEndDown(which: number) {
     </template>
 
     <!-- Border-drag connection handles: one bar per side, glow on hover. Not for lines. -->
-    <EdgeHandles v-if="shape !== 'line'" />
+    <EdgeHandles v-if="shape !== 'line'" :node-id="id" />
   </div>
 </template>

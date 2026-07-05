@@ -11,7 +11,7 @@
 // singleton, shared with the other canvas composables.
 
 import { nextTick, ref } from "vue";
-import type { ShapeKind, Tool } from "../model";
+import type { ShapeKind, Tool, TypedNodeType } from "../model";
 import { useDiagram } from "../useDiagram";
 import {
   findNode,
@@ -30,7 +30,7 @@ import { activeFileName, newNodeOwner } from "./useEditorFiles";
 import { rebuildGraph } from "./useGraphView";
 import { syncTextFromModel } from "./useCueSync";
 
-const { diagram, commit, addShape, addTable, addContainer } = useDiagram();
+const { diagram, commit, addShape, addTable, addContainer, addTypedNode } = useDiagram();
 
 // Size used when a shape is placed by a click or a palette drag (not drawn out).
 const DEFAULT_SIZE: Record<ShapeKind, { width: number; height: number }> = {
@@ -47,6 +47,13 @@ const TABLE_DROP_SIZE = { width: 180, height: 90 };
 // Default frame size for a container placed by a click or a palette drag.
 const CONTAINER_SIZE = { width: 320, height: 220 };
 
+// Default size for a typed node placed by a click or a palette drag.
+const TYPED_SIZE: Record<TypedNodeType, { width: number; height: number }> = {
+  entity: { width: 160, height: 96 },
+  process: { width: 150, height: 72 },
+  decision: { width: 120, height: 120 },
+};
+
 // Below this drawn size (graph units) a draw gesture counts as a click -> default.
 const MIN_DRAW = 8;
 
@@ -54,9 +61,14 @@ const MIN_DRAW = 8;
 // is armed.
 export const activeTool = ref<Tool | null>(null);
 
-// True while "connect" mode is armed. Node components read it to force their
+// True while "connect" mode is armed. Node components read it to force ALL their
 // connection handles visible so a handle-to-handle drag is discoverable.
 export const connecting = ref(false);
+
+// While the line tool is armed, the shape under the cursor (from the draw
+// overlay's hit-test), or null. Node components reveal only this node's handles,
+// so the line tool matches ordinary per-shape hover instead of lighting up all.
+export const hoveredNodeId = ref<string | null>(null);
 
 // Place a default-sized shape centered on a client point (drop / click).
 function placeShape(shape: ShapeKind, clientX: number, clientY: number) {
@@ -116,6 +128,20 @@ function placeContainer(clientX: number, clientY: number) {
       y: point.y - CONTAINER_SIZE.height / 2,
     },
     CONTAINER_SIZE,
+  );
+  newNodeOwner.set(id, activeFileName.value);
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Place a typed node (entity/process/decision) centered on a client point.
+function placeTypedNode(type: TypedNodeType, clientX: number, clientY: number) {
+  const size = TYPED_SIZE[type];
+  const point = screenToFlowCoordinate({ x: clientX, y: clientY });
+  const id = addTypedNode(
+    type,
+    { x: point.x - size.width / 2, y: point.y - size.height / 2 },
+    size,
   );
   newNodeOwner.set(id, activeFileName.value);
   rebuildGraph();
@@ -264,14 +290,16 @@ function containerAt(
 
 function armTool(tool: Tool) {
   activeTool.value = activeTool.value === tool ? null : tool;
-  // Reveal the connection handles for connect mode AND the line tool: the line
-  // tool draws a connector by dragging between two visible handles (empty-space
-  // drags still make a decorative line), so its handles must be discoverable.
-  connecting.value = activeTool.value === "connect" || activeTool.value === "line";
+  // Connect mode reveals every shape's handles at once. The line tool instead
+  // reveals only the hovered shape's handles (driven by hoveredNodeId), so it
+  // does not force `connecting`.
+  connecting.value = activeTool.value === "connect";
+  hoveredNodeId.value = null;
 }
 function disarmTool() {
   activeTool.value = null;
   connecting.value = false;
+  hoveredNodeId.value = null;
 }
 
 // Drag: commit the final position once, not on every move. On drop, re-parent the
@@ -504,7 +532,9 @@ export function useDrawTools() {
     placeShape,
     placeTable,
     placeContainer,
+    placeTypedNode,
     drawShape,
     connectShapes,
+    hoveredNodeId,
   };
 }

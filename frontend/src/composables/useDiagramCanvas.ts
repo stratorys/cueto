@@ -26,7 +26,7 @@ import { useDrawTools } from "./useDrawTools";
 // Standalone exports the node components import directly (so this module never
 // imports the node components, which would cut a cycle).
 export { commitNodeResize, commitNodeLabel, commitNodeColor } from "./useSelection";
-export { beginLineDrag, dragLineTo, endLineDrag, connecting } from "./useDrawTools";
+export { beginLineDrag, dragLineTo, endLineDrag, connecting, hoveredNodeId } from "./useDrawTools";
 export { setFocus } from "./useGraphView";
 export type { SaveState } from "./useCueSync";
 

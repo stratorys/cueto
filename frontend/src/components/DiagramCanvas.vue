@@ -12,22 +12,29 @@ import { ConnectionMode, VueFlow } from "@vue-flow/core";
 import type { EdgeTypesObject, NodeTypesObject } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
-import type { ShapeKind } from "../model";
+import type { ShapeKind, TypedNodeType } from "../model";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { elementTarget } from "../eventTarget";
 import ShapeNode from "../nodes/ShapeNode.vue";
 import TableNode from "../nodes/TableNode.vue";
 import ContainerNode from "../nodes/ContainerNode.vue";
+import TypedNode from "../nodes/TypedNode.vue";
 import ElkEdge from "../edges/ElkEdge.vue";
+import MarkerDefs from "../edges/MarkerDefs.vue";
 import ShapePalette from "./ShapePalette.vue";
 import Toolbar from "./Toolbar.vue";
 
 // Registered here (not in the composable) so the composable never imports the
 // node components - they import commit helpers from the composable.
+// entity/process/decision share one TypedNode component but keep distinct type
+// keys, so Vue Flow tags each with its own `vue-flow__node-<type>` DOM class.
 const nodeTypes = {
   shape: markRaw(ShapeNode),
   table: markRaw(TableNode),
   container: markRaw(ContainerNode),
+  entity: markRaw(TypedNode),
+  process: markRaw(TypedNode),
+  decision: markRaw(TypedNode),
 } as unknown as NodeTypesObject;
 
 const edgeTypes = {
@@ -44,8 +51,10 @@ const {
   placeShape,
   placeTable,
   placeContainer,
+  placeTypedNode,
   drawShape,
   connectShapes,
+  hoveredNodeId,
   onUndo,
   onRedo,
   canUndo,
@@ -61,7 +70,13 @@ function isShapeKind(value: string): value is ShapeKind {
   return SHAPE_KINDS.some((k) => k === value);
 }
 
-// Drag a shape or a table from the palette: drop it at the drop point.
+const TYPED_NODES: TypedNodeType[] = ["entity", "process", "decision"];
+function isTypedNodeType(value: string): value is TypedNodeType {
+  return TYPED_NODES.some((t) => t === value);
+}
+
+// Drag a shape, table, container or typed node from the palette: drop it at the
+// drop point.
 function onDrop(event: DragEvent) {
   const kind = event.dataTransfer?.getData("application/shape");
   if (!kind) return;
@@ -71,6 +86,10 @@ function onDrop(event: DragEvent) {
   }
   if (kind === "container") {
     placeContainer(event.clientX, event.clientY);
+    return;
+  }
+  if (isTypedNodeType(kind)) {
+    placeTypedNode(kind, event.clientX, event.clientY);
     return;
   }
   if (isShapeKind(kind)) placeShape(kind, event.clientX, event.clientY);
@@ -88,6 +107,13 @@ function onAddContainer() {
   const rect = host.value?.getBoundingClientRect();
   if (!rect) return;
   placeContainer(rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+// Palette typed-node button click: drop the node at the canvas center.
+function onAddTyped(type: TypedNodeType) {
+  const rect = host.value?.getBoundingClientRect();
+  if (!rect) return;
+  placeTypedNode(type, rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
 
 // Draw-mode overlay: while a tool is armed, press-drag-release on the canvas
@@ -145,13 +171,11 @@ function endpointUnder(
     if (nodeId && handleId) return { nodeId, handleId };
   }
   const node = el?.closest?.(".vue-flow__node") ?? null;
-  // Only shapes and containers expose the t/r/b/l side handles a nearest-side
-  // snap would target; tables use per-column handles, so require an exact hit.
-  if (
-    node &&
-    (node.classList.contains("vue-flow__node-shape") ||
-      node.classList.contains("vue-flow__node-container"))
-  ) {
+  // Shapes, containers and the typed nodes (entity/process/decision) expose the
+  // t/r/b/l side handles a nearest-side snap targets; tables use per-column
+  // handles, so require an exact hit.
+  const SIDE_HANDLE_NODES = ["shape", "container", "entity", "process", "decision"];
+  if (node && SIDE_HANDLE_NODES.some((t) => node.classList.contains(`vue-flow__node-${t}`))) {
     const nodeId = node.getAttribute("data-id");
     if (!nodeId) return null;
     const r = node.getBoundingClientRect();
@@ -168,12 +192,21 @@ function onDrawStart(event: PointerEvent) {
   draw.value = { x0: event.clientX, y0: event.clientY, x1: event.clientX, y1: event.clientY };
 }
 function onDrawMove(event: PointerEvent) {
+  // Line tool: light up only the shape under the cursor (hover or mid-drag), so
+  // the handles appear per-shape like ordinary relation hover, not on every node.
+  if (drawTool.value === "line") {
+    hoveredNodeId.value = endpointUnder(event.clientX, event.clientY)?.nodeId ?? null;
+  }
   if (!draw.value) return;
   draw.value = { ...draw.value, x1: event.clientX, y1: event.clientY };
+}
+function onDrawLeave() {
+  if (!draw.value) hoveredNodeId.value = null;
 }
 function onDrawEnd() {
   const d = draw.value;
   draw.value = null;
+  hoveredNodeId.value = null;
   if (!d || !drawTool.value) return;
   // Line tool: a drag from one shape's handle to another's makes a relation with
   // the exact points chosen; anything else falls through to a decorative line.
@@ -239,6 +272,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     @drop.prevent="onDrop"
     @dragover.prevent
   >
+    <!-- Shared edge-marker defs (arrowhead, inheritance triangle). -->
+    <MarkerDefs />
     <Toolbar
       :can-undo="canUndo"
       :can-redo="canRedo"
@@ -251,6 +286,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       @arm="armTool"
       @add-table="onAddTable"
       @add-container="onAddContainer"
+      @add-typed="onAddTyped"
     />
 
     <!-- Drill-down breadcrumb: shown only while focused into a container. -->
@@ -297,6 +333,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       @pointerdown.prevent="onDrawStart"
       @pointermove="onDrawMove"
       @pointerup="onDrawEnd"
+      @pointerleave="onDrawLeave"
     >
       <!-- Live preview of the real shape being drawn (not a selection box). -->
       <svg
