@@ -63,6 +63,59 @@ flowchart LR
 6. `/import/compose` turns a `docker-compose.yml` into normalized facts; `/vet` then reports drift between the drawn topology and that live topology.
 7. `/save` writes the validated instance as an immutable, content-addressed version; `/versions` lists and reads them.
 
+## Knowledge as code
+
+The REPL pane turns the diagram into a queryable value. Every entry evaluates a CUE expression against the live model in the editor - nothing is saved, the schema and files are untouched - so a structured question gets a deterministic answer by evaluation, not retrieval.
+
+Author a domain as data under a schema, and derive the graph from it:
+
+```cue
+package diagram
+
+#Person: {
+	name:   string
+	mother: string | *""
+	father: string | *""
+	role:   string | *""
+	year:   int
+}
+
+people: [ID=string]: #Person
+people: {
+	george:   {name: "George McFly", role: "parent", year: 1938}
+	lorraine: {name: "Lorraine Baines", role: "parent", year: 1938}
+	marty:    {name: "Marty McFly", role: "traveler", mother: "lorraine", father: "george", year: 1968}
+	doc:      {name: "Dr. Emmett Brown", role: "inventor", year: 1920}
+}
+
+diagram: #Diagram & {
+	nodes: {
+		for pid, p in people {
+			(pid): {type: "entity", label: p.name, data: {role: p.role, year: p.year}}
+		}
+	}
+	edges: [
+		for pid, p in people if p.mother != "" {
+			{id: "m_\(pid)", source: p.mother, target: pid, kind: "arrow", label: "mother"}
+		},
+		for pid, p in people if p.father != "" {
+			{id: "f_\(pid)", source: p.father, target: pid, kind: "arrow", label: "father"}
+		},
+	]
+}
+```
+
+Now "who is Marty's mother?" is a path lookup, not a guess. Type the expression in the REPL and evaluate it:
+
+```
+> people[people.marty.mother].name
+"Lorraine Baines"
+```
+
+The answer comes from the compiled value: `marty.mother` is checked against the same schema that renders the graph, so a dangling name is a build error, not a hallucination. An agent wired to this endpoint answers from evaluated fact instead of retrieved text - the graph you draw and the knowledge you query are one CUE value. This is the [knowledge-as-code](https://stratorys.com/knowledge-as-code) bet applied to a single diagram.
+
+![REPL querying the McFly family diagram](docs/repl-knowledge-as-code.png)
+
 ## Run locally
 
 Prerequisites: Go 1.26+, the [`cue`](https://cuelang.org) CLI (for `make check`), Node + pnpm.
