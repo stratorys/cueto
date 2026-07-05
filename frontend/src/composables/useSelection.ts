@@ -47,6 +47,30 @@ export const selectedElement = computed<
   return edge ? { kind: "edge", edge } : null;
 });
 
+// Id of the edge whose free-form text label is being edited inline (from a
+// double-click on the edge), or null. ElkEdge reads this to show its editor.
+export const editingEdgeId = ref<string | null>(null);
+
+// Open / close the inline edge-label editor.
+export function startEdgeEdit(id: string) {
+  editingEdgeId.value = id;
+}
+export function cancelEdgeEdit() {
+  editingEdgeId.value = null;
+}
+
+// Persist an edge's free-form text label after inline (double-click) editing. An
+// empty label clears the field so a bare edge emits no `label` key.
+export function commitEdgeLabel(id: string, label: string) {
+  editingEdgeId.value = null;
+  commit((draft) => {
+    const target = draft.edges.find((e) => e.id === id);
+    if (target) target.label = label || undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
 // Persist a node's label after inline (double-click) editing.
 export function commitNodeLabel(id: string, label: string) {
   commit((draft) => {
@@ -138,6 +162,23 @@ function commitEdgeKind(id: string, kind: DiagramEdge["kind"]) {
   syncTextFromModel();
 }
 
+// Reverse an edge's direction: swap its endpoints and their handles in one
+// undoable step. Kind, label, and governance metadata are preserved.
+function commitEdgeReverse(id: string) {
+  commit((draft) => {
+    const target = draft.edges.find((e) => e.id === id);
+    if (!target) return;
+    const source = target.source;
+    const sourceHandle = target.sourceHandle;
+    target.source = target.target;
+    target.target = source;
+    target.sourceHandle = target.targetHandle;
+    target.targetHandle = sourceHandle;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
 // Set the governance packs the diagram opts into. An empty list clears the field
 // so a bare diagram emits no `policies` key (emit() drops undefined).
 function setPolicies(policies: string[]) {
@@ -172,6 +213,7 @@ export function useSelection() {
     selectedElement,
     commitNodeType,
     commitEdgeKind,
+    commitEdgeReverse,
     commitNodeGovernance,
     commitEdgeGovernance,
     setPolicies,

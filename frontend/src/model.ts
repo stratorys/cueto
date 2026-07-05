@@ -81,6 +81,9 @@ export interface DiagramEdge {
   // arrowhead; "inherit" a hollow (UML generalization) triangle; "line" is a bare
   // dashed connector. Drives the marker/dash in ElkEdge and round-trips to CUE.
   kind: "relation" | "arrow" | "inherit" | "line";
+  // Optional free-form text drawn at the edge midpoint, edited inline by
+  // double-clicking the edge (mirrors a shape's label).
+  label?: string;
   // Optional domain metadata, round-tripped to CUE for policy/drift checks.
   card?: EdgeCard;
   call?: EdgeCall;

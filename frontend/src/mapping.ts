@@ -140,7 +140,14 @@ export function toFlowEdges(
       // space to turn the relation back into a floating line (see useDiagramCanvas).
       updatable: true,
       style: { stroke: "#64748b" },
-      data: { points: edgePoints[edge.id], kind: edge.kind },
+      data: {
+        points: edgePoints[edge.id],
+        kind: edge.kind,
+        label: edge.label,
+        card: edge.card,
+        call: edge.call,
+        protocol: edge.protocol,
+      },
     }));
 }
 
@@ -208,6 +215,7 @@ function edgeFields(edge: DiagramEdge): Record<string, unknown> {
     target: edge.target,
     targetHandle: edge.targetHandle,
     kind: edge.kind,
+    label: edge.label,
     card: edge.card,
     call: edge.call,
     protocol: edge.protocol,

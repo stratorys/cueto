@@ -64,6 +64,8 @@ package diagram
 	target:        string
 	targetHandle?: string
 	kind:          "relation" | "arrow" | "inherit" | "line"
+	// Optional free-form text drawn on the edge, edited inline on the canvas.
+	label?:        string
 	card?:         "1-1" | "1-n" | "n-n"
 
 	// Typed-relationship metadata (all optional), for architecture modeling and

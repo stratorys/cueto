@@ -27,6 +27,7 @@ const {
   diagram,
   commitNodeType,
   commitEdgeKind,
+  commitEdgeReverse,
   commitNodeGovernance,
   commitEdgeGovernance,
 } = useDiagramCanvas();
@@ -174,6 +175,14 @@ function setKind(event: Event) {
         </span>
         <span class="text-xs text-slate-400">{{ edge.kind }} edge</span>
       </div>
+
+      <button
+        type="button"
+        class="flex items-center justify-center gap-1.5 rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        @click="commitEdgeReverse(edge.id)"
+      >
+        ⇄ Reverse direction
+      </button>
 
       <label class="flex flex-col gap-1">
         <span class="font-medium text-slate-600">Kind</span>

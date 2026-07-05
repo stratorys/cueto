@@ -13,7 +13,7 @@ import type { EdgeTypesObject, NodeTypesObject } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import type { ShapeKind, TypedNodeType } from "../model";
-import { useDiagramCanvas } from "../composables/useDiagramCanvas";
+import { useDiagramCanvas, startEdgeEdit } from "../composables/useDiagramCanvas";
 import { elementTarget } from "../eventTarget";
 import ShapeNode from "../nodes/ShapeNode.vue";
 import TableNode from "../nodes/TableNode.vue";
@@ -318,6 +318,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       :connection-mode="ConnectionMode.Loose"
       :delete-key-code="['Backspace', 'Delete']"
       fit-view-on-init
+      @edge-double-click="startEdgeEdit($event.edge.id)"
     >
       <Background variant="lines" :gap="22" :size="1" :pattern-color="gridColor" />
       <Controls />

@@ -7,19 +7,34 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { BaseEdge, getSmoothStepPath } from "@vue-flow/core";
+import { computed, nextTick, ref, watch } from "vue";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from "@vue-flow/core";
 import type { EdgeProps } from "@vue-flow/core";
 import type { DiagramEdge } from "../model";
+import {
+  editingEdgeId,
+  startEdgeEdit,
+  cancelEdgeEdit,
+  commitEdgeLabel,
+} from "../composables/useDiagramCanvas";
 
 // Edge that draws the exact orthogonal polyline elkjs computed for it, passed in
 // as absolute-coordinate `data.points`. Until a layout runs (or after a manual
 // drag clears the stale points) it falls back to Vue Flow's smooth-step path, so
 // every edge renders regardless of layout state. `data.kind` picks the visual
 // connector: a filled arrowhead, a hollow inheritance triangle, or a dashed line
-// (markers are defined once in MarkerDefs, rendered by DiagramCanvas).
+// (markers are defined once in MarkerDefs, rendered by DiagramCanvas). A free-form
+// `label` (double-click to edit) and the governance metadata (call/protocol/card)
+// render as pills at the edge midpoint.
 const props = defineProps<
-  EdgeProps<{ points?: { x: number; y: number }[]; kind?: DiagramEdge["kind"] }>
+  EdgeProps<{
+    points?: { x: number; y: number }[];
+    kind?: DiagramEdge["kind"];
+    label?: string;
+    card?: string;
+    call?: string;
+    protocol?: string;
+  }>
 >();
 
 // Marker follows `kind`; the marker shapes inherit the edge stroke via
@@ -42,12 +57,19 @@ const edgeStyle = computed(() => {
     : { ...(props.style as object), ...dash };
 });
 
-const path = computed(() => {
+// The SVG path plus the point where labels sit. For a laid-out polyline the label
+// rides the middle of the central segment; the smooth-step fallback reports its
+// own label anchor.
+const route = computed(() => {
   const points = props.data?.points;
   if (points && points.length >= 2) {
-    return points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+    const mid = Math.floor((points.length - 1) / 2);
+    const a = points[mid];
+    const b = points[mid + 1] ?? a;
+    return { d, labelX: (a.x + b.x) / 2, labelY: (a.y + b.y) / 2 };
   }
-  const [fallback] = getSmoothStepPath({
+  const [d, labelX, labelY] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     sourcePosition: props.sourcePosition,
@@ -55,10 +77,67 @@ const path = computed(() => {
     targetY: props.targetY,
     targetPosition: props.targetPosition,
   });
-  return fallback;
+  return { d, labelX, labelY };
 });
+
+// Governance metadata joined into a compact secondary pill, e.g. "calls · http · 1-n".
+const meta = computed(() =>
+  [props.data?.call, props.data?.protocol, props.data?.card].filter(Boolean).join(" · "),
+);
+
+// --- inline label editing (double-click the edge) ---------------------------
+const editing = computed(() => editingEdgeId.value === props.id);
+const draft = ref("");
+const input = ref<HTMLInputElement>();
+
+watch(editing, async (on) => {
+  if (!on) return;
+  draft.value = props.data?.label ?? "";
+  await nextTick();
+  input.value?.focus();
+  input.value?.select();
+});
+
+function commitLabel() {
+  if (editing.value) commitEdgeLabel(props.id, draft.value.trim());
+}
 </script>
 
 <template>
-  <BaseEdge :id="id" :path="path" :marker-end="markerUrl" :style="edgeStyle" />
+  <BaseEdge :id="id" :path="route.d" :marker-end="markerUrl" :style="edgeStyle" />
+  <EdgeLabelRenderer>
+    <div
+      v-if="data?.label || meta || editing"
+      class="nodrag nopan absolute flex flex-col items-center leading-tight"
+      :style="{
+        transform: `translate(-50%, -50%) translate(${route.labelX}px, ${route.labelY}px)`,
+        pointerEvents: 'all',
+      }"
+      @dblclick.stop="startEdgeEdit(id)"
+    >
+      <input
+        v-if="editing"
+        ref="input"
+        v-model="draft"
+        class="w-24 rounded-sm bg-slate-50 px-1 text-center text-xs text-slate-700 ring-1 ring-amber-400 outline-none"
+        @blur="commitLabel"
+        @keydown.enter.prevent="commitLabel"
+        @keydown.escape.prevent="cancelEdgeEdit"
+        @pointerdown.stop
+      />
+      <template v-else>
+        <span
+          v-if="data?.label"
+          class="cursor-text bg-slate-50 px-1 text-xs font-medium"
+          :class="selected ? 'text-amber-600' : 'text-slate-700'"
+          >{{ data.label }}</span
+        >
+        <span
+          v-if="meta"
+          class="bg-slate-50 px-1 text-[10px] font-medium text-slate-400"
+          >{{ meta }}</span
+        >
+      </template>
+    </div>
+  </EdgeLabelRenderer>
 </template>
