@@ -59,6 +59,25 @@ func (h *handlers) Vet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// Save validates the data and, when valid, stores it as a new immutable version.
+// It answers 200 with {ok:true, version:"<hash>"} or 400 with diagnostics.
+func (h *handlers) Save(c *gin.Context) {
+	var req dataRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	version, diags, err := h.eval.Save(c.Request.Context(), req.Data)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	if len(diags) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
+}
+
 // Format runs cue fmt over the provided source.
 func (h *handlers) Format(c *gin.Context) {
 	var req sourceRequest

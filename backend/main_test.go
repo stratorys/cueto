@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ func testConfig(t *testing.T) Config {
 	}
 	return Config{
 		CueDir:         abs,
+		VersionsDir:    t.TempDir(),
 		MaxBodyBytes:   1 << 20,
 		MaxOutputBytes: 4 << 20,
 		EvalTimeout:    2 * time.Second,
@@ -263,6 +265,10 @@ func (b *blockingEval) Vet(ctx context.Context, data string) ([]Diagnostic, erro
 	return nil, nil
 }
 
+func (b *blockingEval) Save(ctx context.Context, data string) (string, []Diagnostic, error) {
+	return "v", nil, nil
+}
+
 func (b *blockingEval) Format(source string) (string, error) { return source, nil }
 
 func TestConcurrencyLimit(t *testing.T) {
@@ -283,4 +289,151 @@ func TestConcurrencyLimit(t *testing.T) {
 		t.Fatalf("status = %d, want 429", rec.Code)
 	}
 	close(be.release)
+}
+
+func TestVetOk(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/vet", evalBody(t, validData))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.OK {
+		t.Fatalf("ok = false, want true (body %q)", rec.Body.String())
+	}
+}
+
+func TestVetInvalid(t *testing.T) {
+	data := "package diagram\n\ndiagram: #Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/vet", evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		OK          bool         `json:"ok"`
+		Diagnostics []Diagnostic `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.OK || len(body.Diagnostics) == 0 {
+		t.Fatalf("want ok:false with diagnostics, got %q", rec.Body.String())
+	}
+}
+
+func TestFormatOk(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{Source: "package diagram\ndiagram:{x:1}"})
+	rec := postJSON(router, "/format", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var out struct {
+		Formatted string `json:"formatted"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(out.Formatted, "diagram: {x: 1}") {
+		t.Fatalf("formatted = %q, want reflowed source", out.Formatted)
+	}
+}
+
+func TestFormatError(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{Source: "package diagram\ndiagram: {"})
+	rec := postJSON(router, "/format", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if len(decodeDiags(t, rec)) == 0 {
+		t.Fatal("want format diagnostics, got none")
+	}
+}
+
+func TestSaveWritesVersion(t *testing.T) {
+	cfg := testConfig(t)
+	router := realRouter(t, cfg)
+	rec := postJSON(router, "/save", evalBody(t, validData))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OK      bool   `json:"ok"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.OK || body.Version == "" {
+		t.Fatalf("want ok:true with a version, got %q", rec.Body.String())
+	}
+	// The saved version file holds exactly the submitted text.
+	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, body.Version+".cue"))
+	if err != nil {
+		t.Fatalf("read version: %v", err)
+	}
+	if string(saved) != validData {
+		t.Fatalf("version content mismatch")
+	}
+	// The seed data.cue in the CUE dir must be untouched.
+	if _, err := os.Stat(filepath.Join(cfg.VersionsDir, "data.cue")); !os.IsNotExist(err) {
+		t.Fatalf("versions dir should not contain data.cue")
+	}
+}
+
+func TestSaveInvalidNotWritten(t *testing.T) {
+	cfg := testConfig(t)
+	router := realRouter(t, cfg)
+	data := "package diagram\n\ndiagram: #Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
+	rec := postJSON(router, "/save", evalBody(t, data))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	entries, err := os.ReadDir(cfg.VersionsDir)
+	if err != nil {
+		t.Fatalf("read versions dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("invalid data must not be persisted, found %d files", len(entries))
+	}
+}
+
+func TestSaveIdempotent(t *testing.T) {
+	cfg := testConfig(t)
+	router := realRouter(t, cfg)
+	first := postJSON(router, "/save", evalBody(t, validData))
+	second := postJSON(router, "/save", evalBody(t, validData))
+	if first.Body.String() != second.Body.String() {
+		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
+	}
+	entries, _ := os.ReadDir(cfg.VersionsDir)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 version file, got %d", len(entries))
+	}
+}
+
+func TestConfigRejectsVersionsInsideCueDir(t *testing.T) {
+	cueDir, err := filepath.Abs("../cue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CUE_DIR", cueDir)
+	t.Setenv("VERSIONS_DIR", filepath.Join(cueDir, "versions"))
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("want error for VERSIONS_DIR inside CUE_DIR, got nil")
+	}
+}
+
+func TestConfigRequiresVersionsDir(t *testing.T) {
+	t.Setenv("VERSIONS_DIR", "")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("want error for missing VERSIONS_DIR, got nil")
+	}
 }

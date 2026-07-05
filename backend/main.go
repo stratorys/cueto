@@ -9,8 +9,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -19,15 +27,50 @@ func main() {
 	// and a missing file is not an error (defaults in config.go apply).
 	_ = godotenv.Load()
 
+	// Default to release mode (quiet, no debug route dump). GIN_MODE overrides it,
+	// e.g. GIN_MODE=debug for the route listing.
+	if mode := os.Getenv("GIN_MODE"); mode != "" {
+		gin.SetMode(mode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
 	}
 
-	router := newRouter(newCueEvaluator(cfg), cfg)
+	// Explicit server timeouts bound the connection layer that the body cap and
+	// eval deadline do not: slow-client (slowloris) reads and stuck writes.
+	// WriteTimeout must exceed the eval deadline or long evaluations get cut off
+	// mid-response.
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           newRouter(newCueEvaluator(cfg), cfg),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
+	// Serve until a termination signal, then drain in-flight requests so running
+	// evaluations finish (or hit their own deadline) instead of being cut off.
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Serve: %v", err)
+		}
+	}()
 	log.Printf("Listening on :%s, schema dir %s", cfg.Port, cfg.CueDir)
-	if err := router.Run(":" + cfg.Port); err != nil {
-		log.Fatalf("Serve: %v", err)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	stop()
+	log.Println("Shutting down...")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Shutdown: %v", err)
 	}
 }

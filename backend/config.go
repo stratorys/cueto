@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -12,6 +15,7 @@ import (
 // how CUE_DIR and PORT already work.
 type Config struct {
 	CueDir         string
+	VersionsDir    string        // where saved versions are written (outside CueDir)
 	Port           string
 	MaxBodyBytes   int64         // request body cap, bytes
 	MaxOutputBytes int           // evaluated JSON cap, bytes
@@ -21,14 +25,30 @@ type Config struct {
 
 // loadConfig reads configuration from the environment, applying safe defaults.
 // CueDir is resolved to an absolute path so overlay and diagnostics paths are
-// stable regardless of the working directory.
+// stable regardless of the working directory. VERSIONS_DIR is required and must
+// resolve outside CUE_DIR, so saved versions never overwrite the seed data.cue
+// or join `package diagram`.
 func loadConfig() (Config, error) {
-	abs, err := filepath.Abs(envString("CUE_DIR", "../cue"))
+	cueDir, err := filepath.Abs(envString("CUE_DIR", "../cue"))
 	if err != nil {
 		return Config{}, err
 	}
+
+	rawVersions := envString("VERSIONS_DIR", "")
+	if rawVersions == "" {
+		return Config{}, errors.New("VERSIONS_DIR is required")
+	}
+	versionsDir, err := filepath.Abs(rawVersions)
+	if err != nil {
+		return Config{}, err
+	}
+	if versionsDir == cueDir || strings.HasPrefix(versionsDir, cueDir+string(filepath.Separator)) {
+		return Config{}, fmt.Errorf("VERSIONS_DIR (%s) must be outside CUE_DIR (%s)", versionsDir, cueDir)
+	}
+
 	return Config{
-		CueDir:         abs,
+		CueDir:         cueDir,
+		VersionsDir:    versionsDir,
 		Port:           envString("PORT", "8091"),
 		MaxBodyBytes:   envInt64("MAX_BODY_BYTES", 1<<20),        // 1 MiB
 		MaxOutputBytes: int(envInt64("MAX_OUTPUT_BYTES", 4<<20)), // 4 MiB

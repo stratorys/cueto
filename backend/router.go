@@ -11,11 +11,15 @@ import (
 // inside the evaluator's deadline.
 func newRouter(eval Evaluator, cfg Config) *gin.Engine {
 	r := gin.New()
+	// Trust no proxies: this backend is reached directly, so client-supplied
+	// X-Forwarded-For headers must not be believed.
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), cors(), limitBody(cfg.MaxBodyBytes), limitConcurrency(cfg.MaxConcurrent))
 
 	h := &handlers{eval: eval, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
 	r.POST("/vet", h.Vet)
+	r.POST("/save", h.Save)
 	r.POST("/format", h.Format)
 	return r
 }

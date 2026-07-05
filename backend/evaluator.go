@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -24,6 +26,11 @@ type Evaluator interface {
 	Eval(ctx context.Context, data string) (json.RawMessage, []Diagnostic, error)
 	// Vet validates data against the schema, returning diagnostics (empty when ok).
 	Vet(ctx context.Context, data string) ([]Diagnostic, error)
+	// Save validates data and, only when valid, stores it as an immutable version
+	// keyed by its content hash, returning the version id. Diagnostics are returned
+	// (and nothing is written) when the data is invalid. The hand-owned schema.cue
+	// and the seed data.cue are never touched.
+	Save(ctx context.Context, data string) (string, []Diagnostic, error)
 	// Format runs `cue fmt` over arbitrary source text.
 	Format(source string) (string, error)
 }
@@ -33,6 +40,7 @@ type Evaluator interface {
 var (
 	errTimeout        = errors.New("evaluation timed out")
 	errOutputTooLarge = errors.New("evaluation output too large")
+	errNoVersionsDir  = errors.New("versions directory is not configured")
 )
 
 // cueEvaluator evaluates schema.cue + a per-request data.cue in-process.
@@ -42,6 +50,7 @@ var (
 // to be flat concrete data; the graph->CUE regeneration flattens it the same way.
 type cueEvaluator struct {
 	cueDir         string
+	versionsDir    string
 	timeout        time.Duration
 	maxOutputBytes int
 }
@@ -49,6 +58,7 @@ type cueEvaluator struct {
 func newCueEvaluator(cfg Config) *cueEvaluator {
 	return &cueEvaluator{
 		cueDir:         cfg.CueDir,
+		versionsDir:    cfg.VersionsDir,
 		timeout:        cfg.EvalTimeout,
 		maxOutputBytes: cfg.MaxOutputBytes,
 	}
@@ -74,6 +84,18 @@ func (e *cueEvaluator) Eval(ctx context.Context, data string) (json.RawMessage, 
 func (e *cueEvaluator) Vet(ctx context.Context, data string) ([]Diagnostic, error) {
 	_, diags, err := e.evaluate(ctx, data)
 	return diags, err
+}
+
+// Save implements Evaluator: validate, then persist a new immutable version.
+func (e *cueEvaluator) Save(ctx context.Context, data string) (string, []Diagnostic, error) {
+	if _, diags, err := e.evaluate(ctx, data); err != nil || len(diags) > 0 {
+		return "", diags, err
+	}
+	version, err := e.writeVersion([]byte(data))
+	if err != nil {
+		return "", nil, err
+	}
+	return version, nil, nil
 }
 
 // Format implements Evaluator.
@@ -158,13 +180,38 @@ func (e *cueEvaluator) dataPath() string {
 	return filepath.Join(e.cueDir, "data.cue")
 }
 
-// saveDataPath returns the only path the backend is ever permitted to write:
-// data.cue inside the schema dir. schema.cue is hand-owned and must never be
-// machine-written, so any other target is rejected. No write endpoint exists
-// yet; this encodes the invariant so a future /save cannot violate it.
-func (e *cueEvaluator) saveDataPath(name string) (string, error) {
-	if filepath.Base(name) != "data.cue" {
-		return "", fmt.Errorf("refusing to write %q: only data.cue is machine-writable", filepath.Base(name))
+// writeVersion stores data as an immutable, content-addressed version and
+// returns its id (the sha256 hex of the content). Writes go only into the
+// configured versions dir - never the CUE package dir - so schema.cue and the
+// seed data.cue are untouched and version files never join `package diagram`.
+// Identical content is idempotent: an existing version is reused, not rewritten.
+func (e *cueEvaluator) writeVersion(data []byte) (string, error) {
+	if e.versionsDir == "" {
+		return "", errNoVersionsDir
 	}
-	return e.dataPath(), nil
+	if err := os.MkdirAll(e.versionsDir, 0o755); err != nil {
+		return "", err
+	}
+
+	sum := sha256.Sum256(data)
+	id := hex.EncodeToString(sum[:])
+	path := filepath.Join(e.versionsDir, id+".cue")
+
+	// O_EXCL makes creation atomic: concurrent saves of the same content race on
+	// the same name and all but one see ErrExist, which is success (idempotent).
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return id, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return id, nil
 }
