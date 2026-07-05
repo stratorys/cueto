@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -16,6 +17,21 @@ type handlers struct {
 
 type dataRequest struct {
 	Data string `json:"data"`
+	// Editable file set for multi-file packages. When empty, Data is treated as a
+	// single legacy data.cue, so older single-file clients keep working.
+	Files []File `json:"files"`
+	// Optional imported infra facts (from /import/*). When present, /vet also
+	// reports drift between the diagram and this live topology.
+	Facts string `json:"facts"`
+}
+
+// files returns the editable set: the explicit Files, or a single data.cue built
+// from Data when Files is empty (the single-file compatibility path).
+func (r dataRequest) files() []File {
+	if len(r.Files) > 0 {
+		return r.Files
+	}
+	return []File{{Name: "data.cue", Content: r.Data}}
 }
 
 type sourceRequest struct {
@@ -28,7 +44,7 @@ func (h *handlers) Eval(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	out, diags, err := h.eval.Eval(c.Request.Context(), req.Data)
+	out, hints, prov, diags, err := h.eval.Eval(c.Request.Context(), req.files())
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -37,7 +53,7 @@ func (h *handlers) Eval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
 		return
 	}
-	c.Data(http.StatusOK, "application/json", out)
+	c.JSON(http.StatusOK, gin.H{"diagram": json.RawMessage(out), "hints": hints, "provenance": prov})
 }
 
 // Vet reports validation diagnostics. Keeping the existing contract it answers
@@ -47,7 +63,7 @@ func (h *handlers) Vet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	diags, err := h.eval.Vet(c.Request.Context(), req.Data)
+	diags, err := h.eval.Vet(c.Request.Context(), req.files(), req.Facts)
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -57,6 +73,25 @@ func (h *handlers) Vet(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// ImportCompose parses docker-compose YAML into #Actual facts (JSON) for a drift
+// check. It answers 200 {facts:"..."} or 400 with kindImport diagnostics.
+func (h *handlers) ImportCompose(c *gin.Context) {
+	var req sourceRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	facts, diags, err := h.eval.ImportCompose(req.Source)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	if len(diags) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"facts": facts})
 }
 
 // Save validates the data and, when valid, stores it as a new immutable version.
@@ -76,6 +111,58 @@ func (h *handlers) Save(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
+}
+
+// ListVersions returns the saved versions newest-first as {versions:[...]}.
+func (h *handlers) ListVersions(c *gin.Context) {
+	versions, err := h.eval.ListVersions(c.Request.Context())
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"versions": versions})
+}
+
+// ReadVersion returns one version's stored data.cue as {version, data}. A
+// malformed id is 400; an unknown (but well-formed) id is 404.
+func (h *handlers) ReadVersion(c *gin.Context) {
+	id := c.Param("id")
+	data, err := h.eval.ReadVersion(c.Request.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, errInvalidVersionID):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"diagnostics": []Diagnostic{{Message: "invalid version id", Kind: kindInternal}},
+			})
+		case errors.Is(err, errVersionNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"diagnostics": []Diagnostic{{Message: "version not found", Kind: kindInternal}},
+			})
+		default:
+			writeOpError(c, err)
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"version": id, "data": data})
+}
+
+// Rewrite splices canvas edits into one editable file and returns the new text
+// as {content}. A syntax error (in the file or a supplied body) is 400.
+func (h *handlers) Rewrite(c *gin.Context) {
+	var op RewriteOp
+	if !bindJSON(c, &op) {
+		return
+	}
+	content, diags, err := h.eval.Rewrite(op)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	if len(diags) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"content": content})
 }
 
 // Format runs cue fmt over the provided source.

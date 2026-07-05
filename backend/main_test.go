@@ -51,6 +51,13 @@ func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRe
 	return rec
 }
 
+func getJSON(router *gin.Engine, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
 func evalBody(t *testing.T, data string) []byte {
 	t.Helper()
 	b, err := json.Marshal(dataRequest{Data: data})
@@ -95,24 +102,64 @@ func TestEvalHappyPath(t *testing.T) {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Nodes map[string]any `json:"nodes"`
-		Edges []struct {
-			ID string `json:"id"`
-		} `json:"edges"`
+		Diagram struct {
+			Nodes map[string]any `json:"nodes"`
+			Edges []struct {
+				ID string `json:"id"`
+			} `json:"edges"`
+		} `json:"diagram"`
+		Hints []Hint `json:"hints"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out.Nodes) != 2 {
-		t.Fatalf("nodes = %d, want 2", len(out.Nodes))
+	if len(out.Diagram.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(out.Diagram.Nodes))
 	}
 	// Edge list order must be stable across a round-trip.
-	got := []string{out.Edges[0].ID, out.Edges[1].ID, out.Edges[2].ID}
+	got := []string{out.Diagram.Edges[0].ID, out.Diagram.Edges[1].ID, out.Diagram.Edges[2].ID}
 	want := []string{"e1", "e2", "e3"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("edge order = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestEvalUnaffectedByOptionalFields(t *testing.T) {
+	// The optional domain metadata (policies, role/owner/region/zone, call/sync)
+	// must not break eval, and must round-trip through the /eval output.
+	data := `package diagram
+
+diagram: #Diagram & {
+	policies: ["security"]
+	nodes: {
+		api: {type: "process", role: "service", owner: "payments", region: "eu-west-1", zone: "public", x: 1, y: 1, label: "api"}
+		db: {type: "process", role: "database", region: "eu-west-1", x: 2, y: 2, label: "db"}
+	}
+	edges: [
+		{id: "e1", source: "api", target: "db", kind: "arrow", call: "reads", protocol: "sql", sync: true},
+	]
+}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Diagram struct {
+			Nodes map[string]map[string]any `json:"nodes"`
+		} `json:"diagram"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Diagram.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2", len(out.Diagram.Nodes))
+	}
+	if out.Diagram.Nodes["api"]["role"] != "service" {
+		t.Fatalf("api.role = %v, want service (domain field dropped?)", out.Diagram.Nodes["api"]["role"])
 	}
 }
 
@@ -255,21 +302,33 @@ type blockingEval struct {
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, data string) (json.RawMessage, []Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
-	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, nil
+	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, Provenance{}, nil, nil
 }
 
-func (b *blockingEval) Vet(ctx context.Context, data string) ([]Diagnostic, error) {
+func (b *blockingEval) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
 	return nil, nil
+}
+
+func (b *blockingEval) ImportCompose(source string) (string, []Diagnostic, error) {
+	return "", nil, nil
 }
 
 func (b *blockingEval) Save(ctx context.Context, data string) (string, []Diagnostic, error) {
 	return "v", nil, nil
 }
 
+func (b *blockingEval) ListVersions(ctx context.Context) ([]VersionMeta, error) { return nil, nil }
+
+func (b *blockingEval) ReadVersion(ctx context.Context, id string) (string, error) { return "", nil }
+
 func (b *blockingEval) Format(source string) (string, error) { return source, nil }
+
+func (b *blockingEval) Rewrite(op RewriteOp) (string, []Diagnostic, error) {
+	return op.Content, nil, nil
+}
 
 func TestConcurrencyLimit(t *testing.T) {
 	be := &blockingEval{entered: make(chan struct{}, 1), release: make(chan struct{})}
@@ -324,6 +383,236 @@ func TestVetInvalid(t *testing.T) {
 	}
 	if body.OK || len(body.Diagnostics) == 0 {
 		t.Fatalf("want ok:false with diagnostics, got %q", rec.Body.String())
+	}
+}
+
+func TestVetPolicyClean(t *testing.T) {
+	// Opts into the security pack and satisfies it: a db with an owner, no PCI
+	// crossing, no cross-region sync.
+	data := `package diagram
+
+diagram: #Diagram & {
+	policies: ["security"]
+	nodes: {
+		api: {type: "process", role: "service", region: "eu", zone: "public", x: 1, y: 1, label: "api"}
+		db: {type: "process", role: "database", owner: "payments", region: "eu", zone: "public", x: 2, y: 2, label: "db"}
+	}
+	edges: [
+		{id: "e1", source: "api", target: "db", kind: "arrow", call: "reads"},
+	]
+}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/vet", evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OK bool `json:"ok"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if !body.OK {
+		t.Fatalf("ok = false, want true (body %q)", rec.Body.String())
+	}
+}
+
+func TestVetPolicyViolation(t *testing.T) {
+	// db without an owner (db-needs-owner) and a PCI-boundary crossing edge.
+	data := `package diagram
+
+diagram: #Diagram & {
+	policies: ["security"]
+	nodes: {
+		api: {type: "process", role: "service", zone: "public", x: 1, y: 1, label: "api"}
+		db: {type: "process", role: "database", zone: "pci", x: 2, y: 2, label: "db"}
+	}
+	edges: [
+		{id: "e1", source: "api", target: "db", kind: "arrow", call: "reads"},
+	]
+}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/vet", evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OK          bool         `json:"ok"`
+		Diagnostics []Diagnostic `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.OK || len(body.Diagnostics) == 0 {
+		t.Fatalf("want ok:false with policy diagnostics, got %q", rec.Body.String())
+	}
+	rules := map[string]bool{}
+	for _, d := range body.Diagnostics {
+		if d.Kind != kindPolicy {
+			t.Fatalf("diagnostic kind = %q, want %q (%+v)", d.Kind, kindPolicy, d)
+		}
+		rules[d.Rule] = true
+	}
+	for _, want := range []string{"db-needs-owner", "no-pci-crossing"} {
+		if !rules[want] {
+			t.Fatalf("missing rule %q in %+v", want, body.Diagnostics)
+		}
+	}
+}
+
+func TestVetPolicyNotOptedIn(t *testing.T) {
+	// Same violating shape but no opt-in: the pack must not run, so vet is clean.
+	data := `package diagram
+
+diagram: #Diagram & {
+	nodes: {
+		db: {type: "process", role: "database", x: 1, y: 1, label: "db"}
+	}
+	edges: []
+}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/vet", evalBody(t, data))
+	var body struct {
+		OK bool `json:"ok"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if !body.OK {
+		t.Fatalf("ok = false, want true when not opted in (body %q)", rec.Body.String())
+	}
+}
+
+func TestImportComposeProducesFacts(t *testing.T) {
+	compose := `services:
+  web:
+    image: nginx
+    depends_on:
+      - db
+  db:
+    image: postgres
+`
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{Source: compose})
+	rec := postJSON(router, "/import/compose", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Facts string `json:"facts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var facts struct {
+		Source string `json:"source"`
+		Links  []struct {
+			Source string `json:"source"`
+			Target string `json:"target"`
+		} `json:"links"`
+	}
+	if err := json.Unmarshal([]byte(out.Facts), &facts); err != nil {
+		t.Fatalf("facts is not valid JSON: %v (%q)", err, out.Facts)
+	}
+	if facts.Source != "compose" {
+		t.Fatalf("source = %q, want compose", facts.Source)
+	}
+	if len(facts.Links) != 1 || facts.Links[0].Source != "web" || facts.Links[0].Target != "db" {
+		t.Fatalf("links = %+v, want one web->db", facts.Links)
+	}
+}
+
+func TestImportComposeMalformed(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	cfg := testConfig(t)
+	body, _ := json.Marshal(sourceRequest{Source: "services: [1, 2"})
+	rec := postJSON(router, "/import/compose", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
+	}
+	diags := decodeDiags(t, rec)
+	if len(diags) == 0 || diags[0].Kind != kindImport {
+		t.Fatalf("diagnostics = %+v, want kind %q", diags, kindImport)
+	}
+	for _, d := range diags {
+		if strings.Contains(d.Message, cfg.CueDir) {
+			t.Fatalf("import diagnostic leaks host path: %q", d.Message)
+		}
+	}
+}
+
+func TestVetDrift(t *testing.T) {
+	// Diagram claims web->db; live infra shows web->cache instead.
+	data := `package diagram
+
+diagram: #Diagram & {
+	nodes: {
+		web: {type: "process", x: 1, y: 1, label: "web"}
+		db: {type: "process", x: 2, y: 2, label: "db"}
+	}
+	edges: [
+		{id: "e1", source: "web", target: "db", kind: "arrow"},
+	]
+}
+`
+	facts := `{"source":"compose","services":{"web":{"name":"web"},"cache":{"name":"cache"}},"links":[{"source":"web","target":"cache"}]}`
+
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(dataRequest{Data: data, Facts: facts})
+	rec := postJSON(router, "/vet", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		OK          bool         `json:"ok"`
+		Diagnostics []Diagnostic `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.OK || len(out.Diagnostics) == 0 {
+		t.Fatalf("want ok:false with drift, got %q", rec.Body.String())
+	}
+	var missing, extra bool
+	for _, d := range out.Diagnostics {
+		if d.Kind != kindDrift {
+			t.Fatalf("kind = %q, want %q (%+v)", d.Kind, kindDrift, d)
+		}
+		if strings.Contains(d.Message, "web->db") {
+			missing = true
+		}
+		if strings.Contains(d.Message, "web->cache") {
+			extra = true
+		}
+	}
+	if !missing || !extra {
+		t.Fatalf("want both missing web->db and extra web->cache, got %+v", out.Diagnostics)
+	}
+}
+
+func TestVetDriftClean(t *testing.T) {
+	// Diagram and infra agree: no drift.
+	data := `package diagram
+
+diagram: #Diagram & {
+	nodes: {
+		web: {type: "process", x: 1, y: 1, label: "web"}
+		db: {type: "process", x: 2, y: 2, label: "db"}
+	}
+	edges: [
+		{id: "e1", source: "web", target: "db", kind: "arrow"},
+	]
+}
+`
+	facts := `{"source":"compose","services":{"web":{"name":"web"},"db":{"name":"db"}},"links":[{"source":"web","target":"db"}]}`
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(dataRequest{Data: data, Facts: facts})
+	rec := postJSON(router, "/vet", body)
+	var out struct {
+		OK bool `json:"ok"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if !out.OK {
+		t.Fatalf("ok = false, want true when diagram matches infra (body %q)", rec.Body.String())
 	}
 }
 
@@ -414,8 +703,120 @@ func TestSaveIdempotent(t *testing.T) {
 		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
 	}
 	entries, _ := os.ReadDir(cfg.VersionsDir)
-	if len(entries) != 1 {
-		t.Fatalf("want 1 version file, got %d", len(entries))
+	cueFiles := 0
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".cue") {
+			cueFiles++
+		}
+	}
+	if cueFiles != 1 {
+		t.Fatalf("want 1 version file, got %d", cueFiles)
+	}
+}
+
+func TestListAndReadVersion(t *testing.T) {
+	cfg := testConfig(t)
+	router := realRouter(t, cfg)
+
+	saveRec := postJSON(router, "/save", evalBody(t, validData))
+	if saveRec.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body %q", saveRec.Code, saveRec.Body.String())
+	}
+	var saved struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(saveRec.Body.Bytes(), &saved); err != nil {
+		t.Fatalf("decode save: %v", err)
+	}
+
+	listRec := getJSON(router, "/versions")
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", listRec.Code)
+	}
+	var list struct {
+		Versions []VersionMeta `json:"versions"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Versions) != 1 || list.Versions[0].Version != saved.Version {
+		t.Fatalf("versions = %+v, want the saved hash %q", list.Versions, saved.Version)
+	}
+	if list.Versions[0].SavedAt.IsZero() {
+		t.Fatalf("version is missing a savedAt timestamp: %+v", list.Versions[0])
+	}
+
+	readRec := getJSON(router, "/versions/"+saved.Version)
+	if readRec.Code != http.StatusOK {
+		t.Fatalf("read status = %d, body %q", readRec.Code, readRec.Body.String())
+	}
+	var read struct {
+		Version string `json:"version"`
+		Data    string `json:"data"`
+	}
+	if err := json.Unmarshal(readRec.Body.Bytes(), &read); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if read.Data != validData {
+		t.Fatalf("read data mismatch:\n got %q\nwant %q", read.Data, validData)
+	}
+}
+
+func TestReadVersionBadID(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	// Well-formed single-segment but non-hex ids reach the handler and are 400.
+	for _, id := range []string{"not-a-hash", strings.Repeat("g", 64), "abc"} {
+		rec := getJSON(router, "/versions/"+id)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("id %q status = %d, want 400", id, rec.Code)
+		}
+	}
+	// An encoded path-traversal id is rejected by the router before the handler
+	// (404); either way it must never reach the filesystem or return 200.
+	rec := getJSON(router, "/versions/..%2f..%2fetc%2fpasswd")
+	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
+		t.Fatalf("traversal id status = %d, want 400 or 404", rec.Code)
+	}
+}
+
+func TestReadVersionNotFound(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	// Well-formed but absent hash -> 404.
+	rec := getJSON(router, "/versions/"+strings.Repeat("a", 64))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
+	cfg := testConfig(t)
+	router := realRouter(t, cfg)
+	postJSON(router, "/save", evalBody(t, validData))
+	postJSON(router, "/save", evalBody(t, validData)) // idempotent re-save
+
+	// The index records the save exactly once (the re-save reused the file).
+	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, "index.jsonl"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	lines := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(index)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("index has %d lines, want 1 (idempotent save must not duplicate)", lines)
+	}
+
+	// And the listing still shows a single version.
+	listRec := getJSON(router, "/versions")
+	var list struct {
+		Versions []VersionMeta `json:"versions"`
+	}
+	_ = json.Unmarshal(listRec.Body.Bytes(), &list)
+	if len(list.Versions) != 1 {
+		t.Fatalf("versions = %d, want 1", len(list.Versions))
 	}
 }
 
@@ -435,5 +836,75 @@ func TestConfigRequiresVersionsDir(t *testing.T) {
 	t.Setenv("VERSIONS_DIR", "")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("want error for missing VERSIONS_DIR, got nil")
+	}
+}
+
+func filesBody(t *testing.T, files ...File) []byte {
+	t.Helper()
+	b, err := json.Marshal(dataRequest{Files: files})
+	if err != nil {
+		t.Fatalf("marshal files body: %v", err)
+	}
+	return b
+}
+
+func TestEvalMultiFileUnifiesWithProvenance(t *testing.T) {
+	// data.cue (shadowing the disk seed) holds node a and the edge list; extra.cue
+	// contributes node b via path form. They unify into one diagram, and each node
+	// is attributed to its authoring file.
+	primary := File{Name: "data.cue", Content: `package diagram
+diagram: #Diagram & {
+	nodes: {a: {type: "process", x: 1, y: 1, label: "a"}}
+	edges: [{id: "e1", source: "a", target: "b", kind: "arrow"}]
+}
+`}
+	extra := File{Name: "extra.cue", Content: `package diagram
+diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
+`}
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", filesBody(t, primary, extra))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Diagram struct {
+			Nodes map[string]any `json:"nodes"`
+		} `json:"diagram"`
+		Provenance Provenance `json:"provenance"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Diagram.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want 2 (a+b unified)", len(out.Diagram.Nodes))
+	}
+	if out.Provenance.Nodes["a"] != "data.cue" || out.Provenance.Nodes["b"] != "extra.cue" {
+		t.Fatalf("provenance nodes = %+v, want a->data.cue b->extra.cue", out.Provenance.Nodes)
+	}
+	if out.Provenance.Edges != "data.cue" {
+		t.Fatalf("provenance edges = %q, want data.cue", out.Provenance.Edges)
+	}
+}
+
+func TestEvalRejectsSchemaFilename(t *testing.T) {
+	// A client must never be able to supply schema.cue and shadow the hand-owned one.
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", filesBody(t, File{Name: "schema.cue", Content: "package diagram\n"}))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	diags := decodeDiags(t, rec)
+	if len(diags) == 0 || !strings.Contains(diags[0].Message, "schema.cue") {
+		t.Fatalf("diagnostics = %+v, want an invalid-file-name message", diags)
+	}
+}
+
+func TestEvalRejectsTraversalFilename(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	for _, name := range []string{"../evil.cue", "sub/dir.cue", "Schema.cue"} {
+		rec := postJSON(router, "/eval", filesBody(t, File{Name: name, Content: "package diagram\n"}))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("name %q status = %d, want 400", name, rec.Code)
+		}
 	}
 }
