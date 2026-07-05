@@ -73,12 +73,18 @@ export const saveState = ref<SaveState>({ status: "idle" });
 // burst of edits (a drag) collapses into one round-trip. Kept synchronous in name
 // and effect for its ~15 call sites; only the text regeneration is deferred.
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
+// Debounce for the text->model eval (armed by onCueEdit). Declared here so a graph
+// edit can cancel a pending text eval before it clobbers the fresh model.
+let evalTimer: ReturnType<typeof setTimeout> | undefined;
 export function syncTextFromModel() {
   saveState.value = { status: "idle" };
   // The regenerated text invalidates the x-ray until the next eval.
   diagnostics.value = [];
   hints.value = [];
   clearTimeout(syncTimer);
+  // A graph edit supersedes any pending text-originated eval; drop it so a stale
+  // eval firing after this edit can't overwrite the model the user just changed.
+  clearTimeout(evalTimer);
   // Regenerate the file text, then re-eval for hints only. Chaining both onto the
   // one timer means a burst of edits (a drag) collapses into a single rewrite + a
   // single eval.
@@ -147,7 +153,6 @@ async function syncFilesFromModel() {
 
 // Typing in the CUE pane edits the active file, then debounces a re-evaluation of
 // the whole package.
-let evalTimer: ReturnType<typeof setTimeout> | undefined;
 function onCueEdit(value: string) {
   const target = files.value.find((f) => f.name === activeFileName.value);
   if (target) target.text = value;
@@ -156,8 +161,14 @@ function onCueEdit(value: string) {
   evalTimer = setTimeout(runEval, 400);
 }
 
+// Monotonic token so only the newest eval wins the last write. A slower earlier
+// eval (or the mount-load eval racing a fast first keystroke) resolving after a
+// newer one is dropped instead of overwriting the fresher model/provenance.
+let evalGeneration = 0;
 export async function runEval() {
+  const generation = ++evalGeneration;
   const result = await evalFiles(files.value);
+  if (generation !== evalGeneration) return;
   if (!result.ok) {
     evalError.value = result.error;
     diagnostics.value = result.diagnostics;

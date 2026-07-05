@@ -57,6 +57,9 @@ export interface DiagramNode {
   stroke?: string;
   // Line only: drag direction. true = "\" (top-left -> bottom-right); absent = "/".
   flip?: boolean;
+  // Optional icon name (mirrors schema.cue). Carried so a CUE-authored icon
+  // survives canvas edits; not rendered on the canvas.
+  icon?: string;
   // Set only when type is "table".
   columns?: Column[];
   // Optional domain metadata, round-tripped to CUE for policy/drift checks.

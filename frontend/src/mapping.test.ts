@@ -40,6 +40,16 @@ describe("nodeBody governance fields", () => {
   });
 });
 
+describe("nodeBody icon round-trip", () => {
+  it("emits icon when set", () => {
+    expect(nodeBody(node({ icon: "database" }))).toContain('icon: "database"');
+  });
+
+  it("omits icon when absent", () => {
+    expect(nodeBody(node())).not.toContain("icon:");
+  });
+});
+
 describe("edgesBody governance fields", () => {
   it("emits card/call/protocol/sync when set", () => {
     const body = edgesBody([

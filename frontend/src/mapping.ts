@@ -198,6 +198,7 @@ function nodeFields(node: DiagramNode): Record<string, unknown> {
     fill: node.fill,
     stroke: node.stroke,
     flip: node.flip,
+    icon: node.icon,
     columns: node.columns,
     role: node.role,
     owner: node.owner,
