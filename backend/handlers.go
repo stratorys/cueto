@@ -42,6 +42,10 @@ func (r dataRequest) files() []File {
 
 type sourceRequest struct {
 	Source string `json:"source"`
+	// When present, /repl evaluates Source as a single CUE expression against these
+	// editor files overlaid on the schema, so it can reference the live `diagram`.
+	// When empty, Source is a standalone snippet with no schema or diagram in scope.
+	Files []File `json:"files"`
 }
 
 // projectRequest is the body for project create/rename. Seed ("blank" | "sample")
@@ -69,15 +73,26 @@ func (h *handlers) Eval(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"diagram": json.RawMessage(out), "hints": hints, "provenance": prov})
 }
 
-// EvalExpr evaluates a standalone CUE snippet for the REPL scratchpad. It answers
-// 200 {result:<json>} on success, or 400 with diagnostics on a compile/concreteness
-// error. Nothing is persisted; the snippet never joins the file set or the schema.
+// EvalExpr backs /repl. With editor files it evaluates Source as an expression
+// against the live diagram (EvalQuery); without them it evaluates a standalone
+// snippet (EvalExpr). It answers 200 {result:<json>} on success, or 400 with
+// diagnostics on a compile/concreteness error. Nothing is persisted; the input
+// never joins the file set, the schema, or a saved version.
 func (h *handlers) EvalExpr(c *gin.Context) {
 	var req sourceRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	out, diags, err := h.eval.EvalExpr(c.Request.Context(), req.Source)
+	var (
+		out   json.RawMessage
+		diags []Diagnostic
+		err   error
+	)
+	if len(req.Files) > 0 {
+		out, diags, err = h.eval.EvalQuery(c.Request.Context(), req.Files, req.Source)
+	} else {
+		out, diags, err = h.eval.EvalExpr(c.Request.Context(), req.Source)
+	}
 	if err != nil {
 		writeOpError(c, err)
 		return

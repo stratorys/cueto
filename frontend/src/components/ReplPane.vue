@@ -7,13 +7,15 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
-// Ephemeral CUE REPL. Each entry evaluates a standalone CUE snippet against the
-// backend (/repl) and shows the concrete value as JSON, or its diagnostics. It is
-// a scratchpad with no saved impact: nothing here touches the editor files, the
-// diagram model, the schema, or any saved version, and the scroll-back lives only
-// in component state - it is gone on refresh.
+// Ephemeral CUE REPL. Each entry evaluates a CUE expression against the diagram
+// currently in the editor (the files are sent to /repl and overlaid on the
+// schema), so a query can read the live `diagram` - e.g.
+// `diagram.nodes.payments_db.owner`. It has no saved impact: nothing here mutates
+// the editor files, the diagram model, the schema, or any saved version, and the
+// scroll-back lives only in component state - it is gone on refresh.
 import { nextTick, ref } from "vue";
 import { evalExpr } from "../api";
+import { files } from "../composables/useEditorFiles";
 
 interface Entry {
   source: string;
@@ -30,7 +32,7 @@ async function run() {
   const text = source.value.trim();
   if (!text || running.value) return;
   running.value = true;
-  const result = await evalExpr(text);
+  const result = await evalExpr(text, files.value);
   entries.value.push({
     source: source.value,
     output: result.ok ? JSON.stringify(result.result, null, 2) : result.error,
@@ -54,15 +56,18 @@ function clearLog() {
     >
       <span class="font-semibold text-slate-700">REPL</span>
       <div class="flex items-center gap-3 text-slate-400">
-        <span class="font-mono">eval CUE · nothing saved</span>
+        <span class="font-mono">query the diagram · nothing saved</span>
         <button v-if="entries.length" class="hover:text-amber-700" @click="clearLog">clear</button>
       </div>
     </div>
 
     <div ref="logEl" class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 font-mono text-xs">
       <p v-if="!entries.length" class="text-slate-400">
-        Evaluate a standalone CUE snippet. ⌘/Ctrl+Enter runs it; ⌃L or ⌘K clears
-        the log. Results never touch your files or saved versions.
+        Query the diagram in the editor - e.g.
+        <span class="font-mono">diagram.nodes.payments_db.owner</span> or
+        <span class="font-mono">[for e in diagram.edges if e.sync {e.id}]</span>.
+        ⌘/Ctrl+Enter runs it; ⌃L or ⌘K clears the log. Results never touch your
+        files or saved versions.
       </p>
       <div v-for="(entry, i) in entries" :key="i" class="space-y-0.5">
         <pre class="whitespace-pre-wrap break-words text-slate-500"><span
@@ -79,7 +84,7 @@ function clearLog() {
         v-model="source"
         rows="2"
         spellcheck="false"
-        placeholder="a: b: 3&#10;c: a.b + 1"
+        placeholder="diagram.nodes.payments_db.owner"
         class="min-w-0 flex-1 resize-none rounded border border-slate-200 px-2 py-1 font-mono text-xs focus:border-amber-500 focus:outline-none"
         @keydown.enter.meta.prevent="run"
         @keydown.enter.ctrl.prevent="run"

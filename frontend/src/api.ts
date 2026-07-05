@@ -260,14 +260,19 @@ export function evalFiles(files: EditorFile[]): Promise<EvalFilesOk | EvalErr> {
   });
 }
 
-// evalExpr evaluates a standalone CUE snippet for the REPL scratchpad and returns
-// its concrete value as JSON, or diagnostics on a compile/concreteness error.
-// Nothing is persisted: the snippet never joins the editor files, the schema, or
-// any saved version.
-export function evalExpr(source: string): Promise<ReplOk | EvalErr> {
-  return post("/repl", { source }, async (response) => {
-    const body = await readJson<{ result?: unknown }>(response);
-    return { result: body.result ?? null };
+// evalExpr runs a REPL entry and returns its concrete value as JSON, or
+// diagnostics on a compile/concreteness error. When files are given, source is
+// evaluated as a single expression against those editor files overlaid on the
+// schema, so it can reference the live `diagram` (e.g. `diagram.nodes.x.owner`);
+// otherwise it is a standalone snippet. Nothing is persisted either way: the input
+// never joins the editor files, the schema, or any saved version.
+export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk | EvalErr> {
+  const body = files?.length
+    ? { source, files: files.map((f) => ({ name: f.name, content: f.text })) }
+    : { source };
+  return post("/repl", body, async (response) => {
+    const parsed = await readJson<{ result?: unknown }>(response);
+    return { result: parsed.result ?? null };
   });
 }
 

@@ -47,6 +47,13 @@ type Evaluator interface {
 	// scratchpad: the input is ephemeral and never joins the file set, the schema,
 	// saved versions, or the diagram. Diagnostics carry compile/concreteness errors.
 	EvalExpr(ctx context.Context, source string) (json.RawMessage, []Diagnostic, error)
+	// EvalQuery evaluates expr as a single CUE expression against the editable file
+	// set overlaid on the schema, so the expression can reference the live `diagram`
+	// (e.g. `diagram.nodes.x.owner`). Like EvalExpr the input is ephemeral: it is
+	// overlaid in a throwaway build, never joins the file set, the schema, or a saved
+	// version, and does not alter /eval output. Diagnostics carry compile or
+	// concreteness errors from the expression or the underlying diagram.
+	EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error)
 	// Vet unifies the file set and validates it against the schema and any opted-in
 	// policy packs. When facts (imported #Actual, as JSON/CUE) is non-empty, it also
 	// reports drift between the diagram and the live topology. Diagnostics are empty
@@ -143,7 +150,7 @@ func newCueEvaluator(cfg Config) *cueEvaluator {
 
 // Eval implements Evaluator.
 func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []Diagnostic, error) {
-	root, diagram, diags, err := e.evaluate(ctx, files, "")
+	root, diagram, diags, err := e.evaluate(ctx, files, "", "")
 	if err != nil || len(diags) > 0 {
 		return nil, nil, Provenance{}, diags, err
 	}
@@ -161,7 +168,7 @@ func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage,
 // any opted-in policy pack (from `policyReport`) and, when facts are supplied,
 // drift between the diagram and the live topology (from `driftReport`).
 func (e *cueEvaluator) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
-	root, _, diags, err := e.evaluate(ctx, files, facts)
+	root, _, diags, err := e.evaluate(ctx, files, facts, "")
 	if err != nil || len(diags) > 0 {
 		return diags, err
 	}
@@ -259,7 +266,7 @@ func (e *cueEvaluator) Save(ctx context.Context, projectID, data string) (string
 		return "", nil, err
 	}
 	files := []File{{Name: "data.cue", Content: data}}
-	if _, _, diags, err := e.evaluate(ctx, files, ""); err != nil || len(diags) > 0 {
+	if _, _, diags, err := e.evaluate(ctx, files, "", ""); err != nil || len(diags) > 0 {
 		return "", diags, err
 	}
 	version, err := e.writeVersion(dir, []byte(data))
@@ -315,6 +322,26 @@ func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMes
 	}
 }
 
+// EvalQuery implements Evaluator. It overlays the editable files on the schema
+// and binds expr into the diagram package (see replQueryCUE), so the expression
+// can read the live `diagram`, then marshals the concrete result. It runs under
+// the same deadline, panic recovery, and output bound as Eval via evaluate; the
+// overlay is thrown away, so nothing is persisted and /eval output is unaffected.
+func (e *cueEvaluator) EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error) {
+	_, result, diags, err := e.evaluate(ctx, files, "", expr)
+	if err != nil || len(diags) > 0 {
+		return nil, diags, err
+	}
+	out, merr := result.MarshalJSON()
+	if merr != nil {
+		return nil, diagnosticsFrom(merr, e.cueDir, kindIncomplete), nil
+	}
+	if len(out) > e.maxOutputBytes {
+		return nil, nil, errOutputTooLarge
+	}
+	return out, nil, nil
+}
+
 type exprResult struct {
 	json  json.RawMessage
 	diags []Diagnostic
@@ -343,20 +370,22 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *cueEvaluator) evaluate(ctx context.Context, files []File, facts string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) evaluate(ctx context.Context, files []File, facts, query string) (cue.Value, cue.Value, []Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
 	done := make(chan buildResult, 1)
 	go func() {
 		done <- recoverToResult(func() buildResult {
-			root, diagram, diags, err := e.build(files, facts)
+			// primary is the value whose concreteness gates success: the diagram for
+			// a plain build, or the query result when a REPL expression is overlaid.
+			root, primary, diags, err := e.build(files, facts, query)
 			if err == nil && len(diags) == 0 {
-				if verr := diagram.Validate(cue.Concrete(true)); verr != nil {
+				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
 					diags = diagnosticsFrom(verr, e.cueDir, kindIncomplete)
 				}
 			}
-			return buildResult{root, diagram, diags, err}
+			return buildResult{root, primary, diags, err}
 		})
 	}()
 
@@ -397,7 +426,7 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 // overlaid: every client filename passes validEditableName (a bare .cue name,
 // never schema.cue), and the overlay key is server-built via filepath.Join, so
 // the hand-owned schema can never be supplied, replaced, or escaped by a client.
-func (e *cueEvaluator) build(files []File, facts string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) build(files []File, facts, query string) (cue.Value, cue.Value, []Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range files {
 		if !validEditableName(f.Name) {
@@ -414,6 +443,13 @@ func (e *cueEvaluator) build(files []File, facts string) (cue.Value, cue.Value, 
 	// be a single expression, so a client cannot inject extra package fields.
 	if facts != "" {
 		overlay[e.factsPath()] = load.FromString(fmt.Sprintf(driftHarnessCUE, facts))
+	}
+	// REPL query: overlay a backend-authored field binding the expression into the
+	// diagram package so it can read the live `diagram`. Only present for /repl
+	// queries, so /eval, /vet, and /save are unaffected. Wrapping expr in ( ) forces
+	// a single expression, matching the drift harness.
+	if query != "" {
+		overlay[e.replPath()] = load.FromString(fmt.Sprintf(replQueryCUE, query))
 	}
 	cfg := &load.Config{Dir: e.cueDir, Overlay: overlay}
 
@@ -437,6 +473,11 @@ func (e *cueEvaluator) build(files []File, facts string) (cue.Value, cue.Value, 
 			Kind:    kindIncomplete,
 		}}, nil
 	}
+	// A REPL query returns its bound expression as the primary value; the diagram
+	// still had to build and resolve for the expression to read it.
+	if query != "" {
+		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil
+	}
 	return value, diagram, nil, nil
 }
 
@@ -444,6 +485,12 @@ func (e *cueEvaluator) build(files []File, facts string) (cue.Value, cue.Value, 
 // has no leading underscore/dot, so CUE's loader does not skip it.
 func (e *cueEvaluator) factsPath() string {
 	return filepath.Join(e.cueDir, "facts_overlay.cue")
+}
+
+// replPath is the overlay path of the backend-authored REPL query binding. Like
+// factsPath the name has no leading underscore/dot, so the loader includes it.
+func (e *cueEvaluator) replPath() string {
+	return filepath.Join(e.cueDir, "repl_query.cue")
 }
 
 // driftHarnessCUE is overlaid (never written to disk) during a drift vet. %s is
@@ -465,6 +512,16 @@ driftReport: {
 	missing: [for x in _expected if !list.Contains(_actual, x) {x}]
 	extra: [for a in _actual if !list.Contains(_expected, a) {a}]
 }
+`
+
+// replQueryCUE is overlaid (never written to disk) for a /repl query. %s is the
+// user expression; the surrounding ( ) force it to a single expression so a client
+// cannot inject extra package fields. Being in `package diagram`, the expression
+// resolves `diagram` and the schema definitions. replResult is looked up and
+// marshaled; it never affects /eval, which builds without this overlay.
+const replQueryCUE = `package diagram
+
+replResult: (%s)
 `
 
 // writeVersion stores data as an immutable, content-addressed version and

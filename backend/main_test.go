@@ -318,6 +318,10 @@ func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMes
 	return json.RawMessage(`null`), nil, nil
 }
 
+func (b *blockingEval) EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error) {
+	return json.RawMessage(`null`), nil, nil
+}
+
 func (b *blockingEval) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
 	return nil, nil
 }
@@ -411,6 +415,92 @@ func TestReplEvalExprError(t *testing.T) {
 	}
 	if len(decodeDiags(t, rec)) == 0 {
 		t.Fatal("want a conflict diagnostic, got none")
+	}
+}
+
+func TestReplQueryAgainstEditorData(t *testing.T) {
+	// With files present, /repl evaluates the source as an expression against the
+	// live diagram, so it can reference `diagram`.
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{
+		Source: `diagram.nodes.a.label`,
+		Files:  []File{{Name: "data.cue", Content: validData}},
+	})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	if out.Result != "a" {
+		t.Fatalf("result = %q, want %q", out.Result, "a")
+	}
+}
+
+func TestReplQueryComprehension(t *testing.T) {
+	// A list comprehension over the diagram returns a concrete list.
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{
+		Source: `[for e in diagram.edges {e.id}]`,
+		Files:  []File{{Name: "data.cue", Content: validData}},
+	})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Result []string `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	want := []string{"e1", "e2", "e3"}
+	if len(out.Result) != len(want) {
+		t.Fatalf("result = %v, want %v", out.Result, want)
+	}
+	for i := range want {
+		if out.Result[i] != want[i] {
+			t.Fatalf("result = %v, want %v", out.Result, want)
+		}
+	}
+}
+
+func TestReplQueryDoesNotAffectEval(t *testing.T) {
+	// The query overlay must not leak into /eval output: the marshaled diagram
+	// carries no replResult field.
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", evalBody(t, validData))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Diagram map[string]any `json:"diagram"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, present := out.Diagram["replResult"]; present {
+		t.Fatal("replResult leaked into /eval diagram output")
+	}
+}
+
+func TestReplQueryIncompleteExpr(t *testing.T) {
+	// A non-concrete expression yields diagnostics (400), not a 500 or a value.
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{
+		Source: `diagram.nodes.missing.label`,
+		Files:  []File{{Name: "data.cue", Content: validData}},
+	})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
+	}
+	if len(decodeDiags(t, rec)) == 0 {
+		t.Fatal("want a diagnostic for the missing field, got none")
 	}
 }
 
