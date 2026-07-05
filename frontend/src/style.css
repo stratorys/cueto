@@ -1,12 +1,31 @@
-* {
-  box-sizing: border-box;
+@import "tailwindcss";
+@import "@vue-flow/core/dist/style.css";
+@import "@vue-flow/core/dist/theme-default.css";
+@import "@vue-flow/controls/dist/style.css";
+@import "@vue-flow/node-resizer/dist/style.css";
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+  }
 }
 
-html,
-body,
-#app {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
+/* Cross-panel highlight (analysis / diff / query). Applied to Vue Flow node and
+   edge groups via the `class` field; amber matches the app accent. */
+.vue-flow__node.is-dimmed,
+.vue-flow__edge.is-dimmed {
+  opacity: 0.18;
+  transition: opacity 120ms ease;
+}
+.vue-flow__node.is-highlighted {
+  outline: 2px solid #f59e0b;
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.vue-flow__edge.is-highlighted path {
+  stroke: #f59e0b !important;
+  stroke-width: 3 !important;
 }

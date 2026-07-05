@@ -3,7 +3,7 @@
 // Single-canvas POC, so module-level singleton state is fine.
 
 import { computed, ref, toRaw } from "vue";
-import type { Diagram } from "./model";
+import type { Diagram, ShapeKind } from "./model";
 import { sampleDiagram } from "./model";
 
 // The model is pure JSON, so a JSON round-trip deep-clones it and strips Vue's
@@ -23,6 +23,94 @@ function commit(mutate: (draft: Diagram) => void): void {
   const next = clone(diagram.value);
   mutate(next);
   diagram.value = next;
+}
+
+// A node id doubles as its CUE map key (nodes: [ID=string]: #Node), so it must
+// be a legible, valid bare identifier. Slug the label, prefixing when it would
+// otherwise start with a digit.
+function slugify(label: string): string {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return /^[a-z_]/.test(slug) ? slug : `n_${slug}`;
+}
+
+// Disambiguate a base id against ids already in use: base, base_2, base_3, ...
+function uniqueId(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
+// Create a shape at a position with a size, as one undoable step. The id is
+// slugged from the geometry (rectangle, rectangle_2, ...). Returns the new id.
+function addShape(
+  shape: ShapeKind,
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+  flip?: boolean,
+): string {
+  const taken = new Set(diagram.value.nodes.map((node) => node.id));
+  const id = uniqueId(slugify(shape), taken);
+  commit((draft) => {
+    draft.nodes.push({
+      id,
+      type: "shape",
+      shape,
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+      flip,
+      label: "",
+    });
+  });
+  return id;
+}
+
+// Create a DB table node at a position, as one undoable step. Size is
+// content-derived (no width/height), so TableNode grows with its columns. The
+// table starts with one primary-key column; further columns are edited in CUE.
+// Returns the new id.
+function addTable(position: { x: number; y: number }): string {
+  const taken = new Set(diagram.value.nodes.map((node) => node.id));
+  const id = uniqueId("table", taken);
+  commit((draft) => {
+    draft.nodes.push({
+      id,
+      type: "table",
+      x: position.x,
+      y: position.y,
+      label: id,
+      columns: [{ name: "id", dbType: "int", pk: true }],
+    });
+  });
+  return id;
+}
+
+// Create a container node at a position, as one undoable step. A container holds
+// other nodes (they point at it via `parent`); it starts empty with an explicit
+// frame size so it has a visible box. Returns the new id.
+function addContainer(
+  position: { x: number; y: number },
+  size: { width: number; height: number },
+): string {
+  const taken = new Set(diagram.value.nodes.map((node) => node.id));
+  const id = uniqueId("container", taken);
+  commit((draft) => {
+    draft.nodes.push({
+      id,
+      type: "container",
+      x: position.x,
+      y: position.y,
+      width: size.width,
+      height: size.height,
+      label: id,
+    });
+  });
+  return id;
 }
 
 // Replace the whole model as one undoable step (used when CUE text re-evaluates).
@@ -50,6 +138,9 @@ export function useDiagram() {
   return {
     diagram,
     commit,
+    addShape,
+    addTable,
+    addContainer,
     replace,
     undo,
     redo,
