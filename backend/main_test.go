@@ -322,6 +322,10 @@ func (b *blockingEval) EvalQuery(ctx context.Context, files []File, expr string)
 	return json.RawMessage(`null`), nil, nil
 }
 
+func (b *blockingEval) Introspect() CueMeta {
+	return CueMeta{}
+}
+
 func (b *blockingEval) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
 	return nil, nil
 }
@@ -501,6 +505,58 @@ func TestReplQueryIncompleteExpr(t *testing.T) {
 	}
 	if len(decodeDiags(t, rec)) == 0 {
 		t.Fatal("want a diagnostic for the missing field, got none")
+	}
+}
+
+func TestReplQueryUsesStdlibPackage(t *testing.T) {
+	// A query referencing a stdlib package works: the backend injects the import
+	// for exactly the packages the expression uses.
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{
+		Source: `strings.ToUpper(diagram.nodes.a.label)`,
+		Files:  []File{{Name: "data.cue", Content: validData}},
+	})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	if out.Result != "A" {
+		t.Fatalf("result = %q, want %q", out.Result, "A")
+	}
+}
+
+func TestReplQueryFieldNamedLikePackage(t *testing.T) {
+	// A field access whose leaf shares a package name (diagram.nodes) must not
+	// trigger an injected import, which would fail as "imported and not used".
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{
+		Source: `len(diagram.nodes)`,
+		Files:  []File{{Name: "data.cue", Content: validData}},
+	})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCueMetaLists(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	rec := getJSON(router, "/cue/meta")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var meta CueMeta
+	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	if len(meta.Builtins) == 0 || len(meta.Packages) == 0 {
+		t.Fatalf("empty meta: %d builtins, %d packages", len(meta.Builtins), len(meta.Packages))
 	}
 }
 

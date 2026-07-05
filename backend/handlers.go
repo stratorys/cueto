@@ -104,6 +104,13 @@ func (h *handlers) EvalExpr(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"result": json.RawMessage(out)})
 }
 
+// CueMeta returns the static CUE reference (builtin functions and importable
+// packages with their members) that backs the REPL's autocomplete and reference
+// browser. The payload is version-static; the evaluator computes it once.
+func (h *handlers) CueMeta(c *gin.Context) {
+	c.JSON(http.StatusOK, h.eval.Introspect())
+}
+
 // Vet reports validation diagnostics. Keeping the existing contract it answers
 // 200 with {ok:false, diagnostics:[...]} for invalid input and {ok:true} on pass.
 func (h *handlers) Vet(c *gin.Context) {

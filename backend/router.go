@@ -25,6 +25,7 @@ func newRouter(eval Evaluator, cfg Config) *gin.Engine {
 	h := &handlers{eval: eval, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
 	r.POST("/repl", h.EvalExpr)
+	r.GET("/cue/meta", h.CueMeta)
 	r.POST("/vet", h.Vet)
 	r.POST("/format", h.Format)
 	r.POST("/rewrite", h.Rewrite)

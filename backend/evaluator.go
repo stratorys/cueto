@@ -54,6 +54,11 @@ type Evaluator interface {
 	// version, and does not alter /eval output. Diagnostics carry compile or
 	// concreteness errors from the expression or the underlying diagram.
 	EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error)
+	// Introspect returns the CUE builtin functions and importable standard-library
+	// packages (each with its members) that a REPL query can reference. The result
+	// is static per CUE version, so it is computed once and cached; it feeds the
+	// REPL's autocomplete and reference browser.
+	Introspect() CueMeta
 	// Vet unifies the file set and validates it against the schema and any opted-in
 	// policy packs. When facts (imported #Actual, as JSON/CUE) is non-empty, it also
 	// reports drift between the diagram and the live topology. Diagnostics are empty
@@ -137,6 +142,9 @@ type cueEvaluator struct {
 	// files are content-addressed and written atomically, so only registry mutations
 	// need serializing.
 	mu sync.Mutex
+	// Memoizes the static CUE builtin/package reference (see Introspect).
+	metaOnce sync.Once
+	meta     CueMeta
 }
 
 func newCueEvaluator(cfg Config) *cueEvaluator {
@@ -446,10 +454,10 @@ func (e *cueEvaluator) build(files []File, facts, query string) (cue.Value, cue.
 	}
 	// REPL query: overlay a backend-authored field binding the expression into the
 	// diagram package so it can read the live `diagram`. Only present for /repl
-	// queries, so /eval, /vet, and /save are unaffected. Wrapping expr in ( ) forces
-	// a single expression, matching the drift harness.
+	// queries, so /eval, /vet, and /save are unaffected. replQuerySource wraps the
+	// expr in ( ) and prepends imports for any standard-library packages it uses.
 	if query != "" {
-		overlay[e.replPath()] = load.FromString(fmt.Sprintf(replQueryCUE, query))
+		overlay[e.replPath()] = load.FromString(replQuerySource(query))
 	}
 	cfg := &load.Config{Dir: e.cueDir, Overlay: overlay}
 
@@ -514,15 +522,16 @@ driftReport: {
 }
 `
 
-// replQueryCUE is overlaid (never written to disk) for a /repl query. %s is the
-// user expression; the surrounding ( ) force it to a single expression so a client
-// cannot inject extra package fields. Being in `package diagram`, the expression
-// resolves `diagram` and the schema definitions. replResult is looked up and
+// replQuerySource builds the file overlaid (never written to disk) for a /repl
+// query. The surrounding ( ) force expr to a single expression so a client cannot
+// inject extra package fields; replImports prepends imports for exactly the
+// standard-library packages expr references (an unused import is a CUE error, so
+// this must be exact). Being in `package diagram`, the expression resolves the
+// live `diagram` and the schema definitions. replResult is looked up and
 // marshaled; it never affects /eval, which builds without this overlay.
-const replQueryCUE = `package diagram
-
-replResult: (%s)
-`
+func replQuerySource(expr string) string {
+	return fmt.Sprintf("package diagram\n\n%sreplResult: (%s)\n", replImports(expr), expr)
+}
 
 // writeVersion stores data as an immutable, content-addressed version and
 // returns its id (the sha256 hex of the content). Writes go only into the

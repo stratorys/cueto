@@ -62,6 +62,29 @@ export interface ReplOk {
   result: unknown;
 }
 
+// One entry a REPL query can reference: a builtin, or a member of an imported
+// package. isFunc marks callables (strings.ToUpper) apart from value constants
+// (math.Pi).
+export interface CueMember {
+  name: string;
+  isFunc: boolean;
+}
+
+// One importable standard-library package. path is the import path
+// (encoding/json); name is the identifier it binds to by default (json).
+export interface CuePackage {
+  path: string;
+  name: string;
+  members: CueMember[];
+}
+
+// The static CUE reference backing the REPL's autocomplete and browser: builtin
+// functions and every importable package with its members.
+export interface CueMeta {
+  builtins: CueMember[];
+  packages: CuePackage[];
+}
+
 export interface EvalErr {
   ok: false;
   error: string;
@@ -274,6 +297,13 @@ export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk |
     const parsed = await readJson<{ result?: unknown }>(response);
     return { result: parsed.result ?? null };
   });
+}
+
+// fetchCueMeta returns the static CUE reference (builtins + importable packages
+// with their members) for the REPL's autocomplete and reference browser. It is
+// version-static, so callers fetch it once.
+export function fetchCueMeta(): Promise<({ ok: true } & CueMeta) | EvalErr> {
+  return get("/cue/meta", async (response) => readJson<CueMeta>(response));
 }
 
 // rewriteFile splices canvas edits into one editable file's source and returns
