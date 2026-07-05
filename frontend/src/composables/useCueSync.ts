@@ -13,7 +13,7 @@
 // A text-originated eval must never clobber what the user is typing, hence the
 // explicit calls.
 
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
 import type { Diagnostic, Hint } from "../api";
 import {
   evalFiles,
@@ -24,7 +24,7 @@ import {
   rewriteFile,
   saveCue,
 } from "../api";
-import { edgesBody, nodeBody, toCue } from "../mapping";
+import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody, toCue } from "../mapping";
 import { useDiagram } from "../useDiagram";
 import { currentProjectId } from "./useProjects";
 import {
@@ -36,7 +36,7 @@ import {
   primaryFile,
   provenance,
 } from "./useEditorFiles";
-import { rebuildGraph } from "./useGraphView";
+import { isAutoLayout, layoutAuto, rebuildGraph } from "./useGraphView";
 
 const { diagram, replace, resetHistory } = useDiagram();
 
@@ -85,10 +85,35 @@ export function syncTextFromModel() {
   // A graph edit supersedes any pending text-originated eval; drop it so a stale
   // eval firing after this edit can't overwrite the model the user just changed.
   clearTimeout(evalTimer);
+  // Derived diagram: the nodes come from a CUE comprehension, so we never splice
+  // them back via /rewrite. Instead regenerate only the managed trailing block of
+  // hand-drawn shapes. A normal diagram round-trips every node through /rewrite.
+  const flush = isAutoLayout.value ? syncCanvasBlock : syncFilesFromModel;
   // Regenerate the file text, then re-eval for hints only. Chaining both onto the
-  // one timer means a burst of edits (a drag) collapses into a single rewrite + a
+  // one timer means a burst of edits (a drag) collapses into a single write + a
   // single eval.
-  syncTimer = setTimeout(() => void syncFilesFromModel().then(refreshXray), 150);
+  syncTimer = setTimeout(() => void flush().then(refreshXray), 150);
+}
+
+// Strip the app-managed trailing region (sentinel to EOF) and trailing whitespace,
+// leaving the hand-authored derivation above it untouched.
+function stripCanvasBlock(text: string): string {
+  const idx = text.indexOf(CANVAS_SENTINEL);
+  return (idx === -1 ? text : text.slice(0, idx)).replace(/\s+$/, "");
+}
+
+// Derived-diagram write-back: regenerate the managed `diagram: nodes: { … }` block
+// at the end of the primary file from the hand-drawn (coordinate-bearing) nodes.
+// Derived nodes (coordinate-free) and everything above the sentinel are never
+// touched, so the comprehension stays authoritative. The model already holds the
+// edit, so this only rewrites text - refreshXray re-evals for hints.
+async function syncCanvasBlock() {
+  const primary = files.value.find((f) => f.name === primaryFile());
+  if (!primary) return;
+  const drawn = diagram.value.nodes.filter((n) => n.x !== undefined && n.y !== undefined);
+  const base = stripCanvasBlock(primary.text);
+  const block = canvasBlock(drawn);
+  primary.text = block ? `${base}\n\n${block}` : `${base}\n`;
 }
 
 // Hints-only re-eval after a graph edit. Reads the regenerated file text and
@@ -186,6 +211,9 @@ export async function runEval() {
   // computes deletes against what eval just produced, not a stale snapshot.
   prevOwned = new Map(diagram.value.nodes.map((node) => [node.id, ownerOf(node)]));
   rebuildGraph();
+  // A data-derived diagram carries no coordinates; lay it out into ephemeral view
+  // state once the nodes have rendered (so elk can measure their card size).
+  if (isAutoLayout.value) void nextTick(layoutAuto);
 }
 
 // Load a project's diagram into the canvas: its newest saved version, or a blank

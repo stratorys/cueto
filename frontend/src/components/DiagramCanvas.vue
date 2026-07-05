@@ -63,6 +63,7 @@ const {
   breadcrumb,
   setFocus,
   layout,
+  isAutoLayout,
 } = useDiagramCanvas();
 
 const SHAPE_KINDS: ShapeKind[] = ["rectangle", "ellipse", "diamond", "line", "text"];
@@ -274,20 +275,30 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   >
     <!-- Shared edge-marker defs (arrowhead, inheritance triangle). -->
     <MarkerDefs />
-    <Toolbar
-      :can-undo="canUndo"
-      :can-redo="canRedo"
-      @undo="onUndo"
-      @redo="onRedo"
-      @layout="layout"
-    />
-    <ShapePalette
-      :active="activeTool"
-      @arm="armTool"
-      @add-table="onAddTable"
-      @add-container="onAddContainer"
-      @add-typed="onAddTyped"
-    />
+    <!-- One top bar: history/layout controls and the draw tools. Draw tools stay
+         available on a data-derived diagram (shapes save to a managed block);
+         relations (connect) are hidden there - a drawn edge can't persist
+         alongside the derived edge comprehension yet. -->
+    <div
+      class="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1.5 shadow-sm backdrop-blur"
+    >
+      <Toolbar
+        :can-undo="canUndo"
+        :can-redo="canRedo"
+        @undo="onUndo"
+        @redo="onRedo"
+        @layout="layout"
+      />
+      <div class="mx-0.5 h-6 w-px bg-slate-200" />
+      <ShapePalette
+        :active="activeTool"
+        :allow-connect="!isAutoLayout"
+        @arm="armTool"
+        @add-table="onAddTable"
+        @add-container="onAddContainer"
+        @add-typed="onAddTyped"
+      />
+    </div>
 
     <!-- Drill-down breadcrumb: shown only while focused into a container. -->
     <div
@@ -314,6 +325,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       v-model:edges="edges"
       :node-types="nodeTypes"
       :edge-types="edgeTypes"
+      :nodes-connectable="!isAutoLayout"
       :connect-on-click="false"
       :connection-mode="ConnectionMode.Loose"
       :delete-key-code="['Backspace', 'Delete']"

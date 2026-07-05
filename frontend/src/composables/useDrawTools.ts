@@ -157,17 +157,21 @@ function placeTypedNode(type: TypedNodeType, clientX: number, clientY: number) {
 // The two endpoints of a line node from its box + flip. "\" (flip): top-left ->
 // bottom-right; "/" : bottom-left -> top-right.
 function lineEndpoints(n: {
-  x: number;
-  y: number;
+  x?: number;
+  y?: number;
   width?: number;
   height?: number;
   flip?: boolean;
 }): [{ x: number; y: number }, { x: number; y: number }] {
+  // Line nodes are canvas-drawn, so x/y are always present; default to 0 to
+  // satisfy the now-optional coordinate type.
+  const x = n.x ?? 0;
+  const y = n.y ?? 0;
   const w = n.width ?? 1;
   const h = n.height ?? 1;
   return n.flip
-    ? [{ x: n.x, y: n.y }, { x: n.x + w, y: n.y + h }]
-    : [{ x: n.x, y: n.y + h }, { x: n.x + w, y: n.y }];
+    ? [{ x, y }, { x: x + w, y: y + h }]
+    : [{ x, y: y + h }, { x: x + w, y }];
 }
 
 // Live endpoint drag for a line. beginLineDrag pins the other endpoint; dragLineTo
@@ -242,8 +246,8 @@ function absolutePosition(id: string): { x: number; y: number } {
   let y = 0;
   let cur = byId.get(id);
   while (cur) {
-    x += cur.x;
-    y += cur.y;
+    x += cur.x ?? 0;
+    y += cur.y ?? 0;
     cur = cur.parent ? byId.get(cur.parent) : undefined;
   }
   return { x, y };

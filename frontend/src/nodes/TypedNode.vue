@@ -26,10 +26,29 @@ import {
 const props = defineProps<{
   id: string;
   selected?: boolean;
-  data: { label?: string; type: TypedNodeType; fill?: string; stroke?: string };
+  data: {
+    label?: string;
+    type: TypedNodeType;
+    fill?: string;
+    stroke?: string;
+    // Arbitrary structured payload from #Node.data, shown as a key/value card.
+    data?: Record<string, unknown>;
+  };
 }>();
 
 const kind = computed<TypedNodeType>(() => props.data.type);
+
+// The data card's rows: one per top-level field of `data.data`. Non-scalar values
+// are compact-JSON so a nested object/list still reads on one line.
+const dataRows = computed<{ key: string; value: string }[]>(() => {
+  const payload = props.data.data;
+  if (!payload || typeof payload !== "object") return [];
+  return Object.entries(payload).map(([key, value]) => ({
+    key,
+    value:
+      value === null || typeof value !== "object" ? String(value) : JSON.stringify(value),
+  }));
+});
 
 // --- inline label editing (double-click) ------------------------------------
 const editing = ref(false);
@@ -90,7 +109,18 @@ function onResizeEnd(event: {
       <div class="shrink-0 border-b border-slate-200 bg-slate-100 px-2.5 py-1 text-center text-sm font-semibold text-slate-700">
         <span v-if="!editing">{{ data.label || "Entity" }}</span>
       </div>
-      <div class="min-h-0 flex-1" />
+      <!-- Data card: one row per field of #Node.data (mirrors TableNode's rows). -->
+      <div v-if="dataRows.length" class="min-h-0 flex-1">
+        <div
+          v-for="row in dataRows"
+          :key="row.key"
+          class="flex items-center justify-between gap-3 border-t border-slate-100 px-2.5 py-1 text-xs"
+        >
+          <span class="min-w-0 flex-1 truncate text-slate-500">{{ row.key }}</span>
+          <span class="truncate text-right font-mono text-slate-700">{{ row.value }}</span>
+        </div>
+      </div>
+      <div v-else class="min-h-0 flex-1" />
     </div>
 
     <!-- Decision: a rotated square with upright content. -->

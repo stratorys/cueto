@@ -28,7 +28,11 @@ import type { ShapeKind, Tool, TypedNodeType } from "../model";
 // drag it onto the canvas, or click to drop one at the canvas center. Connect is
 // a click-only mode toggle: it reveals node handles so a handle-to-handle drag
 // makes a relation. Icons are just the button faces - placed shapes carry no icon.
-defineProps<{ active: Tool | null }>();
+// allowConnect gates the relation tool: hidden on a data-derived diagram, where a
+// drawn edge can't yet persist alongside the derived edge comprehension.
+withDefaults(defineProps<{ active: Tool | null; allowConnect?: boolean }>(), {
+  allowConnect: true,
+});
 const emit = defineEmits<{
   arm: [tool: Tool];
   addTable: [];
@@ -59,33 +63,35 @@ function onDragStart(event: DragEvent, kind: string) {
 </script>
 
 <template>
-  <div class="absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-1 rounded-xl border border-slate-200 bg-white/95 p-1.5 shadow-md backdrop-blur">
+  <div class="flex items-center gap-1">
     <button
       v-for="item in items"
       :key="item.shape"
       :title="item.title"
       draggable="true"
-      class="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
+      class="flex h-8 w-8 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
       :class="active === item.shape ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-400' : ''"
       @dragstart="onDragStart($event, item.shape)"
       @click="emit('arm', item.shape)"
     >
       <component :is="item.icon" class="h-5 w-5" />
     </button>
-    <div class="my-0.5 h-px bg-slate-200" />
-    <button
-      title="Connect - drag between two node handles to make a relation"
-      class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100"
-      :class="active === 'connect' ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-400' : ''"
-      @click="emit('arm', 'connect')"
-    >
-      <Waypoints class="h-5 w-5" />
-    </button>
-    <div class="my-0.5 h-px bg-slate-200" />
+    <template v-if="allowConnect">
+      <div class="mx-0.5 h-6 w-px bg-slate-200" />
+      <button
+        title="Connect - drag between two node handles to make a relation"
+        class="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100"
+        :class="active === 'connect' ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-400' : ''"
+        @click="emit('arm', 'connect')"
+      >
+        <Waypoints class="h-5 w-5" />
+      </button>
+    </template>
+    <div class="mx-0.5 h-6 w-px bg-slate-200" />
     <button
       title="Table"
       draggable="true"
-      class="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
+      class="flex h-8 w-8 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
       @dragstart="onDragStart($event, 'table')"
       @click="emit('addTable')"
     >
@@ -94,19 +100,19 @@ function onDragStart(event: DragEvent, kind: string) {
     <button
       title="Container"
       draggable="true"
-      class="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
+      class="flex h-8 w-8 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
       @dragstart="onDragStart($event, 'container')"
       @click="emit('addContainer')"
     >
       <Box class="h-5 w-5" />
     </button>
-    <div class="my-0.5 h-px bg-slate-200" />
+    <div class="mx-0.5 h-6 w-px bg-slate-200" />
     <button
       v-for="item in typedItems"
       :key="item.type"
       :title="item.title"
       draggable="true"
-      class="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
+      class="flex h-8 w-8 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
       @dragstart="onDragStart($event, item.type)"
       @click="emit('addTyped', item.type)"
     >

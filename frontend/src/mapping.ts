@@ -40,8 +40,8 @@ function absolutePosition(
   let y = 0;
   let cur: DiagramNode | undefined = node;
   while (cur) {
-    x += cur.x;
-    y += cur.y;
+    x += cur.x ?? 0;
+    y += cur.y ?? 0;
     cur = cur.parent ? byId.get(cur.parent) : undefined;
   }
   return { x, y };
@@ -74,7 +74,11 @@ export function visibleIds(diagram: Diagram, focus: string | null): Set<string> 
 // its descendants render: the focus node is promoted to a root (its own parent is
 // stripped and it is placed at its absolute position) so the subtree fills the
 // canvas, while descendants keep their relative parent links.
-export function toFlowNodes(diagram: Diagram, focus: string | null = null): Node[] {
+export function toFlowNodes(
+  diagram: Diagram,
+  focus: string | null = null,
+  autoPositions: NodePositions = {},
+): Node[] {
   const byId = new Map(diagram.nodes.map((n) => [n.id, n]));
   const visible = visibleIds(diagram, focus);
   const shown = visible
@@ -82,14 +86,23 @@ export function toFlowNodes(diagram: Diagram, focus: string | null = null): Node
     : diagram.nodes;
   return sortParentsFirst(shown).map((node) => {
     const isFocusRoot = node.id === focus;
-    const position = isFocusRoot
-      ? absolutePosition(node, byId)
-      : { x: node.x, y: node.y };
+    // A data-derived node has no coordinates: position comes from the last
+    // auto-layout (ephemeral view state), falling back to the origin until it runs.
+    const position =
+      node.x === undefined || node.y === undefined
+        ? (autoPositions[node.id] ?? { x: 0, y: 0 })
+        : isFocusRoot
+          ? absolutePosition(node, byId)
+          : { x: node.x, y: node.y };
     const parent = isFocusRoot ? undefined : node.parent;
+    // A derived (coordinate-free) node is locked: it is generated from data, not
+    // drawn, so it cannot be dragged. Hand-drawn nodes carry coords and drag.
+    const drawn = node.x !== undefined && node.y !== undefined;
     return {
       id: node.id,
       type: node.type,
       position,
+      draggable: drawn,
       // Nesting: a child's position is relative to its parent, is clipped to the
       // parent's box, and grows the parent when dragged to its edge.
       parentNode: parent,
@@ -109,6 +122,7 @@ export function toFlowNodes(diagram: Diagram, focus: string | null = null): Node
         stroke: node.stroke,
         flip: node.flip,
         columns: node.columns,
+        data: node.data,
       },
     };
   });
@@ -118,6 +132,11 @@ export function toFlowNodes(diagram: Diagram, focus: string | null = null): Node
 // Ephemeral view state (not in the model / CUE); the custom "elk" edge draws them
 // and falls back to a smooth-step path when an edge has none.
 export type EdgePoints = Record<string, { x: number; y: number }[]>;
+
+// Absolute positions per node id from the last auto-layout of a coordinate-free
+// (data-derived) diagram. Ephemeral view state, exactly like EdgePoints: never
+// written into the model or the CUE, so the derived file stays coordinate-free.
+export type NodePositions = Record<string, { x: number; y: number }>;
 
 export function toFlowEdges(
   diagram: Diagram,
@@ -204,6 +223,7 @@ function nodeFields(node: DiagramNode): Record<string, unknown> {
     owner: node.owner,
     region: node.region,
     zone: node.zone,
+    data: node.data,
   };
 }
 
@@ -233,6 +253,23 @@ export function nodeBody(node: DiagramNode): string {
 // `edges:` via /rewrite.
 export function edgesBody(edges: DiagramEdge[]): string {
   return emit(edges.map(edgeFields), 0);
+}
+
+// Sentinel marking the app-managed region at the end of a data-derived file.
+// Everything from this line to EOF is regenerated from the drawn (coord-bearing)
+// nodes; the derivation above it is authored by hand and never touched.
+export const CANVAS_SENTINEL =
+  "// >>> canvas: hand-drawn shapes (managed by the editor - do not edit below) <<<";
+
+// The managed block for a derived diagram's hand-drawn shapes: a literal
+// `diagram: nodes: { … }` that unifies with the derived nodes above. Emits only
+// the given (drawn) nodes; empty string when there are none, so the block is
+// dropped entirely. Reuses nodeFields/emit for identical formatting.
+export function canvasBlock(nodes: DiagramNode[]): string {
+  if (nodes.length === 0) return "";
+  const struct: Record<string, unknown> = {};
+  for (const node of nodes) struct[node.id] = nodeFields(node);
+  return `${CANVAS_SENTINEL}\ndiagram: nodes: ${emit(struct, 0)}\n`;
 }
 
 export function toCue(diagram: Diagram): string {

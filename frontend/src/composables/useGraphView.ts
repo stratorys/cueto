@@ -10,7 +10,8 @@
 // other canvas composables.
 
 import { computed, nextTick, ref, watch } from "vue";
-import type { EdgePoints } from "../mapping";
+import type { Diagram } from "../model";
+import type { EdgePoints, NodePositions } from "../mapping";
 import { toFlowEdges, toFlowNodes } from "../mapping";
 import { layoutDiagram } from "../useLayout";
 import { useDiagram } from "../useDiagram";
@@ -31,6 +32,19 @@ export const edges = ref(toFlowEdges(diagram.value));
 // state (never persisted to CUE); cleared whenever a node moves manually, so
 // stale routing falls back to a smooth-step path.
 export const edgePoints = ref<EdgePoints>({});
+
+// Absolute node positions from the last auto-layout of a coordinate-free
+// (data-derived) diagram. Ephemeral view state, the node analog of edgePoints:
+// never committed to the model or written to CUE, so the derived file stays
+// coordinate-free. Empty for a normal hand-drawn diagram.
+export const autoPositions = ref<NodePositions>({});
+
+// A diagram is "auto-layout mode" when any node has no coordinates - it was
+// derived from data rather than drawn. Such a diagram is laid out into
+// autoPositions and rendered read-only (no drag, no model->text write-back).
+export const isAutoLayout = computed(() =>
+  diagram.value.nodes.some((n) => n.x === undefined || n.y === undefined),
+);
 
 // Cross-panel highlight (blast-radius, diff, query). Purely visual: it patches
 // Vue Flow node/edge `class` in place, never the model.
@@ -68,7 +82,7 @@ export function rebuildGraph(keepEdgePoints = false) {
     focusedContainer.value = null;
   }
   if (!keepEdgePoints) edgePoints.value = {};
-  nodes.value = toFlowNodes(diagram.value, focusedContainer.value);
+  nodes.value = toFlowNodes(diagram.value, focusedContainer.value, autoPositions.value);
   edges.value = toFlowEdges(diagram.value, focusedContainer.value, edgePoints.value);
   applyHighlightClasses();
 }
@@ -99,6 +113,9 @@ watch(
 // orthogonal edge routing. Node geometry is written back as one undoable step and
 // the routing is kept for the custom edge to draw.
 async function layout() {
+  // A data-derived diagram has no model coordinates to commit; re-layout goes
+  // through the ephemeral path so the manual button never pollutes the CUE.
+  if (isAutoLayout.value) return layoutAuto();
   const result = await layoutDiagram(diagram.value, (node) => {
     if (node.width && node.height) return { width: node.width, height: node.height };
     const found = findNode(node.id);
@@ -124,6 +141,44 @@ async function layout() {
   rebuildGraph(true);
   syncTextFromModel();
   nextTick(() => fitView());
+}
+
+// Auto-layout for a coordinate-free (data-derived) diagram. Same elkjs pass as
+// layout(), but the geometry goes into the ephemeral autoPositions ref instead of
+// the model via commit(), and the text is never regenerated - the CUE stays the
+// source of truth and coordinate-free. Called after each eval when isAutoLayout.
+export async function layoutAuto() {
+  // Lay out only the derived (coordinate-free) nodes and the edges between them;
+  // hand-drawn nodes keep their own coordinates and must not be moved.
+  const derivedIds = new Set(
+    diagram.value.nodes.filter((n) => n.x === undefined || n.y === undefined).map((n) => n.id),
+  );
+  const subgraph: Diagram = {
+    nodes: diagram.value.nodes.filter((n) => derivedIds.has(n.id)),
+    edges: diagram.value.edges.filter(
+      (e) => derivedIds.has(e.source) && derivedIds.has(e.target),
+    ),
+    policies: diagram.value.policies,
+  };
+  const result = await layoutDiagram(subgraph, (node) => {
+    if (node.width && node.height) return { width: node.width, height: node.height };
+    const found = findNode(node.id);
+    return {
+      width: found?.dimensions?.width || 160,
+      height: found?.dimensions?.height || 80,
+    };
+  });
+  const positions: NodePositions = {};
+  for (const [id, geo] of Object.entries(result.nodes)) {
+    positions[id] = { x: Math.round(geo.x), y: Math.round(geo.y) };
+  }
+  autoPositions.value = positions;
+  edgePoints.value = result.edges;
+  rebuildGraph(true);
+  // Fit with padding so the outer nodes are not flush against (or clipped by) the
+  // viewport edge. A second frame lets Vue Flow apply the new node dimensions
+  // (taller with a data card) before the fit measures the graph bounds.
+  nextTick(() => requestAnimationFrame(() => fitView({ padding: 0.2 })));
 }
 
 // Drill into a container (or back to the top level with null), rebuild the view,
@@ -157,5 +212,6 @@ export function useGraphView() {
     breadcrumb,
     setFocus,
     layout,
+    isAutoLayout,
   };
 }

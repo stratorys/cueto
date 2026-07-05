@@ -44,12 +44,17 @@ export interface DiagramNode {
   // parent's top-left (Vue Flow's parentNode convention); a top-level node's
   // x/y are absolute. Absent -> top level.
   parent?: string;
-  x: number;
-  y: number;
+  // Coordinates. A canvas-drawn node has them; a data-derived node omits them and
+  // is auto-laid-out (position held as ephemeral view state, never written back).
+  x?: number;
+  y?: number;
   // Explicit size in graph units. Absent -> the shape falls back to a min size.
   width?: number;
   height?: number;
   label: string;
+  // Arbitrary structured payload, rendered as a key/value card. Round-trips to the
+  // CUE #Node.data field; lets a node carry domain data with no bespoke field.
+  data?: Record<string, unknown>;
   // Set only when type is "shape".
   shape?: ShapeKind;
   // Optional per-shape colors (any CSS color, e.g. "#f59e0b" or "transparent").
