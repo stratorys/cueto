@@ -213,11 +213,12 @@ diagram: #Diagram & {
 }
 
 func TestEvalNonConcrete(t *testing.T) {
-	// Node missing a concrete x: valid against the schema but not concrete.
+	// Node missing a concrete label: valid against the schema but not concrete.
+	// (x/y are optional, so a missing coordinate is concrete; label is required.)
 	data := `package diagram
 
 diagram: #Diagram & {
-	nodes: {a: {type: "process", y: 1, label: "l"}}
+	nodes: {a: {type: "process", x: 1, y: 1}}
 	edges: []
 }
 `

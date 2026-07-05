@@ -33,6 +33,11 @@ import { evalExpr, fetchCueMeta, type CueMeta, type CuePackage } from "../api";
 import { files } from "../composables/useEditorFiles";
 import { cueCompletionSource, walkKeys, type ReplCompletionData } from "../replCompletions";
 
+// collapsed is App's REPL-pane state. The pane stays mounted (height 0) when
+// collapsed, so the key-fetch is gated on it to avoid evaluating the diagram on
+// every edit while the REPL is hidden.
+const props = defineProps<{ collapsed?: boolean }>();
+
 interface Entry {
   source: string;
   output: string;
@@ -56,6 +61,9 @@ const expanded = ref<Set<string>>(new Set());
 
 let view: EditorView | undefined;
 let keysTimer: ReturnType<typeof setTimeout> | undefined;
+// Set when an edit arrived while collapsed, so the keys are refreshed once on the
+// next expand instead of eagerly while hidden.
+let keysStale = true;
 
 // completionData is read lazily by the completion source, so it always sees the
 // latest keys/meta. keys.value is replaced wholesale on refresh, so the source's
@@ -91,6 +99,18 @@ function clearLog() {
 async function refreshKeys() {
   const result = await evalExpr("diagram", files.value);
   if (result.ok) keys.value = [...walkKeys("diagram", result.result)].sort();
+  keysStale = false;
+}
+
+// scheduleKeys debounces a key refresh, but only while the pane is visible; a
+// collapsed pane just records that its keys are now stale.
+function scheduleKeys() {
+  if (props.collapsed) {
+    keysStale = true;
+    return;
+  }
+  clearTimeout(keysTimer);
+  keysTimer = setTimeout(refreshKeys, 600);
 }
 
 // insert drops text at the cursor (replacing any selection) and refocuses the
@@ -170,18 +190,19 @@ onMounted(async () => {
   });
   const m = await fetchCueMeta();
   if (m.ok) meta.value = { builtins: m.builtins, packages: m.packages };
-  refreshKeys();
+  if (!props.collapsed) refreshKeys();
 });
 
 // Keep the diagram key paths current as the files are edited, debounced so a burst
-// of keystrokes triggers one eval.
+// of keystrokes triggers one eval (skipped while collapsed).
+watch(files, scheduleKeys, { deep: true });
+
+// Catch up on any edits that landed while collapsed the moment the pane reopens.
 watch(
-  files,
-  () => {
-    clearTimeout(keysTimer);
-    keysTimer = setTimeout(refreshKeys, 600);
+  () => props.collapsed,
+  (collapsed) => {
+    if (!collapsed && keysStale) refreshKeys();
   },
-  { deep: true },
 );
 
 onBeforeUnmount(() => {

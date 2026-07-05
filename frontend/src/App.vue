@@ -150,7 +150,7 @@ onMounted(() => void initProjects());
       class="flex flex-none flex-col overflow-hidden"
       :style="{ height: (replCollapsed ? 0 : replHeight) + 'px' }"
     >
-      <ReplPane />
+      <ReplPane :collapsed="replCollapsed" />
     </aside>
     <AppModal />
   </div>
