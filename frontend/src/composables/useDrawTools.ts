@@ -57,6 +57,10 @@ const TYPED_SIZE: Record<TypedNodeType, { width: number; height: number }> = {
 // Below this drawn size (graph units) a draw gesture counts as a click -> default.
 const MIN_DRAW = 8;
 
+// A near-zero endpoint drag (client px) is a click on the edge, not a drag into
+// empty space; below this the relation is kept instead of being demoted to a line.
+const MIN_ENDPOINT_DRAG = 12;
+
 // The armed palette tool (a shape to draw, or "connect" mode); null when nothing
 // is armed.
 export const activeTool = ref<Tool | null>(null);
@@ -412,7 +416,9 @@ onEdgesChange((changes) => {
 
 // Which end of an edge is being dragged (read from the grabbed updater anchor),
 // and whether it reconnected to a valid handle before release.
-let edgeDrag: { id: string; end: "source" | "target"; reconnected: boolean } | null = null;
+let edgeDrag:
+  | { id: string; end: "source" | "target"; reconnected: boolean; start: { x: number; y: number } }
+  | null = null;
 
 // Midpoint of a shape's t/r/b/l side in absolute coords - where a converted line
 // starts. Falls back to measured dimensions for auto-sized nodes (e.g. tables).
@@ -466,7 +472,8 @@ function connectShapes(
 onEdgeUpdateStart(({ event, edge }) => {
   const el = event.target instanceof Element ? event.target : null;
   const end = el?.classList.contains("vue-flow__edgeupdater-source") ? "source" : "target";
-  edgeDrag = { id: edge.id, end, reconnected: false };
+  const start = "clientX" in event ? { x: event.clientX, y: event.clientY } : { x: 0, y: 0 };
+  edgeDrag = { id: edge.id, end, reconnected: false, start };
 });
 
 // Reconnected to another handle/node: repoint the model edge, keep its other fields.
@@ -494,10 +501,14 @@ onEdgeUpdateEnd(({ event, edge }) => {
   if (!drag || drag.reconnected) return;
   const e = diagram.value.edges.find((m) => m.id === edge.id);
   if (!e) return;
+  const client = "clientX" in event ? { x: event.clientX, y: event.clientY } : { x: 0, y: 0 };
+  // A near-zero drag is a click on the endpoint, not a drag into empty space:
+  // keep the relation rather than silently demoting it to a floating line.
+  const moved = Math.hypot(client.x - drag.start.x, client.y - drag.start.y);
+  if (moved < MIN_ENDPOINT_DRAG) return;
   const keptNode = drag.end === "source" ? e.target : e.source;
   const keptHandle = drag.end === "source" ? e.targetHandle : e.sourceHandle;
   const anchor = handleAnchor(keptNode, keptHandle);
-  const client = "clientX" in event ? { x: event.clientX, y: event.clientY } : { x: 0, y: 0 };
   const drop = screenToFlowCoordinate(client);
   const x = Math.min(anchor.x, drop.x);
   const y = Math.min(anchor.y, drop.y);
