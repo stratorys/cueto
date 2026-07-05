@@ -314,6 +314,10 @@ func (b *blockingEval) Eval(ctx context.Context, files []File) (json.RawMessage,
 	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, Provenance{}, nil, nil
 }
 
+func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMessage, []Diagnostic, error) {
+	return json.RawMessage(`null`), nil, nil
+}
+
 func (b *blockingEval) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
 	return nil, nil
 }
@@ -322,15 +326,31 @@ func (b *blockingEval) ImportCompose(source string) (string, []Diagnostic, error
 	return "", nil, nil
 }
 
-func (b *blockingEval) Save(ctx context.Context, data string) (string, []Diagnostic, error) {
+func (b *blockingEval) Save(ctx context.Context, projectID, data string) (string, []Diagnostic, error) {
 	return "v", nil, nil
 }
 
-func (b *blockingEval) ListVersions(ctx context.Context) ([]VersionMeta, error) { return nil, nil }
+func (b *blockingEval) ListVersions(ctx context.Context, projectID string) ([]VersionMeta, error) {
+	return nil, nil
+}
 
-func (b *blockingEval) ReadVersion(ctx context.Context, id string) (string, error) { return "", nil }
+func (b *blockingEval) ReadVersion(ctx context.Context, projectID, id string) (string, error) {
+	return "", nil
+}
 
 func (b *blockingEval) ReadSeed(ctx context.Context) (string, error) { return "", nil }
+
+func (b *blockingEval) ListProjects(ctx context.Context) ([]ProjectMeta, error) { return nil, nil }
+
+func (b *blockingEval) CreateProject(ctx context.Context, name, seed string) (ProjectMeta, error) {
+	return ProjectMeta{}, nil
+}
+
+func (b *blockingEval) RenameProject(ctx context.Context, id, name string) (ProjectMeta, error) {
+	return ProjectMeta{}, nil
+}
+
+func (b *blockingEval) DeleteProject(ctx context.Context, id string) error { return nil }
 
 func (b *blockingEval) Format(source string) (string, error) { return source, nil }
 
@@ -356,6 +376,42 @@ func TestConcurrencyLimit(t *testing.T) {
 		t.Fatalf("status = %d, want 429", rec.Code)
 	}
 	close(be.release)
+}
+
+func TestReplEvalExpr(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{Source: "a: b: 3\nc: a.b + 1"})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Result struct {
+			A struct {
+				B int `json:"b"`
+			} `json:"a"`
+			C int `json:"c"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
+	}
+	if out.Result.A.B != 3 || out.Result.C != 4 {
+		t.Fatalf("result = %+v, want {a:{b:3}, c:4}", out.Result)
+	}
+}
+
+func TestReplEvalExprError(t *testing.T) {
+	// A conflict is reported as diagnostics (400), never persisted or 500'd.
+	router := realRouter(t, testConfig(t))
+	body, _ := json.Marshal(sourceRequest{Source: "a: 1\na: 2"})
+	rec := postJSON(router, "/repl", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
+	}
+	if len(decodeDiags(t, rec)) == 0 {
+		t.Fatal("want a conflict diagnostic, got none")
+	}
 }
 
 func TestVetOk(t *testing.T) {
@@ -657,7 +713,7 @@ func TestFormatError(t *testing.T) {
 func TestSaveWritesVersion(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
-	rec := postJSON(router, "/save", evalBody(t, validData))
+	rec := postJSON(router, "/projects/default/save", evalBody(t, validData))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -671,8 +727,8 @@ func TestSaveWritesVersion(t *testing.T) {
 	if !body.OK || body.Version == "" {
 		t.Fatalf("want ok:true with a version, got %q", rec.Body.String())
 	}
-	// The saved version file holds exactly the submitted text.
-	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, body.Version+".cue"))
+	// The saved version file holds exactly the submitted text, under the project dir.
+	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, defaultProjectID, body.Version+".cue"))
 	if err != nil {
 		t.Fatalf("read version: %v", err)
 	}
@@ -689,28 +745,32 @@ func TestSaveInvalidNotWritten(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
 	data := "package diagram\n\ndiagram: #Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
-	rec := postJSON(router, "/save", evalBody(t, data))
+	rec := postJSON(router, "/projects/default/save", evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
-	entries, err := os.ReadDir(cfg.VersionsDir)
-	if err != nil {
-		t.Fatalf("read versions dir: %v", err)
+	// No version file is written into the project's store for invalid data. The dir
+	// may be absent (nothing ever created it), which is also "no versions".
+	entries, err := os.ReadDir(filepath.Join(cfg.VersionsDir, defaultProjectID))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read project versions dir: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("invalid data must not be persisted, found %d files", len(entries))
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".cue") {
+			t.Fatalf("invalid data must not be persisted, found %s", entry.Name())
+		}
 	}
 }
 
 func TestSaveIdempotent(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
-	first := postJSON(router, "/save", evalBody(t, validData))
-	second := postJSON(router, "/save", evalBody(t, validData))
+	first := postJSON(router, "/projects/default/save", evalBody(t, validData))
+	second := postJSON(router, "/projects/default/save", evalBody(t, validData))
 	if first.Body.String() != second.Body.String() {
 		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
 	}
-	entries, _ := os.ReadDir(cfg.VersionsDir)
+	entries, _ := os.ReadDir(filepath.Join(cfg.VersionsDir, defaultProjectID))
 	cueFiles := 0
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".cue") {
@@ -726,7 +786,7 @@ func TestListAndReadVersion(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
 
-	saveRec := postJSON(router, "/save", evalBody(t, validData))
+	saveRec := postJSON(router, "/projects/default/save", evalBody(t, validData))
 	if saveRec.Code != http.StatusOK {
 		t.Fatalf("save status = %d, body %q", saveRec.Code, saveRec.Body.String())
 	}
@@ -737,7 +797,7 @@ func TestListAndReadVersion(t *testing.T) {
 		t.Fatalf("decode save: %v", err)
 	}
 
-	listRec := getJSON(router, "/versions")
+	listRec := getJSON(router, "/projects/default/versions")
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list status = %d", listRec.Code)
 	}
@@ -754,7 +814,7 @@ func TestListAndReadVersion(t *testing.T) {
 		t.Fatalf("version is missing a savedAt timestamp: %+v", list.Versions[0])
 	}
 
-	readRec := getJSON(router, "/versions/"+saved.Version)
+	readRec := getJSON(router, "/projects/default/versions/"+saved.Version)
 	if readRec.Code != http.StatusOK {
 		t.Fatalf("read status = %d, body %q", readRec.Code, readRec.Body.String())
 	}
@@ -774,7 +834,7 @@ func TestReadVersionBadID(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	// Well-formed single-segment but non-hex ids reach the handler and are 400.
 	for _, id := range []string{"not-a-hash", strings.Repeat("g", 64), "abc"} {
-		rec := getJSON(router, "/versions/"+id)
+		rec := getJSON(router, "/projects/default/versions/"+id)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("id %q status = %d, want 400", id, rec.Code)
 		}
@@ -790,7 +850,7 @@ func TestReadVersionBadID(t *testing.T) {
 func TestReadVersionNotFound(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	// Well-formed but absent hash -> 404.
-	rec := getJSON(router, "/versions/"+strings.Repeat("a", 64))
+	rec := getJSON(router, "/projects/default/versions/"+strings.Repeat("a", 64))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -799,11 +859,11 @@ func TestReadVersionNotFound(t *testing.T) {
 func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
-	postJSON(router, "/save", evalBody(t, validData))
-	postJSON(router, "/save", evalBody(t, validData)) // idempotent re-save
+	postJSON(router, "/projects/default/save", evalBody(t, validData))
+	postJSON(router, "/projects/default/save", evalBody(t, validData)) // idempotent re-save
 
 	// The index records the save exactly once (the re-save reused the file).
-	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, "index.jsonl"))
+	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, defaultProjectID, "index.jsonl"))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
@@ -818,7 +878,7 @@ func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	}
 
 	// And the listing still shows a single version.
-	listRec := getJSON(router, "/versions")
+	listRec := getJSON(router, "/projects/default/versions")
 	var list struct {
 		Versions []VersionMeta `json:"versions"`
 	}

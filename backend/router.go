@@ -24,14 +24,19 @@ func newRouter(eval Evaluator, cfg Config) *gin.Engine {
 
 	h := &handlers{eval: eval, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
+	r.POST("/repl", h.EvalExpr)
 	r.POST("/vet", h.Vet)
-	r.POST("/save", h.Save)
 	r.POST("/format", h.Format)
 	r.POST("/rewrite", h.Rewrite)
 	r.POST("/import/compose", h.ImportCompose)
-	r.GET("/versions", h.ListVersions)
-	r.GET("/versions/:id", h.ReadVersion)
 	r.GET("/seed", h.Seed)
+	r.GET("/projects", h.ListProjects)
+	r.POST("/projects", h.CreateProject)
+	r.PATCH("/projects/:pid", h.RenameProject)
+	r.DELETE("/projects/:pid", h.DeleteProject)
+	r.POST("/projects/:pid/save", h.Save)
+	r.GET("/projects/:pid/versions", h.ListVersions)
+	r.GET("/projects/:pid/versions/:id", h.ReadVersion)
 	return r
 }
 

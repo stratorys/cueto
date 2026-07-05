@@ -44,6 +44,13 @@ type sourceRequest struct {
 	Source string `json:"source"`
 }
 
+// projectRequest is the body for project create/rename. Seed ("blank" | "sample")
+// is only read on create.
+type projectRequest struct {
+	Name string `json:"name"`
+	Seed string `json:"seed"`
+}
+
 // Eval returns the concrete diagram JSON, or 400 with structured diagnostics.
 func (h *handlers) Eval(c *gin.Context) {
 	var req dataRequest
@@ -60,6 +67,26 @@ func (h *handlers) Eval(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"diagram": json.RawMessage(out), "hints": hints, "provenance": prov})
+}
+
+// EvalExpr evaluates a standalone CUE snippet for the REPL scratchpad. It answers
+// 200 {result:<json>} on success, or 400 with diagnostics on a compile/concreteness
+// error. Nothing is persisted; the snippet never joins the file set or the schema.
+func (h *handlers) EvalExpr(c *gin.Context) {
+	var req sourceRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	out, diags, err := h.eval.EvalExpr(c.Request.Context(), req.Source)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	if len(diags) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"result": json.RawMessage(out)})
 }
 
 // Vet reports validation diagnostics. Keeping the existing contract it answers
@@ -107,9 +134,9 @@ func (h *handlers) Save(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	version, diags, err := h.eval.Save(c.Request.Context(), req.Data)
+	version, diags, err := h.eval.Save(c.Request.Context(), c.Param("pid"), req.Data)
 	if err != nil {
-		writeOpError(c, err)
+		writeProjectError(c, err)
 		return
 	}
 	if len(diags) > 0 {
@@ -119,21 +146,21 @@ func (h *handlers) Save(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
 }
 
-// ListVersions returns the saved versions newest-first as {versions:[...]}.
+// ListVersions returns a project's saved versions newest-first as {versions:[...]}.
 func (h *handlers) ListVersions(c *gin.Context) {
-	versions, err := h.eval.ListVersions(c.Request.Context())
+	versions, err := h.eval.ListVersions(c.Request.Context(), c.Param("pid"))
 	if err != nil {
-		writeOpError(c, err)
+		writeProjectError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"versions": versions})
 }
 
-// ReadVersion returns one version's stored data.cue as {version, data}. A
-// malformed id is 400; an unknown (but well-formed) id is 404.
+// ReadVersion returns one of a project's versions as {version, data}. A malformed
+// id is 400; an unknown (but well-formed) id is 404.
 func (h *handlers) ReadVersion(c *gin.Context) {
 	id := c.Param("id")
-	data, err := h.eval.ReadVersion(c.Request.Context(), id)
+	data, err := h.eval.ReadVersion(c.Request.Context(), c.Param("pid"), id)
 	if err != nil {
 		switch {
 		case errors.Is(err, errInvalidVersionID):
@@ -145,11 +172,80 @@ func (h *handlers) ReadVersion(c *gin.Context) {
 				"diagnostics": []Diagnostic{{Message: "version not found", Kind: kindInternal}},
 			})
 		default:
-			writeOpError(c, err)
+			writeProjectError(c, err)
 		}
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"version": id, "data": data})
+}
+
+// ListProjects returns the registered projects as {projects:[...]}.
+func (h *handlers) ListProjects(c *gin.Context) {
+	projects, err := h.eval.ListProjects(c.Request.Context())
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"projects": projects})
+}
+
+// CreateProject registers a new project ({name, seed}) and returns its metadata.
+func (h *handlers) CreateProject(c *gin.Context) {
+	var req projectRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	meta, err := h.eval.CreateProject(c.Request.Context(), req.Name, req.Seed)
+	if err != nil {
+		writeProjectError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"project": meta})
+}
+
+// RenameProject updates a project's display name ({name}).
+func (h *handlers) RenameProject(c *gin.Context) {
+	var req projectRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	meta, err := h.eval.RenameProject(c.Request.Context(), c.Param("pid"), req.Name)
+	if err != nil {
+		writeProjectError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"project": meta})
+}
+
+// DeleteProject removes a project. Refusing to delete the last one is 409.
+func (h *handlers) DeleteProject(c *gin.Context) {
+	if err := h.eval.DeleteProject(c.Request.Context(), c.Param("pid")); err != nil {
+		writeProjectError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// writeProjectError maps project-scoped errors to status codes: a malformed id is
+// 400, an unknown project 404, deleting the last project 409; anything else falls
+// through to the operational error path.
+func writeProjectError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, errInvalidProjectID):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"diagnostics": []Diagnostic{{Message: "invalid project id", Kind: kindInternal}},
+		})
+	case errors.Is(err, errProjectNotFound):
+		c.JSON(http.StatusNotFound, gin.H{
+			"diagnostics": []Diagnostic{{Message: "project not found", Kind: kindInternal}},
+		})
+	case errors.Is(err, errLastProject):
+		c.JSON(http.StatusConflict, gin.H{
+			"diagnostics": []Diagnostic{{Message: "cannot delete the last project", Kind: kindInternal}},
+		})
+	default:
+		writeOpError(c, err)
+	}
 }
 
 // Seed returns the on-disk seed data.cue as {data}, the mount-time fallback when
