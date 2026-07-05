@@ -19,14 +19,14 @@ import PolicyPanel from "./PolicyPanel.vue";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { useHighlight } from "../composables/useHighlight";
 
-type Tab = "inspector" | "analysis" | "history" | "query" | "policy";
-const tab = ref<Tab>("inspector");
+type Tab = "analysis" | "inspector" | "history" | "query" | "policy";
+const tab = ref<Tab>("analysis");
 const { clearHighlight } = useHighlight();
 const { selectedElementId } = useDiagramCanvas();
 
 const tabs: { id: Tab; label: string }[] = [
-  { id: "inspector", label: "Inspector" },
   { id: "analysis", label: "Analysis" },
+  { id: "inspector", label: "Inspector" },
   { id: "history", label: "History" },
   { id: "query", label: "Query" },
   { id: "policy", label: "Policy" },
@@ -34,10 +34,18 @@ const tabs: { id: Tab; label: string }[] = [
 
 watch(tab, () => clearHighlight());
 
-// Selecting a node/edge reveals its property editor, otherwise the Inspector tab
-// is easy to miss. Only pulls focus toward the editor, never away from it.
-watch(selectedElementId, (id) => {
-  if (id) tab.value = "inspector";
+// Selecting a node/edge reveals its property editor; deselecting returns to the
+// tab that was active before, so the empty Inspector is never left stranded.
+let restoreTab: Tab = "analysis";
+watch(selectedElementId, (id, prev) => {
+  if (id && !prev) {
+    // none -> selected: remember where we were, jump to the editor.
+    if (tab.value !== "inspector") restoreTab = tab.value;
+    tab.value = "inspector";
+  } else if (!id && prev) {
+    // selected -> none: restore only if the user did not navigate away.
+    if (tab.value === "inspector") tab.value = restoreTab;
+  }
 });
 </script>
 

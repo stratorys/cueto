@@ -19,9 +19,9 @@ import type {
   EdgeProtocol,
   NodeRole,
 } from "../model";
-import { useDiagramCanvas } from "../composables/useDiagramCanvas";
+import { commitNodeLabel, useDiagramCanvas } from "../composables/useDiagramCanvas";
 
-const { selectedElement, commitNodeGovernance, commitEdgeGovernance } =
+const { selectedElement, diagram, commitNodeGovernance, commitEdgeGovernance } =
   useDiagramCanvas();
 
 // Narrowed views so the template stays type-safe without discriminating inline.
@@ -31,6 +31,11 @@ const node = computed(() =>
 const edge = computed(() =>
   selectedElement.value?.kind === "edge" ? selectedElement.value.edge : null,
 );
+
+// A node's display name for edge endpoints; falls back to its id when unlabeled.
+function nodeLabel(id: string): string {
+  return diagram.value.nodes.find((n) => n.id === id)?.label || id;
+}
 
 // Option lists mirror the schema unions in model.ts so the dropdowns cannot drift.
 const ROLES: NodeRole[] = ["service", "database", "queue", "cache", "gateway", "external"];
@@ -61,9 +66,23 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
 
     <!-- Node: domain metadata that drives policy and drift. -->
     <template v-else-if="node">
-      <div class="text-xs uppercase tracking-wide text-slate-400">
-        Node <span class="font-mono normal-case text-slate-500">{{ node.id }}</span>
+      <div class="flex flex-col gap-0.5">
+        <span class="font-medium text-slate-700">{{ node.label || node.id }}</span>
+        <span class="text-xs text-slate-400">
+          {{ node.shape ?? node.type }}
+          <span class="font-mono">· {{ node.id }}</span>
+        </span>
       </div>
+
+      <label class="flex flex-col gap-1">
+        <span class="font-medium text-slate-600">Label</span>
+        <input
+          class="rounded border border-slate-300 px-2 py-1"
+          placeholder="node label"
+          :value="node.label"
+          @change="commitNodeLabel(node.id, ($event.target as HTMLInputElement).value)"
+        />
+      </label>
 
       <label class="flex flex-col gap-1">
         <span class="font-medium text-slate-600">Role</span>
@@ -114,8 +133,11 @@ function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
 
     <!-- Edge: typed-relationship metadata for architecture modeling and drift. -->
     <template v-else-if="edge">
-      <div class="text-xs uppercase tracking-wide text-slate-400">
-        Edge <span class="font-mono normal-case text-slate-500">{{ edge.id }}</span>
+      <div class="flex flex-col gap-0.5">
+        <span class="font-medium text-slate-700">
+          {{ nodeLabel(edge.source) }} → {{ nodeLabel(edge.target) }}
+        </span>
+        <span class="text-xs text-slate-400">{{ edge.kind }} edge</span>
       </div>
 
       <label class="flex flex-col gap-1">
