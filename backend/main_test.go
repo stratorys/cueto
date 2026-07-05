@@ -330,6 +330,8 @@ func (b *blockingEval) ListVersions(ctx context.Context) ([]VersionMeta, error) 
 
 func (b *blockingEval) ReadVersion(ctx context.Context, id string) (string, error) { return "", nil }
 
+func (b *blockingEval) ReadSeed(ctx context.Context) (string, error) { return "", nil }
+
 func (b *blockingEval) Format(source string) (string, error) { return source, nil }
 
 func (b *blockingEval) Rewrite(op RewriteOp) (string, []Diagnostic, error) {

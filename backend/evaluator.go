@@ -59,6 +59,9 @@ type Evaluator interface {
 	// ReadVersion returns the stored data.cue text of one version by its content
 	// hash. The id is validated before any filesystem access.
 	ReadVersion(ctx context.Context, id string) (string, error)
+	// ReadSeed returns the on-disk seed data.cue text (the mount-time fallback when
+	// no saved version exists). It is a static fixture, never a saved version.
+	ReadSeed(ctx context.Context) (string, error)
 	// Format runs `cue fmt` over arbitrary source text.
 	Format(source string) (string, error)
 	// Rewrite splices canvas edits (node upserts/deletes and an optional edge list)
@@ -88,6 +91,7 @@ var (
 	errNoVersionsDir    = errors.New("versions directory is not configured")
 	errInvalidVersionID = errors.New("invalid version id")
 	errVersionNotFound  = errors.New("version not found")
+	errSeedNotFound     = errors.New("seed data.cue not found")
 )
 
 // cueEvaluator evaluates schema.cue + a per-request data.cue in-process.
@@ -512,6 +516,19 @@ func (e *cueEvaluator) ReadVersion(_ context.Context, id string) (string, error)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", errVersionNotFound
+		}
+		return "", err
+	}
+	return string(data), nil
+}
+
+// ReadSeed implements Evaluator. The path is server-built from CueDir, so it can
+// never traverse outside the package dir.
+func (e *cueEvaluator) ReadSeed(_ context.Context) (string, error) {
+	data, err := os.ReadFile(filepath.Join(e.cueDir, "data.cue"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errSeedNotFound
 		}
 		return "", err
 	}

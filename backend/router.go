@@ -31,6 +31,7 @@ func newRouter(eval Evaluator, cfg Config) *gin.Engine {
 	r.POST("/import/compose", h.ImportCompose)
 	r.GET("/versions", h.ListVersions)
 	r.GET("/versions/:id", h.ReadVersion)
+	r.GET("/seed", h.Seed)
 	return r
 }
 

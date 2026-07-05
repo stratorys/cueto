@@ -152,6 +152,23 @@ func (h *handlers) ReadVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"version": id, "data": data})
 }
 
+// Seed returns the on-disk seed data.cue as {data}, the mount-time fallback when
+// no saved version exists. A missing seed file is 404.
+func (h *handlers) Seed(c *gin.Context) {
+	data, err := h.eval.ReadSeed(c.Request.Context())
+	if err != nil {
+		if errors.Is(err, errSeedNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"diagnostics": []Diagnostic{{Message: "seed data.cue not found", Kind: kindInternal}},
+			})
+			return
+		}
+		writeOpError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": data})
+}
+
 // Rewrite splices canvas edits into one editable file and returns the new text
 // as {content}. A syntax error (in the file or a supplied body) is 400.
 func (h *handlers) Rewrite(c *gin.Context) {

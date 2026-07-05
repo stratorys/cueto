@@ -15,7 +15,16 @@
 
 import { ref } from "vue";
 import type { Diagnostic, Hint } from "../api";
-import { evalFiles, formatCue, fromEval, rewriteFile, saveCue } from "../api";
+import {
+  evalFiles,
+  formatCue,
+  fromEval,
+  listVersions,
+  readSeed,
+  readVersion,
+  rewriteFile,
+  saveCue,
+} from "../api";
 import { edgesBody, nodeBody } from "../mapping";
 import { useDiagram } from "../useDiagram";
 import {
@@ -29,7 +38,7 @@ import {
 } from "./useEditorFiles";
 import { rebuildGraph } from "./useGraphView";
 
-const { diagram, replace } = useDiagram();
+const { diagram, replace, resetHistory } = useDiagram();
 
 // nodeId -> owner from the last model->file flush, to compute deletions/moves.
 let prevOwned = new Map<string, string>();
@@ -168,6 +177,30 @@ export async function runEval() {
   rebuildGraph();
 }
 
+// Load the persisted diagram on mount: the newest saved version if any exist,
+// else the on-disk seed data.cue. The text goes through runEval - the same
+// text -> model -> canvas pipeline typing uses - then history is cleared so the
+// first Undo can't revert to the sample the store was seeded with. On a total
+// read failure (backend unreachable) the sample seed is left in place as an
+// offline fallback.
+export async function loadInitialDiagram() {
+  let text: string | null = null;
+  const list = await listVersions();
+  if (list.ok && list.versions.length) {
+    const version = await readVersion(list.versions[0].version);
+    if (version.ok) text = version.data;
+  }
+  if (text === null) {
+    const seed = await readSeed();
+    if (seed.ok) text = seed.data;
+  }
+  if (text === null) return;
+  files.value = [{ name: "data.cue", text }];
+  activeFileName.value = "data.cue";
+  await runEval();
+  resetHistory();
+}
+
 // Persist the current CUE as an immutable version. The backend re-validates, so
 // invalid text surfaces the same diagnostics as a live eval rather than saving.
 async function save() {
@@ -215,5 +248,6 @@ export function useCueSync() {
     save,
     format,
     saveState,
+    loadInitialDiagram,
   };
 }

@@ -7,6 +7,7 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
+import { onMounted } from "vue";
 import CodePane from "./components/CodePane.vue";
 import DiagramCanvas from "./components/DiagramCanvas.vue";
 import InspectorPanel from "./components/InspectorPanel.vue";
@@ -33,7 +34,12 @@ const {
   format,
   saveState,
   selectedElementId,
+  loadInitialDiagram,
 } = useDiagramCanvas();
+
+// Replace the seed sample with the persisted diagram (latest save, else the
+// on-disk seed data.cue) once the app mounts.
+onMounted(() => void loadInitialDiagram());
 </script>
 
 <template>

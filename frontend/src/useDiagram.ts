@@ -126,6 +126,13 @@ function replace(next: Diagram): void {
   diagram.value = clone(next);
 }
 
+// Clear the undo/redo history. Used after the initial persisted-diagram load so the
+// first Undo can't revert to the hardcoded sample the store was seeded with.
+function resetHistory(): void {
+  undoStack.value = [];
+  redoStack.value = [];
+}
+
 function undo(): void {
   const previous = undoStack.value.pop();
   if (!previous) return;
@@ -148,6 +155,7 @@ export function useDiagram() {
     addTable,
     addContainer,
     replace,
+    resetHistory,
     undo,
     redo,
     canUndo: computed(() => undoStack.value.length > 0),

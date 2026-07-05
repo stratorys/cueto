@@ -286,6 +286,15 @@ export function readVersion(id: string): Promise<VersionDataOk | EvalErr> {
   });
 }
 
+// readSeed returns the on-disk seed data.cue text, the mount-time fallback when
+// no saved version exists yet.
+export function readSeed(): Promise<VersionDataOk | EvalErr> {
+  return get("/seed", async (response) => {
+    const body = await readJson<{ data?: string }>(response);
+    return { data: body.data ?? "" };
+  });
+}
+
 // Map the backend /eval JSON to the frontend Diagram model. The backend returns
 // nodes as a struct keyed by id (matching the CUE schema); the frontend uses a
 // node array. Edges already match one-to-one.
