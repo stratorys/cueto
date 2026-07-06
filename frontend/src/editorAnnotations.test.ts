@@ -7,7 +7,8 @@
 // buildDeco is pure (RawAnnotation[] + doc -> DecorationSet) and never touches the
 // DOM, so it runs under the node test env. These tests lock in the runtime
 // invariants CodeMirror would otherwise only enforce with a throw: ranges in
-// document order, in-bounds lines, and the underline clamp to line end.
+// document order and in-bounds lines. The diagnostic underline is drawn by
+// @codemirror/lint, not this layer, so buildDeco emits only a line tint + ghost.
 
 import { describe, expect, it } from "vitest";
 import { Text } from "@codemirror/state";
@@ -58,27 +59,20 @@ describe("buildDeco", () => {
     expect(collect(buildDeco(anns, doc))).toHaveLength(0);
   });
 
-  it("emits a line decoration, an underline, and a widget for an error", () => {
+  it("emits a line decoration and a widget for an error (no underline)", () => {
     const ranges = collect(buildDeco([{ line: 2, column: 3, text: "oops", variant: "error" }], doc));
     expect(ranges).toContainEqual({ from: 16, to: 16, cls: "cm-xray-line-error", widget: undefined });
-    expect(ranges).toContainEqual({ from: 18, to: 25, cls: "cm-xray-underline-error", widget: undefined });
     expect(ranges).toContainEqual({ from: 25, to: 25, cls: undefined, widget: "oops" });
+    expect(ranges.some((r) => r.cls?.startsWith("cm-xray-underline"))).toBe(false);
   });
 
-  it("omits the underline on an empty line but still emits the line deco and widget", () => {
+  it("emits the line deco and widget on an empty line", () => {
     const ranges = collect(buildDeco([{ line: 3, column: 1, text: "e", variant: "error" }], doc));
     expect(ranges.some((r) => r.cls === "cm-xray-line-error")).toBe(true);
-    expect(ranges.some((r) => r.cls === "cm-xray-underline-error")).toBe(false);
     expect(ranges.some((r) => r.widget === "e")).toBe(true);
   });
 
-  it("omits the underline when the column is past the line's end", () => {
-    const ranges = collect(buildDeco([{ line: 2, column: 99, text: "x", variant: "warning" }], doc));
-    expect(ranges.some((r) => r.cls === "cm-xray-underline-warning")).toBe(false);
-    expect(ranges.some((r) => r.widget === "x")).toBe(true);
-  });
-
-  it("emits only a widget for a type/optional hint (no line or underline)", () => {
+  it("emits only a widget for a type/optional hint (no line tint)", () => {
     const ranges = collect(buildDeco([{ line: 2, column: 1, text: ": string", variant: "type" }], doc));
     expect(ranges).toHaveLength(1);
     expect(ranges[0]).toEqual({ from: 25, to: 25, cls: undefined, widget: ": string" });

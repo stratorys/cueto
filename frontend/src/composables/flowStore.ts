@@ -26,4 +26,5 @@ export const {
   updateNodeData,
   fitView,
   findNode,
+  viewport,
 } = store;

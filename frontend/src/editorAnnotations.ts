@@ -18,8 +18,9 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 
 export type AnnotationVariant = "error" | "warning" | "type" | "optional";
 
-// A position-tagged annotation. column is 1-based and used only to start a
-// diagnostic underline; the ghost text always renders at end of line.
+// A position-tagged annotation. column is 1-based; the ghost text always renders at
+// end of line. The diagnostic underline itself is drawn by @codemirror/lint (in
+// CodeEditor), which also owns the gutter markers and hover tooltips.
 export interface RawAnnotation {
   line: number;
   column: number;
@@ -63,13 +64,10 @@ const lineDeco: Record<"error" | "warning", Decoration> = {
   error: Decoration.line({ class: "cm-xray-line-error" }),
   warning: Decoration.line({ class: "cm-xray-line-warning" }),
 };
-const underlineDeco: Record<"error" | "warning", Decoration> = {
-  error: Decoration.mark({ class: "cm-xray-underline-error" }),
-  warning: Decoration.mark({ class: "cm-xray-underline-warning" }),
-};
 
 // Exported for unit testing: pure (RawAnnotation[] + doc -> DecorationSet), it
-// never touches the DOM, so it runs under the node test env.
+// never touches the DOM, so it runs under the node test env. The underline is drawn
+// by @codemirror/lint, not here - this layer owns the line tint and the ghost text.
 export function buildDeco(annotations: RawAnnotation[], doc: Text): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   for (const a of annotations) {
@@ -77,16 +75,12 @@ export function buildDeco(annotations: RawAnnotation[], doc: Text): DecorationSe
     const line = doc.line(a.line);
     if (a.variant === "error" || a.variant === "warning") {
       ranges.push(lineDeco[a.variant].range(line.from));
-      const from = Math.min(line.from + Math.max(0, a.column - 1), line.to);
-      if (from < line.to) {
-        ranges.push(underlineDeco[a.variant].range(from, line.to));
-      }
     }
     ranges.push(
       Decoration.widget({ widget: new GhostWidget(a.text, a.variant), side: 1 }).range(line.to),
     );
   }
-  // sort=true: mixed line/mark/widget decorations must be in document order.
+  // sort=true: mixed line/widget decorations must be in document order.
   return Decoration.set(ranges, true);
 }
 
@@ -123,14 +117,6 @@ const annotationTheme = EditorView.baseTheme({
   ".cm-xray-optional": { color: "#475569" },
   ".cm-xray-error": { color: "#f87171" },
   ".cm-xray-warning": { color: "#fbbf24" },
-  ".cm-xray-underline-error": {
-    textDecoration: "underline wavy #f87171",
-    textDecorationSkipInk: "none",
-  },
-  ".cm-xray-underline-warning": {
-    textDecoration: "underline wavy #fbbf24",
-    textDecorationSkipInk: "none",
-  },
   ".cm-xray-line-error": { backgroundColor: "rgba(248, 113, 113, 0.08)" },
   ".cm-xray-line-warning": { backgroundColor: "rgba(251, 191, 36, 0.08)" },
 });

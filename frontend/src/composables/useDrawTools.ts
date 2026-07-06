@@ -69,6 +69,10 @@ export const activeTool = ref<Tool | null>(null);
 // connection handles visible so a handle-to-handle drag is discoverable.
 export const connecting = ref(false);
 
+// When true, a draw tool stays armed after a successful draw (repeated placement);
+// when false (default), it auto-disarms back to select. Set by Alt-arming a tool.
+export const toolLocked = ref(false);
+
 // While the line tool is armed, the shape under the cursor (from the draw
 // overlay's hit-test), or null. Node components reveal only this node's handles,
 // so the line tool matches ordinary per-shape hover instead of lighting up all.
@@ -109,6 +113,9 @@ function drawShape(
   newNodeOwner.set(id, activeFileName.value);
   rebuildGraph();
   syncTextFromModel();
+  // Auto-disarm back to select after a successful draw, unless the tool is locked
+  // for repeated placement (Alt-armed).
+  if (!toolLocked.value) disarmTool();
 }
 
 // Place a DB table centered on a client point (drop / click).
@@ -296,18 +303,20 @@ function containerAt(
   return best;
 }
 
-function armTool(tool: Tool) {
+function armTool(tool: Tool, locked = false) {
   activeTool.value = activeTool.value === tool ? null : tool;
   // Connect mode reveals every shape's handles at once. The line tool instead
   // reveals only the hovered shape's handles (driven by hoveredNodeId), so it
   // does not force `connecting`.
   connecting.value = activeTool.value === "connect";
   hoveredNodeId.value = null;
+  toolLocked.value = activeTool.value ? locked : false;
 }
 function disarmTool() {
   activeTool.value = null;
   connecting.value = false;
   hoveredNodeId.value = null;
+  toolLocked.value = false;
 }
 
 // Drag: commit the final position once, not on every move. On drop, re-parent the
@@ -551,5 +560,6 @@ export function useDrawTools() {
     drawShape,
     connectShapes,
     hoveredNodeId,
+    toolLocked,
   };
 }

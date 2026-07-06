@@ -48,6 +48,7 @@ const {
   activeTool,
   armTool,
   disarmTool,
+  toolLocked,
   placeShape,
   placeTable,
   placeContainer,
@@ -123,6 +124,9 @@ function onAddTyped(type: TypedNodeType) {
 const host = ref<HTMLDivElement>();
 const drawLayer = ref<HTMLDivElement>();
 const draw = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+// True while Space is held with a draw tool armed: the draw overlay steps aside so
+// Vue Flow pans instead of drawing.
+const panOverride = ref(false);
 
 // The armed *draw* tool: a shape tool, or null when idle or in connect mode.
 // Connect mode must NOT raise the draw overlay - the overlay sits above Vue Flow
@@ -222,6 +226,31 @@ function onDrawEnd() {
   drawShape(drawTool.value, d.x0, d.y0, d.x1, d.y1);
 }
 
+// Bare-key tool shortcuts (Excalidraw-style). v/1 select (disarm) is handled
+// separately; this maps the arming keys.
+const TOOL_KEYS: Record<string, ShapeKind | "connect"> = {
+  r: "rectangle",
+  o: "ellipse",
+  d: "diamond",
+  l: "line",
+  t: "text",
+  c: "connect",
+};
+
+// True while the event originates from a text-entry surface (the CUE editor, an
+// input, a textarea, or any contenteditable). Every shortcut but Escape's own
+// container-climb is inert there, so a letter key typed in a field never arms a
+// tool.
+function isEditableTarget(event: KeyboardEvent): boolean {
+  const el = elementTarget(event);
+  return !!(
+    el?.closest?.(".cm-editor") ||
+    el?.tagName === "INPUT" ||
+    el?.tagName === "TEXTAREA" ||
+    el?.closest?.("[contenteditable]")
+  );
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
     // A held tool disarms first; otherwise Escape climbs one level out of a
@@ -230,57 +259,102 @@ function onKeydown(event: KeyboardEvent) {
       disarmTool();
       return;
     }
-    const el = elementTarget(event);
-    if (el?.closest?.(".cm-editor") || el?.tagName === "INPUT" || el?.tagName === "TEXTAREA") {
-      return;
-    }
+    if (isEditableTarget(event)) return;
     if (breadcrumb.value.length) {
       const parent = breadcrumb.value[breadcrumb.value.length - 2];
       setFocus(parent ? parent.id : null);
     }
     return;
   }
-  // Let the CUE editor keep its own text undo/redo when it has focus.
-  const target = elementTarget(event);
-  if (target?.closest?.(".cm-editor")) return;
+
+  // Everything below acts on the canvas, never while typing.
+  if (isEditableTarget(event)) return;
 
   const mod = event.metaKey || event.ctrlKey;
-  if (!mod) return;
-  const key = event.key.toLowerCase();
-  if (key === "z") {
-    event.preventDefault();
-    if (event.shiftKey) onRedo();
-    else onUndo();
-  } else if (key === "y") {
-    event.preventDefault();
-    onRedo();
-  } else if (key === "s") {
-    // Persist the current CUE as an immutable version, and suppress the browser
-    // save dialog so the shortcut is not disruptive.
-    event.preventDefault();
-    save();
+  if (mod) {
+    const key = event.key.toLowerCase();
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) onRedo();
+      else onUndo();
+    } else if (key === "y") {
+      event.preventDefault();
+      onRedo();
+    } else if (key === "s") {
+      // Persist the current CUE as an immutable version, and suppress the browser
+      // save dialog so the shortcut is not disruptive.
+      event.preventDefault();
+      save();
+    }
+    return;
+  }
+
+  // Space temporarily pans while a shape draw tool is armed: the draw overlay
+  // yields the pointer to Vue Flow. Select/connect already pan, so no override.
+  if (event.code === "Space") {
+    if (drawTool.value) {
+      event.preventDefault();
+      panOverride.value = true;
+    }
+    return;
+  }
+
+  if (event.key === "v" || event.key === "V" || event.key === "1") {
+    disarmTool();
+    return;
+  }
+  const tool = TOOL_KEYS[event.key.toLowerCase()];
+  if (tool) {
+    // Connect is unavailable on an auto-layout (data-derived) diagram.
+    if (tool === "connect" && isAutoLayout.value) return;
+    armTool(tool);
   }
 }
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
+
+function onKeyup(event: KeyboardEvent) {
+  if (event.code === "Space") panOverride.value = false;
+}
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("keyup", onKeyup);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("keyup", onKeyup);
+});
 </script>
 
 <template>
   <div
     ref="host"
     class="relative h-full w-full"
-    :class="drawTool ? 'cursor-crosshair' : ''"
+    :class="panOverride ? 'cursor-grab' : drawTool ? 'cursor-crosshair' : ''"
     @drop.prevent="onDrop"
     @dragover.prevent
   >
     <!-- Shared edge-marker defs (arrowhead, inheritance triangle). -->
     <MarkerDefs />
-    <!-- One top bar: history/layout controls and the draw tools. Draw tools stay
+    <!-- Tool island, centered at the top: the draw tools only. Draw tools stay
          available on a data-derived diagram (shapes save to a managed block);
          relations (connect) are hidden there - a drawn edge can't persist
          alongside the derived edge comprehension yet. -->
     <div
-      class="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-1.5 shadow-sm backdrop-blur"
+      class="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center rounded-lg border border-slate-200 bg-white/90 px-2 py-1.5 shadow-sm backdrop-blur"
+    >
+      <ShapePalette
+        :active="activeTool"
+        :allow-connect="!isAutoLayout"
+        :locked="toolLocked"
+        @arm="armTool"
+        @add-table="onAddTable"
+        @add-container="onAddContainer"
+        @add-typed="onAddTyped"
+      />
+    </div>
+
+    <!-- History / view controls, bottom-left beside the Vue Flow zoom controls. -->
+    <div
+      class="absolute bottom-3 left-14 z-10 flex items-center rounded-lg border border-slate-200 bg-white/90 px-1.5 py-1 shadow-sm backdrop-blur"
     >
       <Toolbar
         :can-undo="canUndo"
@@ -289,21 +363,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         @redo="onRedo"
         @layout="layout"
       />
-      <div class="mx-0.5 h-6 w-px bg-slate-200" />
-      <ShapePalette
-        :active="activeTool"
-        :allow-connect="!isAutoLayout"
-        @arm="armTool"
-        @add-table="onAddTable"
-        @add-container="onAddContainer"
-        @add-typed="onAddTyped"
-      />
     </div>
 
-    <!-- Drill-down breadcrumb: shown only while focused into a container. -->
+    <!-- Drill-down breadcrumb: shown only while focused into a container. Stacks
+         under the tool island. -->
     <div
       v-if="breadcrumb.length"
-      class="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-sm shadow-sm backdrop-blur"
+      class="absolute left-1/2 top-16 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-sm shadow-sm backdrop-blur"
     >
       <button class="rounded px-1.5 py-0.5 text-slate-600 hover:bg-slate-100" @click="setFocus(null)">
         All
@@ -332,7 +398,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       fit-view-on-init
       @edge-double-click="startEdgeEdit($event.edge.id)"
     >
-      <Background variant="lines" :gap="22" :size="1" :pattern-color="gridColor" />
+      <Background variant="dots" :gap="22" :size="1.5" :pattern-color="gridColor" />
       <Controls />
     </VueFlow>
 
@@ -340,7 +406,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
          mode, so handle drags reach Vue Flow). Transparent, so the line tool's
          visible handles show through; endpointUnder() hit-tests beneath it. -->
     <div
-      v-if="drawTool"
+      v-if="drawTool && !panOverride"
       ref="drawLayer"
       class="absolute inset-0 z-10 cursor-crosshair"
       @pointerdown.prevent="onDrawStart"

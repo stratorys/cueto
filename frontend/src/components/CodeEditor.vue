@@ -11,11 +11,15 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Compartment, EditorState, type StateEffect } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
+import { autocompletion } from "@codemirror/autocomplete";
+import { lintGutter, setDiagnostics, type Diagnostic as LintDiagnostic } from "@codemirror/lint";
 import { basicSetup } from "codemirror";
 import { cueLanguage } from "../cueLanguage";
 import { editorAnnotations, setAnnotations, type RawAnnotation } from "../editorAnnotations";
 import { editorFocus, setFocusRange } from "../editorFocus";
 import { findElementRange } from "../cueSourceMap";
+import { cueCompletionSource } from "../replCompletions";
+import { useCueCompletion } from "../composables/useCueCompletion";
 import type { Diagnostic, Hint } from "../api";
 
 const props = defineProps<{
@@ -29,7 +33,15 @@ const props = defineProps<{
   // scrolled into view. null clears the tint.
   focusId?: string | null;
 }>();
-const emit = defineEmits<{ "update:modelValue": [value: string]; save: [] }>();
+const emit = defineEmits<{
+  "update:modelValue": [value: string];
+  save: [];
+  cursor: [pos: { line: number; col: number }];
+}>();
+
+// Autocomplete over the diagram field paths, CUE builtins, and stdlib packages,
+// shared with the REPL. Only the editable editor completes (not the schema view).
+const { completionData, start } = useCueCompletion();
 
 // Fold diagnostics and hints into the editor's single annotation stream. A
 // diagnostic without a position (line 0) is skipped here; it still shows in the
@@ -62,6 +74,32 @@ function pushAnnotations() {
   view?.dispatch({ effects: setAnnotations.of(toAnnotations()) });
 }
 
+// Map eval diagnostics to @codemirror/lint diagnostics: an underline from the
+// reported column to end of line, which also drives the gutter marker and the hover
+// tooltip. Positioned line 0 diagnostics are skipped (they still show in the strip).
+function toLintDiagnostics(): LintDiagnostic[] {
+  if (!view) return [];
+  const doc = view.state.doc;
+  const out: LintDiagnostic[] = [];
+  for (const d of props.diagnostics ?? []) {
+    if (!d.line || d.line > doc.lines) continue;
+    const line = doc.line(d.line);
+    const from = Math.min(line.from + Math.max(0, (d.column || 1) - 1), line.to);
+    out.push({
+      from,
+      to: line.to,
+      severity: d.kind === "incomplete" ? "warning" : "error",
+      message: d.message,
+    });
+  }
+  return out;
+}
+
+function pushDiagnostics() {
+  if (!view || props.readOnly) return;
+  view.dispatch(setDiagnostics(view.state, toLintDiagnostics()));
+}
+
 // Tint the selected node's CUE block. Located by scanning the live doc, so it
 // works regardless of how the text got there; an id with no block (renamed /
 // broken CUE) just clears the tint. `scroll` only on a selection change - not when
@@ -92,7 +130,7 @@ const theme = EditorView.theme(
   {
     "&": { height: "100%", backgroundColor: "transparent", color: "#e2e8f0" },
     ".cm-scroller": {
-      fontFamily: "ui-monospace, Consolas, monospace",
+      fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
       // Integer px only: a fractional font size makes CodeMirror's average
       // char-width measurement diverge from each glyph's rounded advance on
       // HiDPI, so the caret drifts further from the text the longer the line.
@@ -109,8 +147,8 @@ const theme = EditorView.theme(
       color: "#334155",
       border: "none",
     },
-    ".cm-activeLine": { backgroundColor: "transparent" },
-    ".cm-activeLineGutter": { backgroundColor: "transparent" },
+    ".cm-activeLine": { backgroundColor: "rgba(148, 163, 184, 0.08)" },
+    ".cm-activeLineGutter": { backgroundColor: "rgba(148, 163, 184, 0.08)" },
     "&.cm-focused": { outline: "none" },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "rgba(148, 163, 184, 0.3)",
@@ -134,6 +172,12 @@ onMounted(() => {
           { key: "Mod-s", preventDefault: true, run: () => (emit("save"), true) },
         ]),
         cueLanguage(),
+        ...(props.readOnly
+          ? []
+          : [
+              autocompletion({ override: [cueCompletionSource(completionData)] }),
+              lintGutter(),
+            ]),
         editorAnnotations(),
         editorFocus(),
         theme,
@@ -143,17 +187,39 @@ onMounted(() => {
           if (update.docChanged && !applyingExternal) {
             emit("update:modelValue", update.state.doc.toString());
           }
+          if ((update.docChanged || update.selectionSet) && !props.readOnly) {
+            const head = update.state.selection.main.head;
+            const line = update.state.doc.lineAt(head);
+            emit("cursor", { line: line.number, col: head - line.from + 1 });
+          }
         }),
       ],
     }),
   });
   pushAnnotations();
+  pushDiagnostics();
   pushFocus(true);
+  if (!props.readOnly) start();
 });
+
+// Move the caret to line:col, scroll it into view, and focus - the status bar's and
+// problems strip's jump-to-problem. 1-based line and column.
+function revealLine(line: number, col = 1) {
+  if (!view) return;
+  const target = Math.max(1, Math.min(line, view.state.doc.lines));
+  const lineObj = view.state.doc.line(target);
+  const pos = Math.min(lineObj.from + Math.max(0, col - 1), lineObj.to);
+  view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  view.focus();
+}
+defineExpose({ revealLine });
 
 // Re-render the x-ray whenever eval produces new diagnostics or hints. Not a doc
 // change, so it never echoes back through the update listener.
-watch(() => [props.diagnostics, props.hints, props.showHints], pushAnnotations);
+watch(() => [props.diagnostics, props.hints, props.showHints], () => {
+  pushAnnotations();
+  pushDiagnostics();
+});
 
 // Re-tint and scroll whenever the canvas selection changes.
 watch(() => props.focusId, () => pushFocus(true));

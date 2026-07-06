@@ -64,23 +64,8 @@ const cueHighlightStyle = HighlightStyle.define([
   { tag: tags.punctuation, color: "#64748b" },
 ]);
 
-// Light variant, tuned for a white background (the REPL input sits in the light
-// pane, not the dark code editor). Same token roles, darker/saturated inks so
-// each stays legible on white.
-const cueHighlightStyleLight = HighlightStyle.define([
-  { tag: tags.comment, color: "#64748b", fontStyle: "italic" },
-  { tag: tags.string, color: "#15803d" },
-  { tag: tags.typeName, color: "#b45309", fontWeight: "600" },
-  { tag: tags.keyword, color: "#7c3aed" },
-  { tag: tags.number, color: "#0369a1" },
-  { tag: tags.propertyName, color: "#0f766e" },
-  { tag: tags.variableName, color: "#334155" },
-  { tag: tags.punctuation, color: "#94a3b8" },
-]);
-
-// The lexer plus a highlight style. "dark" (default) suits the code editor's dark
-// pane; "light" suits the REPL input on the white pane.
-export function cueLanguage(theme: "dark" | "light" = "dark"): Extension {
-  const style = theme === "light" ? cueHighlightStyleLight : cueHighlightStyle;
-  return [cueMode, syntaxHighlighting(style)];
+// The lexer plus the highlight style. Both the code editor and the REPL input sit
+// on a dark pane, so one dark style serves both.
+export function cueLanguage(): Extension {
+  return [cueMode, syntaxHighlighting(cueHighlightStyle)];
 }

@@ -7,9 +7,11 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { AlignLeft, Save } from "lucide-vue-next";
 import CodeEditor from "./CodeEditor.vue";
 import ProjectSwitcher from "./ProjectSwitcher.vue";
+import StatusBar from "./StatusBar.vue";
 import type { SaveState } from "../composables/useDiagramCanvas";
 import type { EditorFile } from "../model";
 import type { Diagnostic, Hint } from "../api";
@@ -49,6 +51,30 @@ const emit = defineEmits<{
 // The schema tab is a separate read-only view, toggled independently of which
 // editable file is active.
 const viewingSchema = ref(false);
+
+// The editable editor instance (for jump-to-line), the live caret position (shown
+// in the status bar), and whether the problems strip is expanded.
+const editorRef = ref<InstanceType<typeof CodeEditor> | null>(null);
+const cursor = ref<{ line: number; col: number }>({ line: 1, col: 1 });
+const showProblems = ref(false);
+
+// Positioned diagnostics become clickable rows; an unpositioned eval/rewrite error
+// (which produces no diagnostics) still counts as one problem for the status bar.
+const problems = computed(() => (props.diagnostics ?? []).filter((d) => d.line));
+const problemCount = computed(() => problems.value.length || (props.error ? 1 : 0));
+
+function jumpTo(line: number, column: number) {
+  editorRef.value?.revealLine(line, column || 1);
+}
+
+// Status-bar click toggles the strip; opening it also jumps to the first problem.
+function openProblems() {
+  if (!problemCount.value) return;
+  showProblems.value = !showProblems.value;
+  if (!showProblems.value) return;
+  const first = problems.value[0];
+  if (first) jumpTo(first.line, first.column);
+}
 
 // A canvas selection tints an editable file, so leave the schema view when one
 // arrives.
@@ -100,8 +126,9 @@ async function promptRename(name: string) {
 
 const tab =
   "flex items-center gap-1.5 border-r border-b-2 border-slate-800 px-3 py-2 font-mono text-xs cursor-pointer text-slate-500 aria-selected:border-b-amber-500 aria-selected:text-slate-200";
-const button =
-  "rounded border border-slate-700 px-2 py-0.5 font-mono text-xs text-slate-300 cursor-pointer hover:border-amber-500 disabled:cursor-default disabled:opacity-40";
+// Icon-only tab-bar action (Format, Save); tooltip carries the name.
+const iconButton =
+  "flex h-7 w-7 items-center justify-center rounded text-slate-400 cursor-pointer hover:bg-slate-800 hover:text-slate-200 disabled:cursor-default disabled:opacity-40";
 </script>
 
 <template>
@@ -135,42 +162,25 @@ const button =
         schema.cue
         <span class="rounded-sm border border-slate-700 px-1 text-xs uppercase tracking-wide text-slate-500">read-only</span>
       </button>
-      <div class="ml-auto flex items-center gap-2 pr-2.5">
-        <template v-if="!viewingSchema">
-          <button
-            :class="button"
-            :aria-pressed="showHints"
-            :title="showHints ? 'Hide type hints' : 'Show type hints'"
-            @click="emit('toggleHints')"
-          >{{ showHints ? "Hints on" : "Hints off" }}</button>
-          <button :class="button" @click="emit('format')">Format</button>
-          <button
-            :class="button"
-            :disabled="saveState.status === 'saving'"
-            @click="emit('save')"
-          >Save</button>
-          <span v-if="saveState.status === 'saving'" class="font-mono text-xs text-slate-500">Saving…</span>
-          <span
-            v-else-if="saveState.status === 'saved'"
-            class="font-mono text-xs text-emerald-400"
-            :title="saveState.version"
-          >Saved {{ saveState.version.slice(0, 7) }}</span>
-          <span v-else-if="saveState.status === 'error'" class="font-mono text-xs text-red-400">Save failed</span>
-        </template>
-        <span
-          v-if="error"
-          class="rounded-sm bg-red-500/15 px-2 py-0.5 font-mono text-xs text-red-400"
-        >invalid</span>
-        <span
-          v-else
-          class="rounded-sm bg-emerald-500/15 px-2 py-0.5 font-mono text-xs text-emerald-400"
-        >valid</span>
+      <div v-if="!viewingSchema" class="ml-auto flex items-center gap-0.5 pr-2">
+        <button :class="iconButton" title="Format" @click="emit('format')">
+          <AlignLeft class="h-4 w-4" />
+        </button>
+        <button
+          :class="iconButton"
+          title="Save"
+          :disabled="saveState.status === 'saving'"
+          @click="emit('save')"
+        >
+          <Save class="h-4 w-4" />
+        </button>
       </div>
     </div>
 
     <div class="min-h-0 flex-1">
       <CodeEditor
         v-show="!viewingSchema"
+        ref="editorRef"
         :model-value="code"
         :diagnostics="diagnostics"
         :hints="hints"
@@ -178,6 +188,7 @@ const button =
         :focus-id="selectedElementId"
         @update:model-value="emit('update:code', $event)"
         @save="emit('save')"
+        @cursor="cursor = $event"
       />
       <CodeEditor
         v-show="viewingSchema"
@@ -186,9 +197,35 @@ const button =
       />
     </div>
 
-    <pre
-      v-if="error"
-      class="m-0 max-h-72 flex-none overflow-auto border-t border-red-900 bg-red-950 px-3 py-2.5 font-mono text-xs leading-snug whitespace-pre-wrap text-red-300"
-    >{{ error }}</pre>
+    <!-- Problems strip: a slim collapsible list, each row jumps the cursor to its
+         line:col. Toggled from the status-bar problem count. -->
+    <div
+      v-if="showProblems && problemCount"
+      class="max-h-40 flex-none overflow-auto border-t border-slate-800 bg-slate-950/60 font-mono text-xs"
+    >
+      <button
+        v-for="(d, i) in problems"
+        :key="i"
+        class="flex w-full items-start gap-2 px-3 py-1 text-left hover:bg-slate-800/60"
+        @click="jumpTo(d.line, d.column)"
+      >
+        <span class="shrink-0 tabular-nums text-slate-500">{{ d.line }}:{{ d.column || 1 }}</span>
+        <span :class="d.kind === 'incomplete' ? 'text-amber-300' : 'text-red-300'">{{ d.message }}</span>
+      </button>
+      <div
+        v-if="!problems.length && error"
+        class="px-3 py-1.5 leading-snug whitespace-pre-wrap text-red-300"
+      >{{ error }}</div>
+    </div>
+
+    <StatusBar
+      v-if="!viewingSchema"
+      :save-state="saveState"
+      :problem-count="problemCount"
+      :cursor="cursor"
+      :show-hints="showHints"
+      @toggle-hints="emit('toggleHints')"
+      @problems="openProblems"
+    />
   </div>
 </template>
