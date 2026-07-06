@@ -31,7 +31,9 @@ The REPL pane turns the diagram into a queryable value. Every entry evaluates a 
 Author a domain as data under a schema, and derive the graph from it:
 
 ```cue
-package diagram
+package main
+
+import d "github.com/stratorys/cueto/diagram"
 
 #Person: {
 	name:   string
@@ -43,24 +45,75 @@ package diagram
 
 people: [ID=string]: #Person
 people: {
-	george:   {name: "George McFly", role: "parent", year: 1938}
-	lorraine: {name: "Lorraine Baines", role: "parent", year: 1938}
-	marty:    {name: "Marty McFly", role: "traveler", mother: "lorraine", father: "george", year: 1968}
-	doc:      {name: "Dr. Emmett Brown", role: "inventor", year: 1920}
+	george: {
+		name: "George McFly"
+		role: "parent"
+		year: 1938
+	}
+	lorraine: {
+		name: "Lorraine Baines"
+		role: "parent"
+		year: 1938
+	}
+	marty: {
+		name:   "Marty McFly"
+		role:   "traveler"
+		mother: "lorraine"
+		father: "george"
+		year:   1968
+	}
+	dave: {
+		name:   "Dave McFly"
+		role:   "sibling"
+		mother: "lorraine"
+		father: "george"
+		year:   1961
+	}
+	linda: {
+		name:   "Linda McFly"
+		role:   "sibling"
+		mother: "lorraine"
+		father: "george"
+		year:   1965
+	}
+	doc: {
+		name: "Dr. Emmett Brown"
+		role: "inventor"
+		year: 1920
+	}
 }
 
-diagram: #Diagram & {
+diagram: d.#Diagram & {
 	nodes: {
 		for pid, p in people {
-			(pid): {type: "entity", label: p.name, data: {role: p.role, year: p.year}}
+			(pid): {
+				type:  "entity"
+				label: p.name
+				data: {
+					role: p.role
+					year: p.year
+				}
+			}
 		}
 	}
 	edges: [
 		for pid, p in people if p.mother != "" {
-			{id: "m_\(pid)", source: p.mother, target: pid, kind: "arrow", label: "mother"}
+			{
+				id:     "m_\(pid)"
+				source: p.mother
+				target: pid
+				kind:   "arrow"
+				label:  "mother"
+			}
 		},
 		for pid, p in people if p.father != "" {
-			{id: "f_\(pid)", source: p.father, target: pid, kind: "arrow", label: "father"}
+			{
+				id:     "f_\(pid)"
+				source: p.father
+				target: pid
+				kind:   "arrow"
+				label:  "father"
+			}
 		},
 	]
 }
