@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 // Ephemeral CUE REPL. Each entry evaluates a CUE expression against the diagram
 // currently in the editor (the files are sent to /repl and overlaid on the
 // schema), so a query can read the live `diagram` - e.g.
-// `diagram.nodes.payments_db.owner`. The input is a CodeMirror editor with
+// `diagram.nodes.user.label`. The input is a CodeMirror editor with
 // autocomplete over the diagram's field paths, the CUE builtins, and every
 // importable standard-library package (the backend injects the needed imports).
 // The reference browser lists the same. It has no saved impact: nothing here
@@ -180,7 +180,7 @@ onMounted(async () => {
         history(),
         closeBrackets(),
         cueLanguage(),
-        placeholder("diagram.nodes.payments_db.owner"),
+        placeholder("diagram.nodes.user.label"),
         autocompletion({ override: [cueCompletionSource(completionData)] }),
         keymap.of([
           { key: "Mod-Enter", preventDefault: true, run: () => (void run(), true) },
@@ -343,8 +343,8 @@ const replTheme = EditorView.theme(
     >
       <p v-if="!entries.length" class="text-slate-500">
         Query the diagram in the editor - e.g.
-        <span class="font-mono text-slate-400">diagram.nodes.payments_db.owner</span> or
-        <span class="font-mono text-slate-400">[for e in diagram.edges if e.sync {e.id}]</span>.
+        <span class="font-mono text-slate-400">diagram.nodes.user.label</span> or
+        <span class="font-mono text-slate-400">[for e in diagram.edges if e.kind == "arrow" {e.id}]</span>.
         Type to autocomplete keys, builtins, and package functions (⌃Space to force
         it); Enter runs, ⇧Enter adds a line, ↑/↓ recall history; ⌃L or ⌘K clears.
         Results never touch your files or saved versions.

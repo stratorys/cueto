@@ -24,16 +24,14 @@ import {
 // every edge renders regardless of layout state. `data.kind` picks the visual
 // connector: a filled arrowhead, a hollow inheritance triangle, or a dashed line
 // (markers are defined once in MarkerDefs, rendered by DiagramCanvas). A free-form
-// `label` (double-click to edit) and the governance metadata (call/protocol/card)
-// render as pills at the edge midpoint.
+// `label` (double-click to edit) and the cardinality (card) render as pills at
+// the edge midpoint.
 const props = defineProps<
   EdgeProps<{
     points?: { x: number; y: number }[];
     kind?: DiagramEdge["kind"];
     label?: string;
     card?: string;
-    call?: string;
-    protocol?: string;
   }>
 >();
 
@@ -80,10 +78,8 @@ const route = computed(() => {
   return { d, labelX, labelY };
 });
 
-// Governance metadata joined into a compact secondary pill, e.g. "calls · http · 1-n".
-const meta = computed(() =>
-  [props.data?.call, props.data?.protocol, props.data?.card].filter(Boolean).join(" · "),
-);
+// Cardinality shown as a compact secondary pill, e.g. "1-n".
+const meta = computed(() => props.data?.card ?? "");
 
 // --- inline label editing (double-click the edge) ---------------------------
 const editing = computed(() => editingEdgeId.value === props.id);

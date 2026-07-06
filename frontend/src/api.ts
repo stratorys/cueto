@@ -19,11 +19,6 @@ export interface Diagnostic {
   line: number;
   column: number;
   kind: string;
-  // Present on policy/drift findings: the rule name and the graph element the
-  // finding anchors to (for click-to-highlight).
-  rule?: string;
-  nodeId?: string;
-  edgeId?: string;
 }
 
 // One inlay hint from /eval: ghost text at a 1-based data.cue position. "type"
@@ -96,17 +91,12 @@ export interface SaveOk {
   version: string;
 }
 
-// Result of /vet: ok:true when the diagram passes schema + any opted-in policies
-// (and drift, when facts are supplied); otherwise diagnostics carry the findings.
+// Result of /vet: ok:true when the diagram passes the schema; otherwise
+// diagnostics carry the findings.
 export interface VetOk {
   ok: true;
   passes: boolean;
   diagnostics: Diagnostic[];
-}
-
-export interface ImportOk {
-  ok: true;
-  facts: string;
 }
 
 export interface FormatOk {
@@ -333,35 +323,23 @@ export function saveCue(projectId: string, data: string): Promise<SaveOk | EvalE
   });
 }
 
-// vetCue validates data against the schema and any opted-in policy packs. When
-// `facts` (imported infra) is supplied, it also reports drift. A well-formed but
-// non-passing diagram comes back as ok:true, passes:false with diagnostics; only
-// a transport/operational failure is an EvalErr.
-export function vetCue(data: string, facts?: string): Promise<VetOk | EvalErr> {
-  const body = facts === undefined ? { data } : { data, facts };
-  return post("/vet", body, async (response) => {
+// vetCue validates data against the schema. A well-formed but non-passing diagram
+// comes back as ok:true, passes:false with diagnostics; only a transport/
+// operational failure is an EvalErr.
+export function vetCue(data: string): Promise<VetOk | EvalErr> {
+  return post("/vet", { data }, async (response) => {
     const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
 }
 
 // vetFiles is the multi-file sibling of vetCue: it validates the whole package
-// (all files unify) against the schema, policies, and optional drift facts.
-export function vetFiles(files: EditorFile[], facts?: string): Promise<VetOk | EvalErr> {
+// (all files unify) against the schema.
+export function vetFiles(files: EditorFile[]): Promise<VetOk | EvalErr> {
   const mapped = files.map((f) => ({ name: f.name, content: f.text }));
-  const body = facts === undefined ? { files: mapped } : { files: mapped, facts };
-  return post("/vet", body, async (response) => {
+  return post("/vet", { files: mapped }, async (response) => {
     const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
-  });
-}
-
-// importCompose parses docker-compose YAML into normalized infra facts (CUE/JSON)
-// to check the diagram against with vetCue(data, facts).
-export function importCompose(source: string): Promise<ImportOk | EvalErr> {
-  return post("/import/compose", { source }, async (response) => {
-    const body = await readJson<{ facts?: string }>(response);
-    return { facts: body.facts ?? "" };
   });
 }
 
@@ -435,7 +413,6 @@ export function readSeed(): Promise<VersionDataOk | EvalErr> {
 interface EvalDiagram {
   nodes?: Record<string, Omit<DiagramNode, "id"> & { id?: string }>;
   edges?: DiagramEdge[];
-  policies?: string[];
 }
 
 export function fromEval(raw: unknown, provenance?: Provenance): Diagram {
@@ -450,7 +427,5 @@ export function fromEval(raw: unknown, provenance?: Provenance): Diagram {
   const edges: DiagramEdge[] = (source.edges ?? []).map((edge) =>
     edgeOwner ? { ...edge, sourceFile: edgeOwner } : edge,
   );
-  return source.policies?.length
-    ? { nodes, edges, policies: source.policies }
-    : { nodes, edges };
+  return { nodes, edges };
 }

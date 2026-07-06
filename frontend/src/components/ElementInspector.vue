@@ -7,20 +7,13 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
-// Property editor for the selected node or edge. Authors the governance metadata
-// (role/owner/region/zone on nodes; card/call/protocol/sync on edges) that the
-// policy + drift harness checks - the fields the schema defines but no other
-// component ever sets. Every change commits through useDiagramCanvas, which
-// re-serializes the CUE so the Policy tab re-vets live.
+// Property editor for the selected node or edge: label, visual type/kind, edge
+// direction, and edge cardinality. Every change commits through useDiagramCanvas,
+// which re-serializes the CUE.
 import { computed } from "vue";
-import type {
-  EdgeCall,
-  EdgeCard,
-  EdgeProtocol,
-  NodeRole,
-} from "../model";
+import type { EdgeCard } from "../model";
 import { commitNodeLabel, useDiagramCanvas } from "../composables/useDiagramCanvas";
-import { fieldValue, isChecked } from "../eventTarget";
+import { fieldValue } from "../eventTarget";
 
 const {
   selectedElement,
@@ -28,7 +21,6 @@ const {
   commitNodeType,
   commitEdgeKind,
   commitEdgeReverse,
-  commitNodeGovernance,
   commitEdgeGovernance,
 } = useDiagramCanvas();
 
@@ -52,13 +44,8 @@ const NODE_TYPES = ["entity", "process", "decision", "shape"] as const;
 const EDGE_KINDS = ["relation", "arrow", "inherit", "line"] as const;
 const canRetype = computed(() => NODE_TYPES.some((t) => t === node.value?.type));
 
-// Option lists mirror the schema unions in model.ts so the dropdowns cannot drift.
-const ROLES: NodeRole[] = ["service", "database", "queue", "cache", "gateway", "external"];
+// Option list mirrors the schema union in model.ts so the dropdown cannot drift.
 const CARDS: EdgeCard[] = ["1-1", "1-n", "n-n"];
-const CALLS: EdgeCall[] = ["calls", "reads", "writes", "publishes", "subscribes"];
-const PROTOCOLS: EdgeProtocol[] = ["http", "grpc", "amqp", "sql"];
-// Free-string `zone` examples from schema.cue; offered as suggestions, not enforced.
-const ZONES = ["pci", "public", "dmz"];
 
 // Narrow a <select> value to one of a typed option list, or undefined when blank
 // or not a member of the list.
@@ -67,9 +54,6 @@ function pick<T extends string>(event: Event, allowed: readonly T[]): T | undefi
   return value === undefined ? undefined : allowed.find((option) => option === value);
 }
 
-function setNode(patch: Parameters<typeof commitNodeGovernance>[1]) {
-  if (node.value) commitNodeGovernance(node.value.id, patch);
-}
 function setEdge(patch: Parameters<typeof commitEdgeGovernance>[1]) {
   if (edge.value) commitEdgeGovernance(edge.value.id, patch);
 }
@@ -86,10 +70,10 @@ function setKind(event: Event) {
 <template>
   <div class="flex flex-col gap-4 p-4 text-sm">
     <p v-if="!node && !edge" class="text-slate-400">
-      Select a node or edge on the canvas to edit its governance metadata.
+      Select a node or edge on the canvas to edit its properties.
     </p>
 
-    <!-- Node: domain metadata that drives policy and drift. -->
+    <!-- Node: label and visual type. -->
     <template v-else-if="node">
       <div class="flex flex-col gap-0.5">
         <span class="font-medium text-slate-700">{{ node.label || node.id }}</span>
@@ -119,55 +103,9 @@ function setKind(event: Event) {
           <option v-for="t in NODE_TYPES" :key="t" :value="t">{{ t }}</option>
         </select>
       </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Role</span>
-        <select
-          class="rounded border border-slate-300 px-2 py-1"
-          :value="node.role ?? ''"
-          @change="setNode({ role: pick($event, ROLES) })"
-        >
-          <option value="">(unset)</option>
-          <option v-for="r in ROLES" :key="r" :value="r">{{ r }}</option>
-        </select>
-      </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Owner</span>
-        <input
-          class="rounded border border-slate-300 px-2 py-1"
-          placeholder="team id, e.g. payments"
-          :value="node.owner ?? ''"
-          @change="setNode({ owner: fieldValue($event) })"
-        />
-      </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Region</span>
-        <input
-          class="rounded border border-slate-300 px-2 py-1"
-          placeholder="e.g. eu-west-1"
-          :value="node.region ?? ''"
-          @change="setNode({ region: fieldValue($event) })"
-        />
-      </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Zone</span>
-        <input
-          class="rounded border border-slate-300 px-2 py-1"
-          list="zone-suggestions"
-          placeholder="trust boundary, e.g. pci"
-          :value="node.zone ?? ''"
-          @change="setNode({ zone: fieldValue($event) })"
-        />
-        <datalist id="zone-suggestions">
-          <option v-for="z in ZONES" :key="z" :value="z" />
-        </datalist>
-      </label>
     </template>
 
-    <!-- Edge: typed-relationship metadata for architecture modeling and drift. -->
+    <!-- Edge: visual kind, direction, and cardinality. -->
     <template v-else-if="edge">
       <div class="flex flex-col gap-0.5">
         <span class="font-medium text-slate-700">
@@ -205,39 +143,6 @@ function setKind(event: Event) {
           <option value="">(unset)</option>
           <option v-for="c in CARDS" :key="c" :value="c">{{ c }}</option>
         </select>
-      </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Call</span>
-        <select
-          class="rounded border border-slate-300 px-2 py-1"
-          :value="edge.call ?? ''"
-          @change="setEdge({ call: pick($event, CALLS) })"
-        >
-          <option value="">(unset)</option>
-          <option v-for="c in CALLS" :key="c" :value="c">{{ c }}</option>
-        </select>
-      </label>
-
-      <label class="flex flex-col gap-1">
-        <span class="font-medium text-slate-600">Protocol</span>
-        <select
-          class="rounded border border-slate-300 px-2 py-1"
-          :value="edge.protocol ?? ''"
-          @change="setEdge({ protocol: pick($event, PROTOCOLS) })"
-        >
-          <option value="">(unset)</option>
-          <option v-for="p in PROTOCOLS" :key="p" :value="p">{{ p }}</option>
-        </select>
-      </label>
-
-      <label class="flex items-center gap-2">
-        <input
-          type="checkbox"
-          :checked="edge.sync ?? false"
-          @change="setEdge({ sync: isChecked($event) })"
-        />
-        <span class="font-medium text-slate-600">Synchronous</span>
       </label>
     </template>
   </div>

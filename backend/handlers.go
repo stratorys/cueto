@@ -26,9 +26,6 @@ type dataRequest struct {
 	// Editable file set for multi-file packages. When empty, Data is treated as a
 	// single legacy data.cue, so older single-file clients keep working.
 	Files []File `json:"files"`
-	// Optional imported infra facts (from /import/*). When present, /vet also
-	// reports drift between the diagram and this live topology.
-	Facts string `json:"facts"`
 }
 
 // files returns the editable set: the explicit Files, or a single data.cue built
@@ -118,7 +115,7 @@ func (h *handlers) Vet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	diags, err := h.eval.Vet(c.Request.Context(), req.files(), req.Facts)
+	diags, err := h.eval.Vet(c.Request.Context(), req.files())
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -128,25 +125,6 @@ func (h *handlers) Vet(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-// ImportCompose parses docker-compose YAML into #Actual facts (JSON) for a drift
-// check. It answers 200 {facts:"..."} or 400 with kindImport diagnostics.
-func (h *handlers) ImportCompose(c *gin.Context) {
-	var req sourceRequest
-	if !bindJSON(c, &req) {
-		return
-	}
-	facts, diags, err := h.eval.ImportCompose(req.Source)
-	if err != nil {
-		writeOpError(c, err)
-		return
-	}
-	if len(diags) > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"facts": facts})
 }
 
 // Save validates the data and, when valid, stores it as a new immutable version.

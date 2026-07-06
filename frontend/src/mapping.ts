@@ -164,8 +164,6 @@ export function toFlowEdges(
         kind: edge.kind,
         label: edge.label,
         card: edge.card,
-        call: edge.call,
-        protocol: edge.protocol,
       },
     }));
 }
@@ -219,10 +217,6 @@ function nodeFields(node: DiagramNode): Record<string, unknown> {
     flip: node.flip,
     icon: node.icon,
     columns: node.columns,
-    role: node.role,
-    owner: node.owner,
-    region: node.region,
-    zone: node.zone,
     data: node.data,
   };
 }
@@ -238,9 +232,6 @@ function edgeFields(edge: DiagramEdge): Record<string, unknown> {
     kind: edge.kind,
     label: edge.label,
     card: edge.card,
-    call: edge.call,
-    protocol: edge.protocol,
-    sync: edge.sync,
   };
 }
 
@@ -279,11 +270,6 @@ export function toCue(diagram: Diagram): string {
 
   const edges = diagram.edges.map(edgeFields);
 
-  // Only emit `policies` when the diagram opts into a pack, so bare diagrams stay
-  // minimal (emit() already drops undefined fields).
-  const body = emit(
-    { nodes, edges, policies: diagram.policies?.length ? diagram.policies : undefined },
-    1,
-  );
+  const body = emit({ nodes, edges }, 1);
   return `package diagram\n\ndiagram: #Diagram & ${body}\n`;
 }

@@ -158,7 +158,6 @@ export async function layoutAuto() {
     edges: diagram.value.edges.filter(
       (e) => derivedIds.has(e.source) && derivedIds.has(e.target),
     ),
-    policies: diagram.value.policies,
   };
   const result = await layoutDiagram(subgraph, (node) => {
     if (node.width && node.height) return { width: node.width, height: node.height };

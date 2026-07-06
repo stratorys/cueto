@@ -16,31 +16,22 @@ import (
 
 // Diagnostic is one structured, position-remapped error surfaced to the editor.
 // Line and Column are 1-based positions in the client's data.cue text, or 0 when
-// the error carries no position. Rule/NodeID/EdgeID anchor policy and drift
-// findings to a graph element when CUE gives no text position.
+// the error carries no position.
 type Diagnostic struct {
 	Message string `json:"message"`
 	Line    int    `json:"line"`
 	Column  int    `json:"column"`
 	Kind    string `json:"kind"`
-	Rule    string `json:"rule,omitempty"`
-	NodeID  string `json:"nodeId,omitempty"`
-	EdgeID  string `json:"edgeId,omitempty"`
 }
 
 // Error kinds. They mean different things to the editor: a parse error is a
 // syntax typo, a schema error is a contract violation, incomplete means a value
-// is missing or non-concrete, internal is an operational failure. policy and
-// drift are governance findings (not source errors); import is an infra-file
-// parse failure.
+// is missing or non-concrete, internal is an operational failure.
 const (
 	kindParse      = "parse"
 	kindSchema     = "schema"
 	kindIncomplete = "incomplete"
 	kindInternal   = "internal"
-	kindPolicy     = "policy"
-	kindDrift      = "drift"
-	kindImport     = "import"
 )
 
 // diagnosticsFrom converts a CUE error tree into structured diagnostics. It

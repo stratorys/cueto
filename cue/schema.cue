@@ -12,10 +12,6 @@ package diagram
 #Diagram: {
 	nodes: [ID=string]: #Node & {id: ID}
 	edges: [...#Edge]
-	// Governance packs this diagram opts into, checked by the policy harness.
-	// e.g. ["security"]. Defaults to none so existing diagrams validate unchanged
-	// and the harness opt-in guard is always concrete.
-	policies: [...string] | *[]
 }
 
 #Node: {
@@ -46,14 +42,6 @@ package diagram
 	// Line only: drag direction (true = "\", absent = "/").
 	flip?:   bool
 	icon?:   string
-
-	// Domain-architecture metadata (all optional). `role` governs (drives policy
-	// and drift), distinct from the visual `type` which drives rendering. Without
-	// these, rules like "no service crosses a PCI boundary" are not expressible.
-	role?:   "service" | "database" | "queue" | "cache" | "gateway" | "external"
-	owner?:  string // team id, e.g. "payments"
-	region?: string // deployment region, e.g. "eu-west-1"
-	zone?:   string // trust boundary, e.g. "pci" | "public" | "dmz"
 }
 
 #Column: {
@@ -73,10 +61,4 @@ package diagram
 	// Optional free-form text drawn on the edge, edited inline on the canvas.
 	label?:        string
 	card?:         "1-1" | "1-n" | "n-n"
-
-	// Typed-relationship metadata (all optional), for architecture modeling and
-	// drift checks. `call` names the interaction, `sync` marks synchronous calls.
-	call?:     "calls" | "reads" | "writes" | "publishes" | "subscribes"
-	protocol?: "http" | "grpc" | "amqp" | "sql"
-	sync?:     bool
 }

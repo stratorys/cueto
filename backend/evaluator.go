@@ -59,14 +59,9 @@ type Evaluator interface {
 	// is static per CUE version, so it is computed once and cached; it feeds the
 	// REPL's autocomplete and reference browser.
 	Introspect() CueMeta
-	// Vet unifies the file set and validates it against the schema and any opted-in
-	// policy packs. When facts (imported #Actual, as JSON/CUE) is non-empty, it also
-	// reports drift between the diagram and the live topology. Diagnostics are empty
-	// when clean.
-	Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error)
-	// ImportCompose parses docker-compose YAML into #Actual facts (JSON), or
-	// returns kindImport diagnostics on a parse failure.
-	ImportCompose(source string) (string, []Diagnostic, error)
+	// Vet unifies the file set and validates it against the schema. Diagnostics are
+	// empty when clean.
+	Vet(ctx context.Context, files []File) ([]Diagnostic, error)
 	// Save validates data and, only when valid, stores it as an immutable version
 	// keyed by its content hash, returning the version id. Diagnostics are returned
 	// (and nothing is written) when the data is invalid. The hand-owned schema.cue
@@ -158,7 +153,7 @@ func newCueEvaluator(cfg Config) *cueEvaluator {
 
 // Eval implements Evaluator.
 func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []Diagnostic, error) {
-	root, diagram, diags, err := e.evaluate(ctx, files, "", "")
+	root, diagram, diags, err := e.evaluate(ctx, files, "")
 	if err != nil || len(diags) > 0 {
 		return nil, nil, Provenance{}, diags, err
 	}
@@ -172,97 +167,11 @@ func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage,
 	return out, hintsFrom(root, diagram), provenanceFrom(files), nil, nil
 }
 
-// Vet implements Evaluator. Beyond schema validation it reports the findings of
-// any opted-in policy pack (from `policyReport`) and, when facts are supplied,
-// drift between the diagram and the live topology (from `driftReport`).
-func (e *cueEvaluator) Vet(ctx context.Context, files []File, facts string) ([]Diagnostic, error) {
-	root, _, diags, err := e.evaluate(ctx, files, facts, "")
-	if err != nil || len(diags) > 0 {
-		return diags, err
-	}
-	out := e.policyDiagnostics(root)
-	if facts != "" {
-		out = append(out, e.driftDiagnostics(root)...)
-	}
-	return out, nil
-}
-
-// driftDiagnostics reads the `driftReport` produced by the drift harness (present
-// only when facts were overlaid) and reports edges that disagree between the
-// diagram and the live topology. missing = the diagram claims an edge the infra
-// lacks; extra = the infra has an edge the diagram omits.
-func (e *cueEvaluator) driftDiagnostics(root cue.Value) []Diagnostic {
-	report := root.LookupPath(cue.ParsePath("driftReport"))
-	if !report.Exists() {
-		return nil
-	}
-	sections := []struct {
-		field   string
-		message string
-	}{
-		{"missing", "diagram edge %s is not present in the live infra"},
-		{"extra", "live infra has %s, missing from the diagram"},
-	}
-	var out []Diagnostic
-	for _, section := range sections {
-		items, err := report.LookupPath(cue.ParsePath(section.field)).List()
-		if err != nil {
-			continue
-		}
-		for items.Next() {
-			edge, err := items.Value().String()
-			if err != nil {
-				continue
-			}
-			out = append(out, Diagnostic{Kind: kindDrift, Message: fmt.Sprintf(section.message, edge)})
-		}
-	}
-	return out
-}
-
-// ImportCompose implements Evaluator (parser lives in importer.go).
-func (e *cueEvaluator) ImportCompose(source string) (string, []Diagnostic, error) {
-	return e.importCompose(source)
-}
-
-// policyDiagnostics reads the `policyReport` sibling produced by the policy
-// harness and flattens each pack's violations into kind:"policy" diagnostics,
-// anchored to the offending node/edge. A missing or empty report yields none.
-func (e *cueEvaluator) policyDiagnostics(root cue.Value) []Diagnostic {
-	report := root.LookupPath(cue.ParsePath("policyReport"))
-	if !report.Exists() {
-		return nil
-	}
-	packs, err := report.Fields()
-	if err != nil {
-		return nil
-	}
-	var out []Diagnostic
-	for packs.Next() {
-		items, err := packs.Value().List()
-		if err != nil {
-			continue
-		}
-		for items.Next() {
-			var v struct {
-				Rule    string `json:"rule"`
-				Node    string `json:"node"`
-				Edge    string `json:"edge"`
-				Message string `json:"message"`
-			}
-			if err := items.Value().Decode(&v); err != nil {
-				continue
-			}
-			out = append(out, Diagnostic{
-				Kind:    kindPolicy,
-				Rule:    v.Rule,
-				NodeID:  v.Node,
-				EdgeID:  v.Edge,
-				Message: v.Message,
-			})
-		}
-	}
-	return out
+// Vet implements Evaluator: it unifies the file set and validates it against the
+// schema, returning the same diagnostics an eval would surface.
+func (e *cueEvaluator) Vet(ctx context.Context, files []File) ([]Diagnostic, error) {
+	_, _, diags, err := e.evaluate(ctx, files, "")
+	return diags, err
 }
 
 // Save implements Evaluator: validate, then persist a new immutable version.
@@ -274,7 +183,7 @@ func (e *cueEvaluator) Save(ctx context.Context, projectID, data string) (string
 		return "", nil, err
 	}
 	files := []File{{Name: "data.cue", Content: data}}
-	if _, _, diags, err := e.evaluate(ctx, files, "", ""); err != nil || len(diags) > 0 {
+	if _, _, diags, err := e.evaluate(ctx, files, ""); err != nil || len(diags) > 0 {
 		return "", diags, err
 	}
 	version, err := e.writeVersion(dir, []byte(data))
@@ -336,7 +245,7 @@ func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMes
 // the same deadline, panic recovery, and output bound as Eval via evaluate; the
 // overlay is thrown away, so nothing is persisted and /eval output is unaffected.
 func (e *cueEvaluator) EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error) {
-	_, result, diags, err := e.evaluate(ctx, files, "", expr)
+	_, result, diags, err := e.evaluate(ctx, files, expr)
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}
@@ -378,7 +287,7 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *cueEvaluator) evaluate(ctx context.Context, files []File, facts, query string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string) (cue.Value, cue.Value, []Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
@@ -387,7 +296,7 @@ func (e *cueEvaluator) evaluate(ctx context.Context, files []File, facts, query 
 		done <- recoverToResult(func() buildResult {
 			// primary is the value whose concreteness gates success: the diagram for
 			// a plain build, or the query result when a REPL expression is overlaid.
-			root, primary, diags, err := e.build(files, facts, query)
+			root, primary, diags, err := e.build(files, query)
 			if err == nil && len(diags) == 0 {
 				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
 					diags = diagnosticsFrom(verr, e.cueDir, kindIncomplete)
@@ -434,7 +343,7 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 // overlaid: every client filename passes validEditableName (a bare .cue name,
 // never schema.cue), and the overlay key is server-built via filepath.Join, so
 // the hand-owned schema can never be supplied, replaced, or escaped by a client.
-func (e *cueEvaluator) build(files []File, facts, query string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) build(files []File, query string) (cue.Value, cue.Value, []Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range files {
 		if !validEditableName(f.Name) {
@@ -444,13 +353,6 @@ func (e *cueEvaluator) build(files []File, facts, query string) (cue.Value, cue.
 			}}, nil
 		}
 		overlay[filepath.Join(e.cueDir, f.Name)] = load.FromString(f.Content)
-	}
-	// Drift: overlay a backend-authored harness that unifies the imported facts
-	// with infra.#Actual and computes driftReport. Only present when vetting with
-	// facts, so /eval and /save are unaffected. Wrapping facts in ( ) forces it to
-	// be a single expression, so a client cannot inject extra package fields.
-	if facts != "" {
-		overlay[e.factsPath()] = load.FromString(fmt.Sprintf(driftHarnessCUE, facts))
 	}
 	// REPL query: overlay a backend-authored field binding the expression into the
 	// diagram package so it can read the live `diagram`. Only present for /repl
@@ -489,38 +391,11 @@ func (e *cueEvaluator) build(files []File, facts, query string) (cue.Value, cue.
 	return value, diagram, nil, nil
 }
 
-// factsPath is the overlay path of the backend-authored drift harness. The name
-// has no leading underscore/dot, so CUE's loader does not skip it.
-func (e *cueEvaluator) factsPath() string {
-	return filepath.Join(e.cueDir, "facts_overlay.cue")
-}
-
-// replPath is the overlay path of the backend-authored REPL query binding. Like
-// factsPath the name has no leading underscore/dot, so the loader includes it.
+// replPath is the overlay path of the backend-authored REPL query binding. The
+// name has no leading underscore/dot, so the loader includes it.
 func (e *cueEvaluator) replPath() string {
 	return filepath.Join(e.cueDir, "repl_query.cue")
 }
-
-// driftHarnessCUE is overlaid (never written to disk) during a drift vet. %s is
-// the imported facts value. driftReport matches diagram edges (by node label) to
-// live links (by service name): missing = in the diagram but not the infra;
-// extra = in the infra but not the diagram.
-const driftHarnessCUE = `package diagram
-
-import (
-	"list"
-	"github.com/stratorys/cueto/infra"
-)
-
-actual: infra.#Actual & (%s)
-
-driftReport: {
-	_expected: [for e in diagram.edges {"\(diagram.nodes[e.source].label)->\(diagram.nodes[e.target].label)"}]
-	_actual: [for l in actual.links {"\(l.source)->\(l.target)"}]
-	missing: [for x in _expected if !list.Contains(_actual, x) {x}]
-	extra: [for a in _actual if !list.Contains(_expected, a) {a}]
-}
-`
 
 // replQuerySource builds the file overlaid (never written to disk) for a /repl
 // query. The surrounding ( ) force expr to a single expression so a client cannot

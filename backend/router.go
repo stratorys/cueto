@@ -29,7 +29,6 @@ func newRouter(eval Evaluator, cfg Config) *gin.Engine {
 	r.POST("/vet", h.Vet)
 	r.POST("/format", h.Format)
 	r.POST("/rewrite", h.Rewrite)
-	r.POST("/import/compose", h.ImportCompose)
 	r.GET("/seed", h.Seed)
 	r.GET("/projects", h.ListProjects)
 	r.POST("/projects", h.CreateProject)

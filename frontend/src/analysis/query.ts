@@ -12,14 +12,12 @@
 //   field:value    exact match on a node property, e.g. type:table, shape:ellipse
 //   field:~text    case-insensitive substring match, e.g. label:~payment
 //   orphan         nodes with no incident edge
-//   external       nodes whose role is "external" (a domain field; empty until
-//                  the schema carries roles)
 //   n-n            nodes at either end of an n-n relation, plus those edges
 //
-// A field token reads the property generically off the node object, so domain
-// fields surfaced by richer schemas (role, owner, region, zone) are queryable
-// without changes here. Result edges are the induced subgraph (both endpoints
-// matched), except n-n which contributes its edges explicitly.
+// A field token reads the property generically off the node object, so any node
+// property is queryable without changes here. Result edges are the induced
+// subgraph (both endpoints matched), except n-n which contributes its edges
+// explicitly.
 
 import type { Diagram, DiagramNode } from "../model";
 import { orphans } from "./graph";
@@ -72,14 +70,6 @@ function matchToken(diagram: Diagram, token: string): TokenMatch {
 
   if (token === "orphan") {
     return { nodes: new Set(orphans(diagram)), edges: new Set() };
-  }
-  if (token === "external") {
-    const nodes = new Set(
-      diagram.nodes
-        .filter((n) => n.role === "external")
-        .map((n) => n.id),
-    );
-    return { nodes, edges: new Set() };
   }
   if (token === "n-n") {
     const nodes = new Set<string>();

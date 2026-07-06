@@ -97,39 +97,18 @@ export function commitNodeColor(
   syncTextFromModel();
 }
 
-// Persist a node's governance metadata from the inspector. A field present in
-// the patch is set, or cleared when its value is empty (so data.cue stays minimal
-// and the field falls back to its optional-absent default). Mirrors
-// commitNodeColor's "key in patch" clear-semantics.
-function commitNodeGovernance(
-  id: string,
-  patch: Partial<Pick<DiagramNode, "role" | "owner" | "region" | "zone">>,
-) {
-  commit((draft) => {
-    const target = draft.nodes.find((n) => n.id === id);
-    if (!target) return;
-    if ("role" in patch) target.role = patch.role || undefined;
-    if ("owner" in patch) target.owner = patch.owner || undefined;
-    if ("region" in patch) target.region = patch.region || undefined;
-    if ("zone" in patch) target.zone = patch.zone || undefined;
-  });
-  rebuildGraph();
-  syncTextFromModel();
-}
-
-// Persist an edge's governance metadata from the inspector. Same clear-on-empty
-// semantics as commitNodeGovernance; a false `sync` clears the field.
+// Persist an edge's cardinality from the inspector. A field present in the patch
+// is set, or cleared when its value is empty (so data.cue stays minimal and the
+// field falls back to its optional-absent default). Mirrors commitNodeColor's
+// "key in patch" clear-semantics.
 function commitEdgeGovernance(
   id: string,
-  patch: Partial<Pick<DiagramEdge, "card" | "call" | "protocol" | "sync">>,
+  patch: Partial<Pick<DiagramEdge, "card">>,
 ) {
   commit((draft) => {
     const target = draft.edges.find((e) => e.id === id);
     if (!target) return;
     if ("card" in patch) target.card = patch.card || undefined;
-    if ("call" in patch) target.call = patch.call || undefined;
-    if ("protocol" in patch) target.protocol = patch.protocol || undefined;
-    if ("sync" in patch) target.sync = patch.sync || undefined;
   });
   rebuildGraph();
   syncTextFromModel();
@@ -204,7 +183,6 @@ export function useSelection() {
     commitNodeType,
     commitEdgeKind,
     commitEdgeReverse,
-    commitNodeGovernance,
     commitEdgeGovernance,
   };
 }

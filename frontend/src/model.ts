@@ -22,11 +22,7 @@ export type ShapeKind = "rectangle" | "ellipse" | "diamond" | "line" | "text";
 // handles so a handle-to-handle drag creates a relation edge.
 export type Tool = ShapeKind | "connect";
 
-// Domain-architecture metadata (mirrors the optional schema fields). `role`
-// governs (policy/drift); `type` renders.
-export type NodeRole = "service" | "database" | "queue" | "cache" | "gateway" | "external";
-export type EdgeCall = "calls" | "reads" | "writes" | "publishes" | "subscribes";
-export type EdgeProtocol = "http" | "grpc" | "amqp" | "sql";
+// Edge cardinality (mirrors the optional schema field).
 export type EdgeCard = "1-1" | "1-n" | "n-n";
 
 // One column of a DB table node. Mirrors the CUE #Column.
@@ -67,11 +63,6 @@ export interface DiagramNode {
   icon?: string;
   // Set only when type is "table".
   columns?: Column[];
-  // Optional domain metadata, round-tripped to CUE for policy/drift checks.
-  role?: NodeRole;
-  owner?: string;
-  region?: string;
-  zone?: string;
   // Which editable file authored this node (from /eval provenance). Drives which
   // file a canvas edit is written back into. Absent -> the primary data.cue.
   sourceFile?: string;
@@ -92,11 +83,8 @@ export interface DiagramEdge {
   // Optional free-form text drawn at the edge midpoint, edited inline by
   // double-clicking the edge (mirrors a shape's label).
   label?: string;
-  // Optional domain metadata, round-tripped to CUE for policy/drift checks.
+  // Optional cardinality, round-tripped to CUE.
   card?: EdgeCard;
-  call?: EdgeCall;
-  protocol?: EdgeProtocol;
-  sync?: boolean;
   // Which editable file authored this edge (from /eval provenance). Edges are a
   // single unsplittable list, so in practice all edges share one owner file.
   sourceFile?: string;
@@ -105,8 +93,6 @@ export interface DiagramEdge {
 export interface Diagram {
   nodes: DiagramNode[];
   edges: DiagramEdge[];
-  // Governance packs this diagram opts into (e.g. ["security"]).
-  policies?: string[];
 }
 
 // One editable CUE file in the multi-file package: a bare .cue name and its text.
