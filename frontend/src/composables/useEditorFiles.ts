@@ -27,6 +27,26 @@ export const activeText = computed(
   () => files.value.find((f) => f.name === activeFileName.value)?.text ?? "",
 );
 
+// The last-saved text baseline per file. A file is dirty when its text diverges
+// from its baseline; a file with no entry (freshly added) is dirty until a save.
+// Only data.cue is actually persisted (versions are single-file), but a save
+// commits the whole current file set as the baseline. Seeded for the initial
+// data.cue below and re-seeded on project load.
+export const savedText = ref<Record<string, string>>({ "data.cue": files.value[0]?.text ?? "" });
+
+// Snapshot the current file set as the saved baseline (clears dirty for all).
+export function snapshotSaved() {
+  savedText.value = Object.fromEntries(files.value.map((f) => [f.name, f.text]));
+}
+
+// Whether a file has unsaved edits relative to its baseline.
+export function isDirty(name: string): boolean {
+  const file = files.value.find((f) => f.name === name);
+  if (!file) return false;
+  const base = savedText.value[name];
+  return base === undefined || base !== file.text;
+}
+
 // Element -> owner file, from the last eval. Drives writeback targeting.
 export const provenance = ref<Provenance>({ nodes: {}, edges: "" });
 // Owner file for canvas-created nodes not yet reflected in eval provenance,
@@ -82,6 +102,10 @@ function renameFile(oldName: string, newName: string) {
   const file = files.value.find((f) => f.name === oldName);
   if (!file) return;
   file.name = newName;
+  if (oldName in savedText.value) {
+    const { [oldName]: base, ...rest } = savedText.value;
+    savedText.value = { ...rest, [newName]: base };
+  }
   if (activeFileName.value === oldName) activeFileName.value = newName;
   for (const node of diagram.value.nodes) {
     if (node.sourceFile === oldName) node.sourceFile = newName;
@@ -106,6 +130,8 @@ export function useEditorFiles() {
     files,
     activeFileName,
     activeText,
+    savedText,
+    isDirty,
     setActiveFile,
     addFile,
     renameFile,

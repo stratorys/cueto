@@ -7,7 +7,7 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { AlignLeft, Save } from "lucide-vue-next";
 import CodeEditor from "./CodeEditor.vue";
 import ProjectSwitcher from "./ProjectSwitcher.vue";
@@ -15,7 +15,7 @@ import StatusBar from "./StatusBar.vue";
 import type { SaveState } from "../composables/useDiagramCanvas";
 import type { EditorFile } from "../model";
 import type { Diagnostic, Hint } from "../api";
-import { promptDialog } from "../composables/useModal";
+import { isDirty } from "../composables/useEditorFiles";
 // The hand-owned schema, inlined at build time. The dev server needs
 // server.fs.allow: ['..'] to read it from the sibling cue/ dir.
 import schemaSource from "../../../cue/schema.cue?raw";
@@ -113,15 +113,29 @@ function cycleTab(event: KeyboardEvent) {
 onMounted(() => window.addEventListener("keydown", cycleTab));
 onBeforeUnmount(() => window.removeEventListener("keydown", cycleTab));
 
-// Rename via the shared modal. The composable re-validates and ignores an invalid
-// or colliding name.
-async function promptRename(name: string) {
-  const next = await promptDialog({
-    title: "Rename file",
-    defaultValue: name,
-    confirmLabel: "Rename",
-  });
-  if (next && next !== name) emit("renameFile", name, next);
+// Inline rename: double-click a tab to edit its name in place. The composable's
+// renameFile re-validates and ignores an invalid or colliding name, so a bad edit
+// silently reverts to the original label.
+const editingName = ref<string | null>(null);
+const editValue = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+
+function startRename(name: string) {
+  editingName.value = name;
+  editValue.value = name;
+  void nextTick(() => renameInput.value?.select());
+}
+
+function commitRename() {
+  const old = editingName.value;
+  editingName.value = null;
+  if (!old) return;
+  const next = editValue.value.trim();
+  if (next && next !== old) emit("renameFile", old, next);
+}
+
+function cancelRename() {
+  editingName.value = null;
 }
 
 const tab =
@@ -138,20 +152,44 @@ const iconButton =
       <button
         v-for="file in files"
         :key="file.name"
-        :class="tab"
+        :class="[tab, 'group']"
         :aria-selected="!viewingSchema && file.name === activeFile"
         @click="selectFile(file.name)"
-        @dblclick="promptRename(file.name)"
+        @dblclick="startRename(file.name)"
         :title="'Double-click to rename'"
       >
-        {{ file.name }}
+        <input
+          v-if="editingName === file.name"
+          :ref="(el) => (renameInput = (el as HTMLInputElement | null))"
+          v-model="editValue"
+          spellcheck="false"
+          class="w-24 rounded-sm border border-slate-600 bg-slate-800 px-1 text-slate-100 focus:border-amber-500 focus:outline-none"
+          @click.stop
+          @dblclick.stop
+          @keydown.enter.prevent="commitRename"
+          @keydown.esc.prevent="cancelRename"
+          @blur="commitRename"
+        />
+        <template v-else>{{ file.name }}</template>
         <span
-          v-if="files.length > 1"
-          class="rounded px-1 text-slate-600 hover:text-red-400"
-          role="button"
-          title="Close file"
-          @click.stop="emit('closeFile', file.name)"
-        >×</span>
+          v-if="editingName !== file.name"
+          class="relative ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center"
+        >
+          <span
+            v-if="isDirty(file.name)"
+            :class="[
+              'h-1.5 w-1.5 rounded-full bg-slate-300',
+              files.length > 1 ? 'group-hover:hidden' : '',
+            ]"
+          />
+          <span
+            v-if="files.length > 1"
+            class="hidden text-slate-500 hover:text-red-400 group-hover:inline"
+            role="button"
+            title="Close file"
+            @click.stop="emit('closeFile', file.name)"
+          >×</span>
+        </span>
       </button>
       <button :class="tab" title="Add file" @click="emit('addFile')">+</button>
       <button

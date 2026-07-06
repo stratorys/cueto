@@ -35,6 +35,7 @@ import {
   ownerOf,
   primaryFile,
   provenance,
+  snapshotSaved,
 } from "./useEditorFiles";
 import { isAutoLayout, layoutAuto, rebuildGraph } from "./useGraphView";
 
@@ -234,6 +235,7 @@ export async function loadProjectDiagram(projectId: string) {
   }
   files.value = [{ name: "data.cue", text }];
   activeFileName.value = "data.cue";
+  snapshotSaved();
   await runEval();
   resetHistory();
 }
@@ -254,6 +256,7 @@ async function save() {
     return;
   }
   saveState.value = { status: "saved", version: result.version };
+  snapshotSaved();
 }
 
 // Reformat the CUE text in place via `cue fmt`. Semantics are unchanged, so no

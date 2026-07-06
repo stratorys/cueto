@@ -153,6 +153,39 @@ const theme = EditorView.theme(
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "rgba(148, 163, 184, 0.3)",
     },
+    // Search panel (⌘F, from basicSetup). Themed to match the dark pane instead of
+    // CodeMirror's default light chrome.
+    ".cm-panels": { backgroundColor: "#0f172a", color: "#e2e8f0" },
+    ".cm-panels.cm-panels-bottom": { borderTop: "1px solid #1e293b" },
+    ".cm-panels.cm-panels-top": { borderBottom: "1px solid #1e293b" },
+    ".cm-panel.cm-search": {
+      backgroundColor: "#0f172a",
+      padding: "6px 8px",
+      fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
+      fontSize: "12px",
+    },
+    ".cm-panel.cm-search label": { color: "#94a3b8" },
+    ".cm-panel.cm-search input": {
+      backgroundColor: "#1e293b",
+      color: "#e2e8f0",
+      border: "1px solid #334155",
+      borderRadius: "4px",
+      padding: "2px 6px",
+    },
+    ".cm-panel.cm-search input:focus": { outline: "none", borderColor: "#f59e0b" },
+    ".cm-panel.cm-search button": {
+      backgroundColor: "#1e293b",
+      color: "#cbd5e1",
+      border: "1px solid #334155",
+      borderRadius: "4px",
+      backgroundImage: "none",
+    },
+    ".cm-panel.cm-search button:hover": { backgroundColor: "#334155" },
+    ".cm-panel.cm-search .cm-button[name='close'], .cm-panel.cm-search button[name='close']": {
+      color: "#94a3b8",
+    },
+    ".cm-searchMatch": { backgroundColor: "rgba(245, 158, 11, 0.25)" },
+    ".cm-searchMatch-selected": { backgroundColor: "rgba(245, 158, 11, 0.55)" },
   },
   { dark: true },
 );

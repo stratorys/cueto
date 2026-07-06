@@ -28,21 +28,27 @@ import {
   completionKeymap,
   startCompletion,
 } from "@codemirror/autocomplete";
+import { LoaderCircle, RotateCcw } from "lucide-vue-next";
 import { cueLanguage } from "../cueLanguage";
 import { evalExpr, type CuePackage } from "../api";
 import { files } from "../composables/useEditorFiles";
 import { cueCompletionSource } from "../replCompletions";
 import { useCueCompletion } from "../composables/useCueCompletion";
+import JsonTree from "./JsonTree.vue";
 
 // collapsed is App's REPL-pane state; the pane stays mounted (height 0) when
 // collapsed. Declared for the template contract; the completion data now tracks the
 // diagram independently in useCueCompletion.
 defineProps<{ collapsed?: boolean }>();
 
+// A run's echoed input plus its result: the raw value on success (rendered as a
+// colored tree), the error text on failure, or a pending marker while running.
 interface Entry {
   source: string;
-  output: string;
   ok: boolean;
+  value?: unknown;
+  error?: string;
+  pending?: boolean;
 }
 
 const entries = ref<Entry[]>([]);
@@ -75,13 +81,16 @@ async function run() {
   // Record the input for Up/Down recall (skip a straight repeat of the last one).
   if (submitted.value[submitted.value.length - 1] !== text) submitted.value.push(text);
   histIndex = -1;
-  const result = await evalExpr(text, files.value);
-  entries.value.push({
-    source: text,
-    output: result.ok ? JSON.stringify(result.result, null, 2) : result.error,
-    ok: result.ok,
-  });
+  // Show the query immediately with a spinner, clear the input, then fill in the
+  // result in place when it lands.
+  const idx = entries.value.push({ source: text, ok: true, pending: true }) - 1;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+  await nextTick();
+  if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
+  const result = await evalExpr(text, files.value);
+  entries.value[idx] = result.ok
+    ? { source: text, ok: true, value: result.result }
+    : { source: text, ok: false, error: result.error };
   running.value = false;
   await nextTick();
   if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
@@ -124,6 +133,13 @@ function recallNext(v: EditorView): boolean {
 
 function clearLog() {
   entries.value = [];
+}
+
+// Put a past entry's expression back in the input for editing / re-running.
+function editPast(entry: Entry) {
+  if (entry.pending) return;
+  setInput(entry.source);
+  view?.focus();
 }
 
 // insert drops text at the cursor (replacing any selection) and refocuses the
@@ -259,103 +275,122 @@ const replTheme = EditorView.theme(
           :class="{ 'text-amber-400': showRef }"
           @click="showRef = !showRef"
         >
-          {{ showRef ? "log" : "browse" }}
+          reference
         </button>
-        <button v-if="entries.length && !showRef" class="hover:text-amber-400" @click="clearLog">
-          clear
-        </button>
+        <button v-if="entries.length" class="hover:text-amber-400" @click="clearLog">clear</button>
       </div>
     </div>
 
-    <!-- Reference browser: diagram keys, CUE builtins, importable packages. -->
-    <div v-if="showRef" class="flex min-h-0 flex-1 flex-col">
-      <div class="flex-none border-b border-slate-800 px-3 py-1.5">
-        <input
-          v-model="refFilter"
-          spellcheck="false"
-          placeholder="filter keys, builtins, functions…"
-          class="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none"
-        />
-      </div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-xs">
-        <section class="mb-3">
-          <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Keys</h4>
-          <p v-if="!filteredKeys.length" class="text-slate-600">none</p>
-          <ul class="space-y-0.5">
-            <li v-for="k in filteredKeys" :key="k">
-              <button
-                class="font-mono text-teal-400 hover:underline"
-                @click="insert(k)"
-              >
-                {{ k }}
-              </button>
-            </li>
-          </ul>
-        </section>
-
-        <section class="mb-3">
-          <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Builtins</h4>
-          <div class="flex flex-wrap gap-x-3 gap-y-0.5">
+    <!-- Body: scroll-back log with the reference browser as an optional side column. -->
+    <div class="flex min-h-0 flex-1">
+      <!-- Scroll-back log. -->
+      <div
+        ref="logEl"
+        class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 font-mono text-xs"
+      >
+        <div v-if="!entries.length" class="space-y-2 text-slate-500">
+          <p>
+            Query the diagram in the editor - e.g.
             <button
-              v-for="b in filteredBuiltins"
-              :key="b.name"
-              class="font-mono text-amber-400 hover:underline"
-              @click="insert(b.name)"
-            >
-              {{ b.name }}
-            </button>
+              class="font-mono text-slate-400 hover:text-amber-400"
+              @click="setInput('diagram.nodes.user.label')"
+            >diagram.nodes.user.label</button>. Results never touch your files.
+          </p>
+          <div class="flex flex-wrap gap-1.5">
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>Enter</kbd> run</span>
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>↑</kbd><kbd>↓</kbd> history</span>
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>⌃Space</kbd> complete</span>
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>⌘K</kbd> clear</span>
           </div>
-        </section>
+        </div>
+        <div v-for="(entry, i) in entries" :key="i" class="group space-y-0.5">
+          <pre
+            class="whitespace-pre-wrap break-words text-slate-400"
+            :class="entry.pending ? 'cursor-default' : 'cursor-pointer hover:text-slate-200'"
+            :title="entry.pending ? '' : 'Click to edit'"
+            @click="editPast(entry)"
+          ><span class="select-none text-amber-500">&gt; </span>{{ entry.source }}<RotateCcw
+            v-if="!entry.pending"
+            class="ml-1 inline-block h-3 w-3 align-[-1px] text-slate-600 opacity-0 group-hover:opacity-100"
+          /></pre>
+          <div v-if="entry.pending" class="flex items-center gap-1.5 text-slate-500">
+            <LoaderCircle class="h-3 w-3 animate-spin" />
+            <span>running…</span>
+          </div>
+          <pre
+            v-else-if="!entry.ok"
+            class="whitespace-pre-wrap break-words text-red-400"
+          >{{ entry.error }}</pre>
+          <JsonTree v-else :value="entry.value" />
+        </div>
+      </div>
 
-        <section>
-          <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Packages</h4>
-          <p v-if="!packageView.length" class="text-slate-600">none</p>
-          <div v-for="row in packageView" :key="row.pkg.path" class="mb-0.5">
-            <button
-              class="flex w-full items-center gap-1 text-left font-mono text-violet-400 hover:underline"
-              @click="togglePkg(row.pkg.name)"
-            >
-              <span class="w-3 select-none text-slate-500">{{ row.open ? "▾" : "▸" }}</span>
-              <span>{{ row.pkg.name }}</span>
-              <span class="text-slate-600">{{ row.pkg.path }}</span>
-            </button>
-            <ul v-if="row.open" class="ml-4 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-              <li v-for="m in row.members" :key="m.name">
-                <button
-                  class="font-mono hover:underline"
-                  :class="m.isFunc ? 'text-sky-400' : 'text-slate-400'"
-                  @click="insert(`${row.pkg.name}.${m.name}`)"
-                >
-                  {{ m.name }}<span v-if="m.isFunc" class="text-slate-600">()</span>
+      <!-- Reference browser: diagram keys, CUE builtins, importable packages. -->
+      <div
+        v-if="showRef"
+        class="flex w-72 min-h-0 flex-none flex-col border-l border-slate-800"
+      >
+        <div class="flex-none border-b border-slate-800 px-3 py-1.5">
+          <input
+            v-model="refFilter"
+            spellcheck="false"
+            placeholder="filter keys, builtins, functions…"
+            class="w-full rounded border border-slate-700 bg-slate-800 px-2 py-1 font-mono text-xs text-slate-200 placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+          />
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-xs">
+          <section class="mb-3">
+            <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Keys</h4>
+            <p v-if="!filteredKeys.length" class="text-slate-600">none</p>
+            <ul class="space-y-0.5">
+              <li v-for="k in filteredKeys" :key="k">
+                <button class="font-mono text-teal-400 hover:underline" @click="insert(k)">
+                  {{ k }}
                 </button>
               </li>
             </ul>
-          </div>
-        </section>
-      </div>
-    </div>
+          </section>
 
-    <!-- Scroll-back log. -->
-    <div
-      v-show="!showRef"
-      ref="logEl"
-      class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 font-mono text-xs"
-    >
-      <p v-if="!entries.length" class="text-slate-500">
-        Query the diagram in the editor - e.g.
-        <span class="font-mono text-slate-400">diagram.nodes.user.label</span> or
-        <span class="font-mono text-slate-400">[for e in diagram.edges if e.kind == "arrow" {e.id}]</span>.
-        Type to autocomplete keys, builtins, and package functions (⌃Space to force
-        it); Enter runs, ⇧Enter adds a line, ↑/↓ recall history; ⌃L or ⌘K clears.
-        Results never touch your files or saved versions.
-      </p>
-      <div v-for="(entry, i) in entries" :key="i" class="space-y-0.5">
-        <pre class="whitespace-pre-wrap break-words text-slate-400"><span
-          class="select-none text-amber-500">&gt; </span>{{ entry.source }}</pre>
-        <pre
-          class="whitespace-pre-wrap break-words"
-          :class="entry.ok ? 'text-slate-200' : 'text-red-400'"
-        >{{ entry.output }}</pre>
+          <section class="mb-3">
+            <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Builtins</h4>
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5">
+              <button
+                v-for="b in filteredBuiltins"
+                :key="b.name"
+                class="font-mono text-amber-400 hover:underline"
+                @click="insert(b.name)"
+              >
+                {{ b.name }}
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h4 class="mb-1 font-semibold uppercase tracking-wide text-slate-500">Packages</h4>
+            <p v-if="!packageView.length" class="text-slate-600">none</p>
+            <div v-for="row in packageView" :key="row.pkg.path" class="mb-0.5">
+              <button
+                class="flex w-full items-center gap-1 text-left font-mono text-violet-400 hover:underline"
+                @click="togglePkg(row.pkg.name)"
+              >
+                <span class="w-3 select-none text-slate-500">{{ row.open ? "▾" : "▸" }}</span>
+                <span>{{ row.pkg.name }}</span>
+                <span class="text-slate-600">{{ row.pkg.path }}</span>
+              </button>
+              <ul v-if="row.open" class="ml-4 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                <li v-for="m in row.members" :key="m.name">
+                  <button
+                    class="font-mono hover:underline"
+                    :class="m.isFunc ? 'text-sky-400' : 'text-slate-400'"
+                    @click="insert(`${row.pkg.name}.${m.name}`)"
+                  >
+                    {{ m.name }}<span v-if="m.isFunc" class="text-slate-600">()</span>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 
