@@ -4,18 +4,25 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+// Package handlers is the HTTP transport: it wires routes and middleware onto
+// the cueeval.Evaluator seam and keeps every untrusted-input bound either in
+// middleware here or inside the evaluator's deadline.
+package handlers
 
 import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/stratorys/cueto/backend/internal/config"
+	"github.com/stratorys/cueto/backend/internal/cueeval"
+	"github.com/stratorys/cueto/backend/internal/diag"
 )
 
-// newRouter wires middleware and routes. Handlers depend only on the Evaluator
-// interface; every untrusted-input bound lives either in middleware here or
-// inside the evaluator's deadline.
-func newRouter(eval Evaluator, cfg Config) *gin.Engine {
+// NewRouter wires middleware and routes. Handlers depend only on the
+// cueeval.Evaluator interface; every untrusted-input bound lives either in
+// middleware here or inside the evaluator's deadline.
+func NewRouter(eval cueeval.Evaluator, cfg config.Config) *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: this backend is reached directly, so client-supplied
 	// X-Forwarded-For headers must not be believed.
@@ -76,7 +83,7 @@ func limitConcurrency(maxConcurrent int) gin.HandlerFunc {
 			c.Next()
 		default:
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"diagnostics": []Diagnostic{{Message: "server busy, retry shortly", Kind: kindInternal}},
+				"diagnostics": []diag.Diagnostic{{Message: "server busy, retry shortly", Kind: diag.KindInternal}},
 			})
 		}
 	}

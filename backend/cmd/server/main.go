@@ -10,8 +10,8 @@
 // and is never machine-written. The editable data.cue is supplied per request
 // and overlaid on top, so the canvas only ever round-trips data.cue while
 // schema.cue stays authoritative. All evaluation runs in-process under
-// body-size, output-size, deadline, and concurrency bounds; see config.go and
-// router.go.
+// body-size, output-size, deadline, and concurrency bounds; see
+// internal/config and internal/handlers.
 package main
 
 import (
@@ -26,6 +26,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+
+	"github.com/stratorys/cueto/backend/internal/config"
+	"github.com/stratorys/cueto/backend/internal/cueeval"
+	"github.com/stratorys/cueto/backend/internal/handlers"
 )
 
 func main() {
@@ -41,7 +45,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	cfg, err := loadConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
 	}
@@ -52,7 +56,7 @@ func main() {
 	// mid-response.
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           newRouter(newCueEvaluator(cfg), cfg),
+		Handler:           handlers.NewRouter(cueeval.New(cfg), cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,

@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package cueeval
 
 import (
 	"fmt"
@@ -13,13 +13,15 @@ import (
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+
+	"github.com/stratorys/cueto/backend/internal/diag"
 )
 
 // Rewrite implements Evaluator. The filename is guarded the same way as an
 // overlay file, so a rewrite can never target schema.cue or escape the CUE dir.
-func (e *cueEvaluator) Rewrite(op RewriteOp) (string, []Diagnostic, error) {
+func (e *cueEvaluator) Rewrite(op RewriteOp) (string, []diag.Diagnostic, error) {
 	if !validEditableName(op.Name) {
-		return "", []Diagnostic{{Message: fmt.Sprintf("invalid file name %q", op.Name), Kind: kindParse}}, nil
+		return "", []diag.Diagnostic{{Message: fmt.Sprintf("invalid file name %q", op.Name), Kind: diag.KindParse}}, nil
 	}
 	return rewriteFile(op)
 }
@@ -41,17 +43,17 @@ type RewriteOp struct {
 // splices only the requested diagram.nodes fields and the edge list, and reprints
 // with gofmt-style formatting. A syntax error in the source or in a supplied body
 // comes back as diagnostics; nothing is written.
-func rewriteFile(op RewriteOp) (string, []Diagnostic, error) {
+func rewriteFile(op RewriteOp) (string, []diag.Diagnostic, error) {
 	file, err := parser.ParseFile(op.Name, op.Content, parser.ParseComments)
 	if err != nil {
-		return "", diagnosticsFrom(err, "", kindParse), nil
+		return "", diag.From(err, "", diag.KindParse), nil
 	}
 
 	nodes := ensureField(&file.Decls, "diagram", "nodes")
 	for id, body := range op.Nodes {
 		value, perr := parser.ParseExpr(id, body)
 		if perr != nil {
-			return "", diagnosticsFrom(perr, "", kindParse), nil
+			return "", diag.From(perr, "", diag.KindParse), nil
 		}
 		upsertField(&nodes.Elts, id, value)
 	}
@@ -61,7 +63,7 @@ func rewriteFile(op RewriteOp) (string, []Diagnostic, error) {
 	if op.Edges != nil {
 		value, perr := parser.ParseExpr("edges", *op.Edges)
 		if perr != nil {
-			return "", diagnosticsFrom(perr, "", kindParse), nil
+			return "", diag.From(perr, "", diag.KindParse), nil
 		}
 		diagram := ensureField(&file.Decls, "diagram")
 		upsertField(&diagram.Elts, "edges", value)

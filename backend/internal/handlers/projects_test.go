@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package handlers
 
 import (
 	"bytes"
@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/stratorys/cueto/backend/internal/store"
 )
 
 // reqJSON issues an arbitrary-method JSON request (POST helpers cover the common
@@ -29,7 +31,7 @@ func reqJSON(router *gin.Engine, method, path string, body []byte) *httptest.Res
 	return rec
 }
 
-func createProject(t *testing.T, router *gin.Engine, name, seed string) ProjectMeta {
+func createProject(t *testing.T, router *gin.Engine, name, seed string) store.ProjectMeta {
 	t.Helper()
 	body, _ := json.Marshal(projectRequest{Name: name, Seed: seed})
 	rec := reqJSON(router, http.MethodPost, "/projects", body)
@@ -37,7 +39,7 @@ func createProject(t *testing.T, router *gin.Engine, name, seed string) ProjectM
 		t.Fatalf("create %q status = %d, body %q", name, rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Project ProjectMeta `json:"project"`
+		Project store.ProjectMeta `json:"project"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode create: %v", err)
@@ -45,14 +47,14 @@ func createProject(t *testing.T, router *gin.Engine, name, seed string) ProjectM
 	return out.Project
 }
 
-func listProjects(t *testing.T, router *gin.Engine) []ProjectMeta {
+func listProjects(t *testing.T, router *gin.Engine) []store.ProjectMeta {
 	t.Helper()
 	rec := getJSON(router, "/projects")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list projects status = %d", rec.Code)
 	}
 	var out struct {
-		Projects []ProjectMeta `json:"projects"`
+		Projects []store.ProjectMeta `json:"projects"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode list: %v", err)
@@ -111,7 +113,7 @@ func TestProjectDeleteLastRefused(t *testing.T) {
 	if got := listProjects(t, router); len(got) != 1 {
 		t.Fatalf("projects = %d, want 1", len(got))
 	}
-	rec := reqJSON(router, http.MethodDelete, "/projects/"+defaultProjectID, nil)
+	rec := reqJSON(router, http.MethodDelete, "/projects/"+store.DefaultProjectID, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete last status = %d, want 409", rec.Code)
 	}
@@ -131,7 +133,7 @@ func TestProjectVersionsIsolated(t *testing.T) {
 			t.Fatalf("list %s status = %d", pid, rec.Code)
 		}
 		var out struct {
-			Versions []VersionMeta `json:"versions"`
+			Versions []store.VersionMeta `json:"versions"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return len(out.Versions)
@@ -150,7 +152,7 @@ func TestProjectSampleSeedWritesVersion(t *testing.T) {
 	sampled := createProject(t, router, "Sampled", "sample")
 	rec := getJSON(router, "/projects/"+sampled.ID+"/versions")
 	var out struct {
-		Versions []VersionMeta `json:"versions"`
+		Versions []store.VersionMeta `json:"versions"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	// The repo's seed cue/data.cue exists, so a "sample" project opens with one
@@ -175,13 +177,13 @@ func TestLegacyStoreMigratesToDefault(t *testing.T) {
 
 	router := realRouter(t, cfg)
 	// First project op bootstraps + migrates.
-	if got := listProjects(t, router); len(got) != 1 || got[0].ID != defaultProjectID {
+	if got := listProjects(t, router); len(got) != 1 || got[0].ID != store.DefaultProjectID {
 		t.Fatalf("projects = %+v, want a single default", got)
 	}
 	// The legacy version now lives under default and is listed with its indexed time.
 	rec := getJSON(router, "/projects/default/versions")
 	var out struct {
-		Versions []VersionMeta `json:"versions"`
+		Versions []store.VersionMeta `json:"versions"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	if len(out.Versions) != 1 || out.Versions[0].Version != hash {

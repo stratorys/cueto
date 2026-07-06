@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package config
 
 import (
 	"errors"
@@ -29,12 +29,12 @@ type Config struct {
 	MaxConcurrent  int           // concurrent evaluations before 429
 }
 
-// loadConfig reads configuration from the environment, applying safe defaults.
+// Load reads configuration from the environment, applying safe defaults.
 // CueDir is resolved to an absolute path so overlay and diagnostics paths are
 // stable regardless of the working directory. VERSIONS_DIR is required and must
 // resolve outside CUE_DIR, so saved versions never overwrite the seed data.cue
 // or join `package diagram`.
-func loadConfig() (Config, error) {
+func Load() (Config, error) {
 	cueDir, err := filepath.Abs(envString("CUE_DIR", "../cue"))
 	if err != nil {
 		return Config{}, err

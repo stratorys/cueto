@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package store
 
 import (
 	"context"
@@ -28,8 +28,9 @@ type ProjectMeta struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// The auto-created project that adopts any legacy flat version store on first run.
-const defaultProjectID = "default"
+// DefaultProjectID is the auto-created project that adopts any legacy flat
+// version store on first run.
+const DefaultProjectID = "default"
 
 // projectIDPattern is the exact shape of a project id: a bare lowercase slug that
 // cannot contain a path separator or dot, so it can never traverse out of the
@@ -37,47 +38,47 @@ const defaultProjectID = "default"
 var projectIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // projectDir is the per-project version store: versionsDir/<id>/.
-func (e *cueEvaluator) projectDir(id string) string {
-	return filepath.Join(e.versionsDir, id)
+func (s *Store) projectDir(id string) string {
+	return filepath.Join(s.versionsDir, id)
 }
 
 // registryPath is the project registry (projects.json), stored at the versions
 // root alongside the per-project subdirectories.
-func (e *cueEvaluator) registryPath() string {
-	return filepath.Join(e.versionsDir, "projects.json")
+func (s *Store) registryPath() string {
+	return filepath.Join(s.versionsDir, "projects.json")
 }
 
-// resolveProjectDir validates the id, bootstraps the registry if needed, and
+// ResolveProjectDir validates the id, bootstraps the registry if needed, and
 // confirms the project exists, returning its version-store directory. It takes the
 // registry lock; version ops call it before touching the filesystem.
-func (e *cueEvaluator) resolveProjectDir(id string) (string, error) {
-	if e.versionsDir == "" {
-		return "", errNoVersionsDir
+func (s *Store) ResolveProjectDir(id string) (string, error) {
+	if s.versionsDir == "" {
+		return "", ErrNoVersionsDir
 	}
 	if !projectIDPattern.MatchString(id) {
-		return "", errInvalidProjectID
+		return "", ErrInvalidProjectID
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.ensureBootstrapLocked(); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBootstrapLocked(); err != nil {
 		return "", err
 	}
-	list, err := e.readRegistryLocked()
+	list, err := s.readRegistryLocked()
 	if err != nil {
 		return "", err
 	}
 	for _, p := range list {
 		if p.ID == id {
-			return e.projectDir(id), nil
+			return s.projectDir(id), nil
 		}
 	}
-	return "", errProjectNotFound
+	return "", ErrProjectNotFound
 }
 
 // readRegistryLocked reads projects.json. A missing file yields an empty list (the
-// caller bootstraps). Must be called with e.mu held.
-func (e *cueEvaluator) readRegistryLocked() ([]ProjectMeta, error) {
-	data, err := os.ReadFile(e.registryPath())
+// caller bootstraps). Must be called with s.mu held.
+func (s *Store) readRegistryLocked() ([]ProjectMeta, error) {
+	data, err := os.ReadFile(s.registryPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []ProjectMeta{}, nil
@@ -92,39 +93,39 @@ func (e *cueEvaluator) readRegistryLocked() ([]ProjectMeta, error) {
 }
 
 // writeRegistryLocked persists the registry atomically (write-temp-then-rename), so
-// a crash mid-write never leaves a truncated projects.json. Must hold e.mu.
-func (e *cueEvaluator) writeRegistryLocked(list []ProjectMeta) error {
-	if err := os.MkdirAll(e.versionsDir, 0o755); err != nil {
+// a crash mid-write never leaves a truncated projects.json. Must hold s.mu.
+func (s *Store) writeRegistryLocked(list []ProjectMeta) error {
+	if err := os.MkdirAll(s.versionsDir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := e.registryPath() + ".tmp"
+	tmp := s.registryPath() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, e.registryPath())
+	return os.Rename(tmp, s.registryPath())
 }
 
 // ensureBootstrapLocked creates the registry on first use. When a legacy flat
 // version store exists (loose <hash>.cue files and an index.jsonl directly under
 // versionsDir, from before projects), it migrates them into the "default" project
-// so no saved history is lost. A no-op once projects.json exists. Must hold e.mu.
-func (e *cueEvaluator) ensureBootstrapLocked() error {
-	if _, err := os.Stat(e.registryPath()); err == nil {
+// so no saved history is lost. A no-op once projects.json exists. Must hold s.mu.
+func (s *Store) ensureBootstrapLocked() error {
+	if _, err := os.Stat(s.registryPath()); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 
 	now := time.Now().UTC()
-	if err := e.migrateLegacyStoreLocked(); err != nil {
+	if err := s.migrateLegacyStoreLocked(); err != nil {
 		return err
 	}
-	return e.writeRegistryLocked([]ProjectMeta{{
-		ID:        defaultProjectID,
+	return s.writeRegistryLocked([]ProjectMeta{{
+		ID:        DefaultProjectID,
 		Name:      "Default",
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -135,15 +136,15 @@ func (e *cueEvaluator) ensureBootstrapLocked() error {
 // versions root into versionsDir/default/. Safe when there is nothing to move. A
 // fresh store with nothing to migrate leaves the default project empty (a blank
 // canvas); users get the committed sample via "New from sample".
-func (e *cueEvaluator) migrateLegacyStoreLocked() error {
-	entries, err := os.ReadDir(e.versionsDir)
+func (s *Store) migrateLegacyStoreLocked() error {
+	entries, err := os.ReadDir(s.versionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	dest := e.projectDir(defaultProjectID)
+	dest := s.projectDir(DefaultProjectID)
 	moved := false
 	for _, entry := range entries {
 		name := entry.Name()
@@ -158,24 +159,26 @@ func (e *cueEvaluator) migrateLegacyStoreLocked() error {
 			}
 			moved = true
 		}
-		if err := os.Rename(filepath.Join(e.versionsDir, name), filepath.Join(dest, name)); err != nil {
+		if err := os.Rename(filepath.Join(s.versionsDir, name), filepath.Join(dest, name)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// ListProjects implements Evaluator, newest-updated first.
-func (e *cueEvaluator) ListProjects(_ context.Context) ([]ProjectMeta, error) {
-	if e.versionsDir == "" {
-		return nil, errNoVersionsDir
+// ListProjects returns the registered projects, newest-updated first. The first
+// call bootstraps the registry, migrating any legacy flat version store into a
+// "default" project.
+func (s *Store) ListProjects(_ context.Context) ([]ProjectMeta, error) {
+	if s.versionsDir == "" {
+		return nil, ErrNoVersionsDir
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.ensureBootstrapLocked(); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBootstrapLocked(); err != nil {
 		return nil, err
 	}
-	list, err := e.readRegistryLocked()
+	list, err := s.readRegistryLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -183,19 +186,19 @@ func (e *cueEvaluator) ListProjects(_ context.Context) ([]ProjectMeta, error) {
 	return list, nil
 }
 
-// CreateProject implements Evaluator. The id is a uniquified slug of the name; a
-// "sample" seed writes a first version copied from the seed data.cue, while
-// "blank" (the default) leaves the project empty.
-func (e *cueEvaluator) CreateProject(ctx context.Context, name, seed string) (ProjectMeta, error) {
-	if e.versionsDir == "" {
-		return ProjectMeta{}, errNoVersionsDir
+// Create registers a new project. The id is a uniquified slug of the name; when
+// seedData is non-empty it is written as the project's first version (the caller
+// supplies the seed text), otherwise the project starts empty.
+func (s *Store) Create(name string, seedData []byte) (ProjectMeta, error) {
+	if s.versionsDir == "" {
+		return ProjectMeta{}, ErrNoVersionsDir
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.ensureBootstrapLocked(); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBootstrapLocked(); err != nil {
 		return ProjectMeta{}, err
 	}
-	list, err := e.readRegistryLocked()
+	list, err := s.readRegistryLocked()
 	if err != nil {
 		return ProjectMeta{}, err
 	}
@@ -210,36 +213,34 @@ func (e *cueEvaluator) CreateProject(ctx context.Context, name, seed string) (Pr
 	}
 	id := uniqueProjectID(slugifyProject(display), taken)
 
-	if err := os.MkdirAll(e.projectDir(id), 0o755); err != nil {
+	if err := os.MkdirAll(s.projectDir(id), 0o755); err != nil {
 		return ProjectMeta{}, err
 	}
-	if seed == "sample" {
-		if data, rerr := e.ReadSeed(ctx); rerr == nil {
-			if _, werr := e.writeVersion(e.projectDir(id), []byte(data)); werr != nil {
-				return ProjectMeta{}, werr
-			}
+	if len(seedData) > 0 {
+		if _, werr := s.WriteVersion(s.projectDir(id), seedData); werr != nil {
+			return ProjectMeta{}, werr
 		}
 	}
 
 	now := time.Now().UTC()
 	meta := ProjectMeta{ID: id, Name: display, CreatedAt: now, UpdatedAt: now}
-	if err := e.writeRegistryLocked(append(list, meta)); err != nil {
+	if err := s.writeRegistryLocked(append(list, meta)); err != nil {
 		return ProjectMeta{}, err
 	}
 	return meta, nil
 }
 
-// RenameProject implements Evaluator.
-func (e *cueEvaluator) RenameProject(_ context.Context, id, name string) (ProjectMeta, error) {
-	if e.versionsDir == "" {
-		return ProjectMeta{}, errNoVersionsDir
+// RenameProject changes a project's display name.
+func (s *Store) RenameProject(_ context.Context, id, name string) (ProjectMeta, error) {
+	if s.versionsDir == "" {
+		return ProjectMeta{}, ErrNoVersionsDir
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.ensureBootstrapLocked(); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBootstrapLocked(); err != nil {
 		return ProjectMeta{}, err
 	}
-	list, err := e.readRegistryLocked()
+	list, err := s.readRegistryLocked()
 	if err != nil {
 		return ProjectMeta{}, err
 	}
@@ -251,32 +252,32 @@ func (e *cueEvaluator) RenameProject(_ context.Context, id, name string) (Projec
 		if list[i].ID == id {
 			list[i].Name = display
 			list[i].UpdatedAt = time.Now().UTC()
-			if err := e.writeRegistryLocked(list); err != nil {
+			if err := s.writeRegistryLocked(list); err != nil {
 				return ProjectMeta{}, err
 			}
 			return list[i], nil
 		}
 	}
-	return ProjectMeta{}, errProjectNotFound
+	return ProjectMeta{}, ErrProjectNotFound
 }
 
-// DeleteProject implements Evaluator. The last remaining project cannot be deleted,
-// so the app always has somewhere to land.
-func (e *cueEvaluator) DeleteProject(_ context.Context, id string) error {
-	if e.versionsDir == "" {
-		return errNoVersionsDir
+// DeleteProject removes a project and its version store. The last remaining
+// project cannot be deleted, so the app always has somewhere to land.
+func (s *Store) DeleteProject(_ context.Context, id string) error {
+	if s.versionsDir == "" {
+		return ErrNoVersionsDir
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.ensureBootstrapLocked(); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBootstrapLocked(); err != nil {
 		return err
 	}
-	list, err := e.readRegistryLocked()
+	list, err := s.readRegistryLocked()
 	if err != nil {
 		return err
 	}
 	if len(list) <= 1 {
-		return errLastProject
+		return ErrLastProject
 	}
 	next := make([]ProjectMeta, 0, len(list))
 	found := false
@@ -288,12 +289,12 @@ func (e *cueEvaluator) DeleteProject(_ context.Context, id string) error {
 		next = append(next, p)
 	}
 	if !found {
-		return errProjectNotFound
+		return ErrProjectNotFound
 	}
-	if err := e.writeRegistryLocked(next); err != nil {
+	if err := s.writeRegistryLocked(next); err != nil {
 		return err
 	}
-	return os.RemoveAll(e.projectDir(id))
+	return os.RemoveAll(s.projectDir(id))
 }
 
 // slugifyProject reduces a display name to a bare id charset (lowercase, digits,

@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package diag
 
 import (
 	"path/filepath"
@@ -28,13 +28,13 @@ type Diagnostic struct {
 // syntax typo, a schema error is a contract violation, incomplete means a value
 // is missing or non-concrete, internal is an operational failure.
 const (
-	kindParse      = "parse"
-	kindSchema     = "schema"
-	kindIncomplete = "incomplete"
-	kindInternal   = "internal"
+	KindParse      = "parse"
+	KindSchema     = "schema"
+	KindIncomplete = "incomplete"
+	KindInternal   = "internal"
 )
 
-// diagnosticsFrom converts a CUE error tree into structured diagnostics. It
+// From converts a CUE error tree into structured diagnostics. It
 // reports every error (not just the first), remaps positions in the overlaid
 // data.cue to relative line/column, and strips absolute server paths so nothing
 // about the host filesystem leaks to the client.
@@ -42,7 +42,7 @@ const (
 // kind classifies the whole batch by where the error arose (the call site knows
 // whether it is parsing, unifying, or checking concreteness); this is more
 // reliable than guessing from the error's position.
-func diagnosticsFrom(err error, cueDir, kind string) []Diagnostic {
+func From(err error, cueDir, kind string) []Diagnostic {
 	if err == nil {
 		return nil
 	}

@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+package cueeval
 
 import (
 	"path/filepath"
@@ -26,9 +26,12 @@ type Hint struct {
 	Kind   string `json:"kind"`
 }
 
+// Hint kinds, surfaced as the Kind field of a Hint in the API. A "type" hint
+// reports a field's schema constraint; an "optional" hint lists a struct's
+// declared-but-unset optional fields.
 const (
-	hintType     = "type"
-	hintOptional = "optional"
+	HintType     = "type"
+	HintOptional = "optional"
 )
 
 // hintsFrom walks the concrete diagram and joins each written field back to its
@@ -138,7 +141,7 @@ func structHints(instance cue.Value, def defInfo) []Hint {
 		if firstLine == 0 || pos.Line() < firstLine {
 			firstLine = pos.Line()
 		}
-		hints = append(hints, Hint{Line: pos.Line(), Column: pos.Column(), Label: label, Kind: hintType})
+		hints = append(hints, Hint{Line: pos.Line(), Column: pos.Column(), Label: label, Kind: HintType})
 	}
 
 	var missing []string
@@ -151,7 +154,7 @@ func structHints(instance cue.Value, def defInfo) []Hint {
 		hints = append(hints, Hint{
 			Line:  firstLine - 1,
 			Label: strings.Join(missing, ", "),
-			Kind:  hintOptional,
+			Kind:  HintOptional,
 		})
 	}
 

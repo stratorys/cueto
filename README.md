@@ -126,7 +126,7 @@ Backend:
 ```
 cp backend/.env.example backend/.env
 cd backend
-go run .
+go run ./cmd/server
 ```
 
 Frontend (in a second shell):

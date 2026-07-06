@@ -4,24 +4,20 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package main
+// Package cueeval evaluates schema.cue + a per-request data.cue in-process. It
+// isolates the cuelang library behind the Evaluator seam and delegates version
+// and project persistence to an embedded store.Store.
+package cueeval
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +25,10 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/load"
+
+	"github.com/stratorys/cueto/backend/internal/config"
+	"github.com/stratorys/cueto/backend/internal/diag"
+	"github.com/stratorys/cueto/backend/internal/store"
 )
 
 // Evaluator is the diagram evaluation contract the handlers depend on. Keeping
@@ -41,19 +41,19 @@ type Evaluator interface {
 	// and provenance are non-empty only on success. The error is non-nil only for
 	// operational failures (timeout, output too large) not tied to a source
 	// position.
-	Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []Diagnostic, error)
+	Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []diag.Diagnostic, error)
 	// EvalExpr evaluates a standalone CUE snippet in a fresh context - no schema, no
 	// package overlay - and returns its concrete value as JSON. It backs the REPL
 	// scratchpad: the input is ephemeral and never joins the file set, the schema,
 	// saved versions, or the diagram. Diagnostics carry compile/concreteness errors.
-	EvalExpr(ctx context.Context, source string) (json.RawMessage, []Diagnostic, error)
+	EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error)
 	// EvalQuery evaluates expr as a single CUE expression against the editable file
 	// set overlaid on the schema, so the expression can reference the live `diagram`
 	// (e.g. `diagram.nodes.x.owner`). Like EvalExpr the input is ephemeral: it is
 	// overlaid in a throwaway build, never joins the file set, the schema, or a saved
 	// version, and does not alter /eval output. Diagnostics carry compile or
 	// concreteness errors from the expression or the underlying diagram.
-	EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error)
+	EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []diag.Diagnostic, error)
 	// Introspect returns the CUE builtin functions and importable standard-library
 	// packages (each with its members) that a REPL query can reference. The result
 	// is static per CUE version, so it is computed once and cached; it feeds the
@@ -61,15 +61,15 @@ type Evaluator interface {
 	Introspect() CueMeta
 	// Vet unifies the file set and validates it against the schema. Diagnostics are
 	// empty when clean.
-	Vet(ctx context.Context, files []File) ([]Diagnostic, error)
+	Vet(ctx context.Context, files []File) ([]diag.Diagnostic, error)
 	// Save validates data and, only when valid, stores it as an immutable version
 	// keyed by its content hash, returning the version id. Diagnostics are returned
 	// (and nothing is written) when the data is invalid. The hand-owned schema.cue
 	// and the seed data.cue are never touched.
-	Save(ctx context.Context, projectID, data string) (string, []Diagnostic, error)
+	Save(ctx context.Context, projectID, data string) (string, []diag.Diagnostic, error)
 	// ListVersions returns a project's saved versions newest-first, for the
 	// history/diff view.
-	ListVersions(ctx context.Context, projectID string) ([]VersionMeta, error)
+	ListVersions(ctx context.Context, projectID string) ([]store.VersionMeta, error)
 	// ReadVersion returns the stored data.cue text of one of a project's versions by
 	// its content hash. Both ids are validated before any filesystem access.
 	ReadVersion(ctx context.Context, projectID, id string) (string, error)
@@ -79,12 +79,12 @@ type Evaluator interface {
 	// ListProjects returns the registered projects (newest-updated first). The first
 	// call bootstraps the registry, migrating any legacy flat version store into a
 	// "default" project.
-	ListProjects(ctx context.Context) ([]ProjectMeta, error)
+	ListProjects(ctx context.Context) ([]store.ProjectMeta, error)
 	// CreateProject registers a new project seeded either "blank" or "sample" (a copy
 	// of the seed data.cue as its first version), returning its metadata.
-	CreateProject(ctx context.Context, name, seed string) (ProjectMeta, error)
+	CreateProject(ctx context.Context, name, seed string) (store.ProjectMeta, error)
 	// RenameProject changes a project's display name.
-	RenameProject(ctx context.Context, id, name string) (ProjectMeta, error)
+	RenameProject(ctx context.Context, id, name string) (store.ProjectMeta, error)
 	// DeleteProject removes a project and its version store. The last project cannot
 	// be deleted.
 	DeleteProject(ctx context.Context, id string) error
@@ -93,83 +93,64 @@ type Evaluator interface {
 	// Rewrite splices canvas edits (node upserts/deletes and an optional edge list)
 	// into one editable file's source, preserving its hand-written CUE and comments.
 	// Diagnostics are returned on a syntax error; nothing is otherwise validated.
-	Rewrite(op RewriteOp) (string, []Diagnostic, error)
+	Rewrite(op RewriteOp) (string, []diag.Diagnostic, error)
 }
-
-// VersionMeta identifies one saved version and when it was first saved. SavedAt
-// comes from the append-only index when present, else the file mtime.
-type VersionMeta struct {
-	Version string    `json:"version"`
-	SavedAt time.Time `json:"savedAt"`
-}
-
-// versionIDPattern is the exact shape of a content-hash id (sha256 hex). Reads
-// are rejected unless the id matches, so a version id from the URL can never
-// escape the versions dir via path traversal.
-var versionIDPattern = regexp.MustCompile("^[a-f0-9]{64}$")
 
 // Operational errors, distinct from user-input diagnostics. Handlers map these
 // to HTTP status codes; they never carry CUE positions or host paths.
 var (
-	errTimeout          = errors.New("evaluation timed out")
-	errEvalPanic        = errors.New("evaluation failed")
-	errOutputTooLarge   = errors.New("evaluation output too large")
-	errNoVersionsDir    = errors.New("versions directory is not configured")
-	errInvalidVersionID = errors.New("invalid version id")
-	errVersionNotFound  = errors.New("version not found")
-	errSeedNotFound     = errors.New("seed data.cue not found")
-	errInvalidProjectID = errors.New("invalid project id")
-	errProjectNotFound  = errors.New("project not found")
-	errLastProject      = errors.New("cannot delete the last project")
+	ErrTimeout        = errors.New("evaluation timed out")
+	ErrOutputTooLarge = errors.New("evaluation output too large")
+	ErrSeedNotFound   = errors.New("seed data.cue not found")
+	errEvalPanic      = errors.New("evaluation failed")
 )
 
-// cueEvaluator evaluates schema.cue + a per-request data.cue in-process.
+// cueEvaluator is the concrete Evaluator. It owns the CUE-facing configuration
+// and embeds the version/project store, so persistence operations (ListVersions,
+// projects) are served directly by store.Store while CUE evaluation stays here.
 //
 // Round-trip fidelity: evaluation concretizes references and if-guards and drops
 // comments by design. Diagram logic lives in schema.cue, so data.cue is expected
 // to be flat concrete data; the graph->CUE regeneration flattens it the same way.
 type cueEvaluator struct {
+	*store.Store
 	cueDir         string
-	versionsDir    string
 	timeout        time.Duration
 	maxOutputBytes int
-	// Guards the project registry (projects.json) read-modify-write. Per-version
-	// files are content-addressed and written atomically, so only registry mutations
-	// need serializing.
-	mu sync.Mutex
 	// Memoizes the static CUE builtin/package reference (see Introspect).
 	metaOnce sync.Once
 	meta     CueMeta
 }
 
-func newCueEvaluator(cfg Config) *cueEvaluator {
+// New builds an Evaluator from cfg, wiring a store rooted at cfg.VersionsDir.
+func New(cfg config.Config) Evaluator {
 	return &cueEvaluator{
+		Store:          store.New(cfg.VersionsDir),
 		cueDir:         cfg.CueDir,
-		versionsDir:    cfg.VersionsDir,
 		timeout:        cfg.EvalTimeout,
 		maxOutputBytes: cfg.MaxOutputBytes,
 	}
 }
 
 // Eval implements Evaluator.
-func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []Diagnostic, error) {
+func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []diag.Diagnostic, error) {
 	root, diagram, diags, err := e.evaluate(ctx, files, "")
 	if err != nil || len(diags) > 0 {
 		return nil, nil, Provenance{}, diags, err
 	}
 	out, merr := diagram.MarshalJSON()
 	if merr != nil {
-		return nil, nil, Provenance{}, diagnosticsFrom(merr, e.cueDir, kindIncomplete), nil
+		return nil, nil, Provenance{}, diag.From(merr, e.cueDir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
-		return nil, nil, Provenance{}, nil, errOutputTooLarge
+		return nil, nil, Provenance{}, nil, ErrOutputTooLarge
 	}
 	return out, hintsFrom(root, diagram), provenanceFrom(files), nil, nil
 }
 
 // Vet implements Evaluator: it unifies the file set and validates it against the
 // schema, returning the same diagnostics an eval would surface.
-func (e *cueEvaluator) Vet(ctx context.Context, files []File) ([]Diagnostic, error) {
+func (e *cueEvaluator) Vet(ctx context.Context, files []File) ([]diag.Diagnostic, error) {
 	_, _, diags, err := e.evaluate(ctx, files, "")
 	return diags, err
 }
@@ -177,8 +158,8 @@ func (e *cueEvaluator) Vet(ctx context.Context, files []File) ([]Diagnostic, err
 // Save implements Evaluator: validate, then persist a new immutable version.
 // Versions remain single-file (the primary data.cue); multi-file versioning is a
 // separate concern from live multi-file editing.
-func (e *cueEvaluator) Save(ctx context.Context, projectID, data string) (string, []Diagnostic, error) {
-	dir, err := e.resolveProjectDir(projectID)
+func (e *cueEvaluator) Save(ctx context.Context, projectID, data string) (string, []diag.Diagnostic, error) {
+	dir, err := e.ResolveProjectDir(projectID)
 	if err != nil {
 		return "", nil, err
 	}
@@ -186,11 +167,38 @@ func (e *cueEvaluator) Save(ctx context.Context, projectID, data string) (string
 	if _, _, diags, err := e.evaluate(ctx, files, ""); err != nil || len(diags) > 0 {
 		return "", diags, err
 	}
-	version, err := e.writeVersion(dir, []byte(data))
+	version, err := e.WriteVersion(dir, []byte(data))
 	if err != nil {
 		return "", nil, err
 	}
 	return version, nil, nil
+}
+
+// CreateProject implements Evaluator. A "sample" seed reads the on-disk seed
+// data.cue and hands it to the store as the project's first version; "blank"
+// leaves the project empty. Reading the seed is the only CUE-side concern, so the
+// rest of the creation is delegated to the store.
+func (e *cueEvaluator) CreateProject(ctx context.Context, name, seed string) (store.ProjectMeta, error) {
+	var seedData []byte
+	if seed == "sample" {
+		if data, err := e.ReadSeed(ctx); err == nil {
+			seedData = []byte(data)
+		}
+	}
+	return e.Store.Create(name, seedData)
+}
+
+// ReadSeed implements Evaluator. The path is server-built from cueDir, so it can
+// never traverse outside the package dir.
+func (e *cueEvaluator) ReadSeed(_ context.Context) (string, error) {
+	data, err := os.ReadFile(filepath.Join(e.cueDir, "data.cue"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", ErrSeedNotFound
+		}
+		return "", err
+	}
+	return string(data), nil
 }
 
 // Format implements Evaluator.
@@ -207,7 +215,7 @@ func (e *cueEvaluator) Format(source string) (string, error) {
 // validates concreteness, and marshals the result. It runs under the same deadline
 // and panic recovery as Eval, since REPL input is equally untrusted; the snippet
 // sees no schema and no package, and nothing is persisted.
-func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMessage, []Diagnostic, error) {
+func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
@@ -224,7 +232,7 @@ func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMes
 
 	select {
 	case <-ctx.Done():
-		return nil, nil, errTimeout
+		return nil, nil, ErrTimeout
 	case r := <-done:
 		switch {
 		case r.err != nil:
@@ -232,7 +240,7 @@ func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMes
 		case len(r.diags) > 0:
 			return nil, r.diags, nil
 		case len(r.json) > e.maxOutputBytes:
-			return nil, nil, errOutputTooLarge
+			return nil, nil, ErrOutputTooLarge
 		default:
 			return r.json, nil, nil
 		}
@@ -240,28 +248,28 @@ func (e *cueEvaluator) EvalExpr(ctx context.Context, source string) (json.RawMes
 }
 
 // EvalQuery implements Evaluator. It overlays the editable files on the schema
-// and binds expr into the diagram package (see replQueryCUE), so the expression
+// and binds expr into the diagram package (see replQuerySource), so the expression
 // can read the live `diagram`, then marshals the concrete result. It runs under
 // the same deadline, panic recovery, and output bound as Eval via evaluate; the
 // overlay is thrown away, so nothing is persisted and /eval output is unaffected.
-func (e *cueEvaluator) EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []Diagnostic, error) {
+func (e *cueEvaluator) EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
 	_, result, diags, err := e.evaluate(ctx, files, expr)
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}
 	out, merr := result.MarshalJSON()
 	if merr != nil {
-		return nil, diagnosticsFrom(merr, e.cueDir, kindIncomplete), nil
+		return nil, diag.From(merr, e.cueDir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
-		return nil, nil, errOutputTooLarge
+		return nil, nil, ErrOutputTooLarge
 	}
 	return out, nil, nil
 }
 
 type exprResult struct {
 	json  json.RawMessage
-	diags []Diagnostic
+	diags []diag.Diagnostic
 	err   error
 }
 
@@ -269,14 +277,14 @@ type exprResult struct {
 // compile error to a parse diagnostic and a non-concrete result to incomplete.
 func evalExprValue(value cue.Value, cueDir string) exprResult {
 	if err := value.Err(); err != nil {
-		return exprResult{diags: diagnosticsFrom(err, cueDir, kindParse)}
+		return exprResult{diags: diag.From(err, cueDir, diag.KindParse)}
 	}
 	if err := value.Validate(cue.Concrete(true)); err != nil {
-		return exprResult{diags: diagnosticsFrom(err, cueDir, kindIncomplete)}
+		return exprResult{diags: diag.From(err, cueDir, diag.KindIncomplete)}
 	}
 	out, err := value.MarshalJSON()
 	if err != nil {
-		return exprResult{diags: diagnosticsFrom(err, cueDir, kindIncomplete)}
+		return exprResult{diags: diag.From(err, cueDir, diag.KindIncomplete)}
 	}
 	return exprResult{json: out}
 }
@@ -287,7 +295,7 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
@@ -299,7 +307,7 @@ func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string)
 			root, primary, diags, err := e.build(files, query)
 			if err == nil && len(diags) == 0 {
 				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
-					diags = diagnosticsFrom(verr, e.cueDir, kindIncomplete)
+					diags = diag.From(verr, e.cueDir, diag.KindIncomplete)
 				}
 			}
 			return buildResult{root, primary, diags, err}
@@ -308,7 +316,7 @@ func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string)
 
 	select {
 	case <-ctx.Done():
-		return cue.Value{}, cue.Value{}, nil, errTimeout
+		return cue.Value{}, cue.Value{}, nil, ErrTimeout
 	case r := <-done:
 		return r.root, r.diagram, r.diags, r.err
 	}
@@ -317,7 +325,7 @@ func (e *cueEvaluator) evaluate(ctx context.Context, files []File, query string)
 type buildResult struct {
 	root    cue.Value
 	diagram cue.Value
-	diags   []Diagnostic
+	diags   []diag.Diagnostic
 	err     error
 }
 
@@ -343,13 +351,13 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 // overlaid: every client filename passes validEditableName (a bare .cue name,
 // never schema.cue), and the overlay key is server-built via filepath.Join, so
 // the hand-owned schema can never be supplied, replaced, or escaped by a client.
-func (e *cueEvaluator) build(files []File, query string) (cue.Value, cue.Value, []Diagnostic, error) {
+func (e *cueEvaluator) build(files []File, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range files {
 		if !validEditableName(f.Name) {
-			return cue.Value{}, cue.Value{}, []Diagnostic{{
+			return cue.Value{}, cue.Value{}, []diag.Diagnostic{{
 				Message: fmt.Sprintf("invalid file name %q", f.Name),
-				Kind:    kindParse,
+				Kind:    diag.KindParse,
 			}}, nil
 		}
 		overlay[filepath.Join(e.cueDir, f.Name)] = load.FromString(f.Content)
@@ -368,19 +376,19 @@ func (e *cueEvaluator) build(files []File, query string) (cue.Value, cue.Value, 
 		return cue.Value{}, cue.Value{}, nil, errors.New("no CUE instance loaded")
 	}
 	if err := instances[0].Err; err != nil {
-		return cue.Value{}, cue.Value{}, diagnosticsFrom(err, e.cueDir, kindParse), nil
+		return cue.Value{}, cue.Value{}, diag.From(err, e.cueDir, diag.KindParse), nil
 	}
 
 	value := cuecontext.New().BuildInstance(instances[0])
 	if err := value.Err(); err != nil {
-		return cue.Value{}, cue.Value{}, diagnosticsFrom(err, e.cueDir, kindSchema), nil
+		return cue.Value{}, cue.Value{}, diag.From(err, e.cueDir, diag.KindSchema), nil
 	}
 
 	diagram := value.LookupPath(cue.ParsePath("diagram"))
 	if !diagram.Exists() {
-		return cue.Value{}, cue.Value{}, []Diagnostic{{
+		return cue.Value{}, cue.Value{}, []diag.Diagnostic{{
 			Message: "no `diagram` field in data.cue",
-			Kind:    kindIncomplete,
+			Kind:    diag.KindIncomplete,
 		}}, nil
 	}
 	// A REPL query returns its bound expression as the primary value; the diagram
@@ -406,163 +414,4 @@ func (e *cueEvaluator) replPath() string {
 // marshaled; it never affects /eval, which builds without this overlay.
 func replQuerySource(expr string) string {
 	return fmt.Sprintf("package diagram\n\n%sreplResult: (%s)\n", replImports(expr), expr)
-}
-
-// writeVersion stores data as an immutable, content-addressed version and
-// returns its id (the sha256 hex of the content). Writes go only into the
-// configured versions dir - never the CUE package dir - so schema.cue and the
-// seed data.cue are untouched and version files never join `package diagram`.
-// Identical content is idempotent: an existing version is reused, not rewritten.
-func (e *cueEvaluator) writeVersion(dir string, data []byte) (string, error) {
-	if e.versionsDir == "" {
-		return "", errNoVersionsDir
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-
-	sum := sha256.Sum256(data)
-	id := hex.EncodeToString(sum[:])
-	path := filepath.Join(dir, id+".cue")
-
-	// O_EXCL makes creation atomic: concurrent saves of the same content race on
-	// the same name and all but one see ErrExist, which is success (idempotent).
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
-		return id, nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	// Record save order + timestamp in the append-only index. Only the fresh-create
-	// branch reaches here (idempotent re-saves returned above), so a version is
-	// indexed exactly once. The index is derived metadata: a failure to append is
-	// not fatal to the save, since the version file itself is the source of truth.
-	_ = e.appendIndex(dir, id)
-	return id, nil
-}
-
-// indexPath is a project's append-only log of save events (one JSON object per line).
-func (e *cueEvaluator) indexPath(dir string) string {
-	return filepath.Join(dir, "index.jsonl")
-}
-
-// appendIndex records one save event. Content hashes carry no order or time, so
-// this log is what lets ListVersions present true save order and timestamps.
-func (e *cueEvaluator) appendIndex(dir, id string) error {
-	line, err := json.Marshal(VersionMeta{Version: id, SavedAt: time.Now().UTC()})
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(e.indexPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// readIndex reads a project's save-order log into a map of id -> first-save time. A
-// missing index is not an error (older versions predate it); such versions fall
-// back to their file mtime in ListVersions.
-func (e *cueEvaluator) readIndex(dir string) map[string]time.Time {
-	times := map[string]time.Time{}
-	f, err := os.Open(e.indexPath(dir))
-	if err != nil {
-		return times
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		if len(bytes.TrimSpace(scanner.Bytes())) == 0 {
-			continue
-		}
-		var meta VersionMeta
-		if err := json.Unmarshal(scanner.Bytes(), &meta); err != nil {
-			continue
-		}
-		// Keep the first (earliest) timestamp for an id; ignore any later dup line.
-		if _, seen := times[meta.Version]; !seen {
-			times[meta.Version] = meta.SavedAt
-		}
-	}
-	return times
-}
-
-// ListVersions implements Evaluator. It enumerates the version files and stamps
-// each with its indexed save time (or mtime when it predates the index), newest
-// first.
-func (e *cueEvaluator) ListVersions(_ context.Context, projectID string) ([]VersionMeta, error) {
-	dir, err := e.resolveProjectDir(projectID)
-	if err != nil {
-		return nil, err
-	}
-	times := e.readIndex(dir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []VersionMeta{}, nil
-		}
-		return nil, err
-	}
-	out := make([]VersionMeta, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".cue") {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".cue")
-		saved, ok := times[id]
-		if !ok {
-			if info, err := entry.Info(); err == nil {
-				saved = info.ModTime()
-			}
-		}
-		out = append(out, VersionMeta{Version: id, SavedAt: saved})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].SavedAt.After(out[j].SavedAt) })
-	return out, nil
-}
-
-// ReadVersion implements Evaluator. The id is regex-validated before any path is
-// built, so it can never traverse out of the versions dir.
-func (e *cueEvaluator) ReadVersion(_ context.Context, projectID, id string) (string, error) {
-	dir, err := e.resolveProjectDir(projectID)
-	if err != nil {
-		return "", err
-	}
-	if !versionIDPattern.MatchString(id) {
-		return "", errInvalidVersionID
-	}
-	data, err := os.ReadFile(filepath.Join(dir, id+".cue"))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errVersionNotFound
-		}
-		return "", err
-	}
-	return string(data), nil
-}
-
-// ReadSeed implements Evaluator. The path is server-built from CueDir, so it can
-// never traverse outside the package dir.
-func (e *cueEvaluator) ReadSeed(_ context.Context) (string, error) {
-	data, err := os.ReadFile(filepath.Join(e.cueDir, "data.cue"))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errSeedNotFound
-		}
-		return "", err
-	}
-	return string(data), nil
 }
