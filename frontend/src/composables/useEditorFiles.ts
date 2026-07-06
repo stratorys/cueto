@@ -4,8 +4,8 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-// The editable CUE file set and its tab operations. Each file is
-// `package diagram`; all unify into one diagram, and the canvas round-trips
+// The editable CUE file set and its tab operations. Each file is the default
+// project `package main`; all unify into one diagram, and the canvas round-trips
 // edits back into the file that owns each node. Module-level singleton, shared
 // with the other canvas composables.
 
@@ -17,7 +17,7 @@ import { runEval } from "./useCueSync";
 
 const { diagram } = useDiagram();
 
-// The editable file set. Each file is `package diagram`; all unify into one
+// The editable file set. Each file is `package main`; all unify into one
 // diagram. The canvas round-trips edits back into the file that owns each node.
 export const files = ref<EditorFile[]>([{ name: "data.cue", text: toCue(diagram.value) }]);
 // Which file the editor is showing, and which receives canvas-created nodes.
@@ -86,7 +86,7 @@ function addFile() {
   let name = "file.cue";
   let k = 2;
   while (taken.has(name)) name = `file_${k++}.cue`;
-  files.value.push({ name, text: "package diagram\n" });
+  files.value.push({ name, text: "package main\n" });
   activeFileName.value = name;
 }
 

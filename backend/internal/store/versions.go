@@ -36,8 +36,8 @@ var versionIDPattern = regexp.MustCompile("^[a-f0-9]{64}$")
 
 // WriteVersion stores data as an immutable, content-addressed version under dir
 // and returns its id (the sha256 hex of the content). Writes go only into the
-// versions dir - never the CUE package dir - so schema.cue and the seed data.cue
-// are untouched and version files never join `package diagram`. Identical content
+// versions dir - never the CUE package dir - so the seed data.cue is untouched
+// and version files never join the default `package main`. Identical content
 // is idempotent: an existing version is reused, not rewritten.
 func (s *Store) WriteVersion(dir string, data []byte) (string, error) {
 	if s.versionsDir == "" {

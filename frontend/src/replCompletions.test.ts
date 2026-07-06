@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import type { CueMeta } from "./api";
-import { cueCompletionSource, walkKeys } from "./replCompletions";
+import { cueCompletionSource } from "./replCompletions";
 
 const meta: CueMeta = {
   builtins: [{ name: "len", isFunc: true }],
@@ -34,28 +34,6 @@ function fakeCtx(text: string, explicit = false): CompletionContext {
     },
   } as unknown as CompletionContext;
 }
-
-describe("walkKeys", () => {
-  it("flattens nested structs into dotted paths", () => {
-    const keys = walkKeys("diagram", {
-      nodes: { a: { owner: "x" } },
-      edges: [{ id: "e1" }],
-    });
-    expect(keys.has("diagram")).toBe(true);
-    expect(keys.has("diagram.nodes")).toBe(true);
-    expect(keys.has("diagram.nodes.a")).toBe(true);
-    expect(keys.has("diagram.nodes.a.owner")).toBe(true);
-    // Arrays are not descended into.
-    expect(keys.has("diagram.edges")).toBe(true);
-    expect([...keys].some((k) => k.includes("e1"))).toBe(false);
-  });
-
-  it("skips non-identifier keys", () => {
-    const keys = walkKeys("diagram", { "a-b": { c: 1 }, ok: { d: 2 } });
-    expect(keys.has("diagram.ok.d")).toBe(true);
-    expect([...keys].some((k) => k.includes("a-b"))).toBe(false);
-  });
-});
 
 describe("cueCompletionSource", () => {
   const source = cueCompletionSource(() => ({ keys: ["diagram", "diagram.nodes"], meta }));

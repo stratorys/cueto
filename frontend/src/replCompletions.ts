@@ -18,10 +18,6 @@ import type {
 } from "@codemirror/autocomplete";
 import type { CueMeta } from "./api";
 
-// A CUE bare identifier. Non-identifier keys (addressed in CUE with quoted/index
-// syntax) are skipped when flattening paths, since completion inserts bare text.
-const IDENT = /^[A-Za-z_]\w*$/;
-
 // CUE keywords and primitive types worth completing at an expression position.
 const KEYWORDS = [
   "for",
@@ -38,27 +34,6 @@ const KEYWORDS = [
   "number",
   "bool",
 ];
-
-// walkKeys flattens a JSON value into dotted, identifier-only field paths under
-// root (e.g. "diagram.nodes.a.owner"). Arrays and non-identifier keys are not
-// descended: CUE addresses them with index/quoted syntax the UI does not build.
-// Depth is bounded so a deep or cyclic-looking structure cannot blow up.
-export function walkKeys(
-  root: string,
-  value: unknown,
-  out: Set<string> = new Set(),
-  depth = 0,
-): Set<string> {
-  out.add(root);
-  if (depth >= 8 || value === null || typeof value !== "object" || Array.isArray(value)) {
-    return out;
-  }
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (!IDENT.test(key)) continue;
-    walkKeys(`${root}.${key}`, child, out, depth + 1);
-  }
-  return out;
-}
 
 // The data a completion draws on: the diagram key paths (from the last successful
 // eval) and the static CUE reference (fetched once). Either may be empty until it

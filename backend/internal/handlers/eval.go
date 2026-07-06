@@ -64,6 +64,27 @@ func (h *handlers) EvalExpr(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"result": json.RawMessage(out)})
 }
 
+// ReplKeys backs /repl/keys: the dotted identifier field paths of every top-level
+// data field in the overlaid editor file set, for the REPL's autocomplete over the
+// whole data (not just the diagram). 200 {keys:[...]} on success, 400 with
+// diagnostics when the diagram is invalid/incomplete. Nothing is persisted.
+func (h *handlers) ReplKeys(c *gin.Context) {
+	var req sourceRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	keys, diags, err := h.eval.Keys(c.Request.Context(), req.Files)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	if len(diags) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"keys": keys})
+}
+
 // Vet reports validation diagnostics. Keeping the existing contract it answers
 // 200 with {ok:false, diagnostics:[...]} for invalid input and {ok:true} on pass.
 func (h *handlers) Vet(c *gin.Context) {

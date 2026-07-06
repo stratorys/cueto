@@ -37,13 +37,15 @@ const (
 // hintsFrom walks the concrete diagram and joins each written field back to its
 // schema definition (#Node, #Column, #Edge) to produce inlay hints. It is called
 // only on a fully valid, concrete evaluation, so the walk never sees errors.
+// schema is the diagram schema package root that holds the three definitions
+// (they live in the imported package, not on the evaluated project value).
 //
 // The walk is deliberately bounded to the three known definitions rather than
 // generic: the schema shape is fixed, and a bounded walk stays predictable.
-func hintsFrom(root, diagram cue.Value) []Hint {
-	nodeFields := defFields(root.LookupPath(cue.ParsePath("#Node")))
-	colFields := defFields(root.LookupPath(cue.ParsePath("#Column")))
-	edgeFields := defFields(root.LookupPath(cue.ParsePath("#Edge")))
+func hintsFrom(schema, diagram cue.Value) []Hint {
+	nodeFields := defFields(schema.LookupPath(cue.ParsePath("#Node")))
+	colFields := defFields(schema.LookupPath(cue.ParsePath("#Column")))
+	edgeFields := defFields(schema.LookupPath(cue.ParsePath("#Edge")))
 
 	var hints []Hint
 
@@ -113,8 +115,8 @@ func structHints(instance cue.Value, def defInfo) []Hint {
 
 	present := map[string]bool{}
 	var hints []Hint
-	// The struct value's own Pos() resolves to schema.cue (it unified with the
-	// definition), so it cannot anchor the optional hint. The first written field's
+	// The struct value's own Pos() resolves to the schema definition (it unified
+	// with it), not data.cue, so it cannot anchor the optional hint. The first written field's
 	// data.cue line, minus one, is the struct's opening line in generated CUE
 	// (one field per line, brace on the key line).
 	firstLine := 0

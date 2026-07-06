@@ -82,9 +82,11 @@ func TestHintsSkipInjectedFields(t *testing.T) {
 
 // A field that violates the schema evaluates to diagnostics, not hints.
 func TestHintsAbsentOnError(t *testing.T) {
-	data := `package diagram
+	data := `package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: "nope", y: 1, label: "l"}}
 	edges: []
 }

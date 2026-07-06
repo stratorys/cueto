@@ -16,12 +16,12 @@ import type { SaveState } from "../composables/useDiagramCanvas";
 import type { EditorFile } from "../model";
 import type { Diagnostic, Hint } from "../api";
 import { isDirty } from "../composables/useEditorFiles";
-// The hand-owned schema, inlined at build time. The dev server needs
+// The diagram schema package, inlined at build time. The dev server needs
 // server.fs.allow: ['..'] to read it from the sibling cue/ dir.
-import schemaSource from "../../../cue/schema.cue?raw";
+import schemaSource from "../../../cue/diagram/diagram.cue?raw";
 
 // Editable files round-trip through /eval and /rewrite (owned by the composable);
-// schema.cue is a static read-only reference pinned as the last tab.
+// the diagram schema is a static read-only reference pinned as the last tab.
 const props = defineProps<{
   code: string;
   files: EditorFile[];
@@ -197,7 +197,7 @@ const iconButton =
         :aria-selected="viewingSchema"
         @click="viewingSchema = true"
       >
-        schema.cue
+        diagram.cue
         <span class="rounded-sm border border-slate-700 px-1 text-xs uppercase tracking-wide text-slate-500">read-only</span>
       </button>
       <div v-if="!viewingSchema" class="ml-auto flex items-center gap-0.5 pr-2">

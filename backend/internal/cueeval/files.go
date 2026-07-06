@@ -18,7 +18,7 @@ import (
 
 // File is one client-supplied editable CUE file: a bare filename (guarded by
 // validEditableName) and its full source text. Multiple files unify into one
-// `package diagram`, so nodes may be authored across several files.
+// `package main`, so nodes may be authored across several files.
 type File struct {
 	Name    string `json:"name"`
 	Content string `json:"content"`
@@ -39,11 +39,12 @@ var editableNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.cue$`)
 
 // validEditableName reports whether name is a safe client-supplied CUE filename.
 // It must be a bare base name (no path separators or traversal), match the strict
-// pattern, and not be the reserved hand-owned schema.cue. The schema check is
-// case-insensitive because macOS/APFS is case-insensitive by default, so
-// Schema.cue would collide with the on-disk file. This guard is what lets the
-// N-file overlay accept client filenames without a client supplying, replacing,
-// or escaping past the hand-owned schema.
+// pattern, and not be the reserved schema.cue. The schema check is
+// case-insensitive because macOS/APFS is case-insensitive by default. The schema
+// now lives in the diagram/ subpackage rather than a root schema.cue, so this
+// reservation is vestigial; it is kept until the legacy layout is retired
+// (Phase 3). This guard is what lets the N-file overlay accept client filenames
+// without a client escaping the module root.
 func validEditableName(name string) bool {
 	if name != filepath.Base(name) {
 		return false

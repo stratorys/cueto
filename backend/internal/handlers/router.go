@@ -32,6 +32,7 @@ func NewRouter(eval cueeval.Evaluator, cfg config.Config) *gin.Engine {
 	h := &handlers{eval: eval, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
 	r.POST("/repl", h.EvalExpr)
+	r.POST("/repl/keys", h.ReplKeys)
 	r.GET("/cue/meta", h.CueMeta)
 	r.POST("/vet", h.Vet)
 	r.POST("/format", h.Format)

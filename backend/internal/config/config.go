@@ -33,7 +33,7 @@ type Config struct {
 // CueDir is resolved to an absolute path so overlay and diagnostics paths are
 // stable regardless of the working directory. VERSIONS_DIR is required and must
 // resolve outside CUE_DIR, so saved versions never overwrite the seed data.cue
-// or join `package diagram`.
+// or join the default `package main`.
 func Load() (Config, error) {
 	cueDir, err := filepath.Abs(envString("CUE_DIR", "../cue"))
 	if err != nil {

@@ -10,9 +10,9 @@
 // and the diagram is evaluated once per edit burst, not once per surface.
 
 import { ref, watch } from "vue";
-import { evalExpr, fetchCueMeta, type CueMeta } from "../api";
+import { fetchCueMeta, fetchReplKeys, type CueMeta } from "../api";
 import { files } from "./useEditorFiles";
-import { walkKeys, type ReplCompletionData } from "../replCompletions";
+import { type ReplCompletionData } from "../replCompletions";
 
 const meta = ref<CueMeta | null>(null);
 const keys = ref<string[]>([]);
@@ -27,12 +27,13 @@ function completionData(): ReplCompletionData {
   return { keys: keys.value, meta: meta.value };
 }
 
-// refreshKeys evaluates `diagram` against the live files and flattens the concrete
-// result into dotted field paths. A currently-invalid diagram just leaves the last
-// good key set in place.
+// refreshKeys asks the backend for the dotted field paths of every top-level data
+// field (people, diagram, ...), computed from the parsed CUE value. A currently
+// invalid/incomplete diagram comes back as an error, leaving the last good key set
+// in place.
 async function refreshKeys() {
-  const result = await evalExpr("diagram", files.value);
-  if (result.ok) keys.value = [...walkKeys("diagram", result.result)].sort();
+  const result = await fetchReplKeys(files.value);
+  if (result.ok) keys.value = [...result.keys].sort();
 }
 
 // Debounce a key refresh so a burst of keystrokes triggers one eval.

@@ -4,9 +4,10 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-// Package cueeval evaluates schema.cue + a per-request data.cue in-process. It
-// isolates the cuelang library behind the Evaluator seam and delegates version
-// and project persistence to an embedded store.Store.
+// Package cueeval evaluates the default project (package main) against the
+// imported diagram schema in-process. It isolates the cuelang library behind the
+// Evaluator seam and delegates version and project persistence to an embedded
+// store.Store.
 package cueeval
 
 import (
@@ -54,6 +55,12 @@ type Evaluator interface {
 	// version, and does not alter /eval output. Diagnostics carry compile or
 	// concreteness errors from the expression or the underlying diagram.
 	EvalQuery(ctx context.Context, files []File, expr string) (json.RawMessage, []diag.Diagnostic, error)
+	// Keys returns the dotted identifier field paths of every top-level data field
+	// in the editable file set overlaid on the schema (people, people.george,
+	// diagram, diagram.nodes, ...), for the REPL's autocomplete over the whole data.
+	// It reads the value's structure, not a concrete result; diagnostics mirror an
+	// invalid/incomplete diagram and the overlay is thrown away.
+	Keys(ctx context.Context, files []File) ([]string, []diag.Diagnostic, error)
 	// Introspect returns the CUE builtin functions and importable standard-library
 	// packages (each with its members) that a REPL query can reference. The result
 	// is static per CUE version, so it is computed once and cached; it feeds the
@@ -64,8 +71,8 @@ type Evaluator interface {
 	Vet(ctx context.Context, files []File) ([]diag.Diagnostic, error)
 	// Save validates data and, only when valid, stores it as an immutable version
 	// keyed by its content hash, returning the version id. Diagnostics are returned
-	// (and nothing is written) when the data is invalid. The hand-owned schema.cue
-	// and the seed data.cue are never touched.
+	// (and nothing is written) when the data is invalid. The seed data.cue and the
+	// diagram schema package are never touched.
 	Save(ctx context.Context, projectID, data string) (string, []diag.Diagnostic, error)
 	// ListVersions returns a project's saved versions newest-first, for the
 	// history/diff view.
@@ -110,8 +117,9 @@ var (
 // projects) are served directly by store.Store while CUE evaluation stays here.
 //
 // Round-trip fidelity: evaluation concretizes references and if-guards and drops
-// comments by design. Diagram logic lives in schema.cue, so data.cue is expected
-// to be flat concrete data; the graph->CUE regeneration flattens it the same way.
+// comments by design. Diagram logic lives in the imported diagram schema, so
+// data.cue is expected to be flat concrete data; the graph->CUE regeneration
+// flattens it the same way.
 type cueEvaluator struct {
 	*store.Store
 	cueDir         string
@@ -120,6 +128,27 @@ type cueEvaluator struct {
 	// Memoizes the static CUE builtin/package reference (see Introspect).
 	metaOnce sync.Once
 	meta     CueMeta
+	// Memoizes the diagram schema package root, whose #Node/#Column/#Edge
+	// definitions drive inlay-hint generation. The definitions live in the imported
+	// package now, so they are loaded once here rather than read off a project value.
+	schemaOnce    sync.Once
+	schemaRootVal cue.Value
+}
+
+// schemaRoot builds the diagram schema package once and returns its root value,
+// from which hint generation reads the #Node/#Column/#Edge definitions. The
+// definitions moved out of the project root into the imported package, so they are
+// no longer top-level fields of an evaluated project. A build failure yields a
+// zero value, which makes hint generation a no-op rather than an error.
+func (e *cueEvaluator) schemaRoot() cue.Value {
+	e.schemaOnce.Do(func() {
+		instances := load.Instances([]string{"./diagram"}, &load.Config{Dir: e.cueDir})
+		if len(instances) == 0 || instances[0].Err != nil {
+			return
+		}
+		e.schemaRootVal = cuecontext.New().BuildInstance(instances[0])
+	})
+	return e.schemaRootVal
 }
 
 // New builds an Evaluator from cfg, wiring a store rooted at cfg.VersionsDir.
@@ -134,7 +163,7 @@ func New(cfg config.Config) Evaluator {
 
 // Eval implements Evaluator.
 func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage, []Hint, Provenance, []diag.Diagnostic, error) {
-	root, diagram, diags, err := e.evaluate(ctx, files, "")
+	_, diagram, diags, err := e.evaluate(ctx, files, "")
 	if err != nil || len(diags) > 0 {
 		return nil, nil, Provenance{}, diags, err
 	}
@@ -145,7 +174,7 @@ func (e *cueEvaluator) Eval(ctx context.Context, files []File) (json.RawMessage,
 	if len(out) > e.maxOutputBytes {
 		return nil, nil, Provenance{}, nil, ErrOutputTooLarge
 	}
-	return out, hintsFrom(root, diagram), provenanceFrom(files), nil, nil
+	return out, hintsFrom(e.schemaRoot(), diagram), provenanceFrom(files), nil, nil
 }
 
 // Vet implements Evaluator: it unifies the file set and validates it against the
@@ -346,11 +375,12 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 	return fn()
 }
 
-// build overlays the client's editable files on the disk schema and returns the
-// `diagram` value. schema.cue is always read fresh from disk and is never
-// overlaid: every client filename passes validEditableName (a bare .cue name,
-// never schema.cue), and the overlay key is server-built via filepath.Join, so
-// the hand-owned schema can never be supplied, replaced, or escaped by a client.
+// build overlays the client's editable files on the default project (package
+// main) and returns the `diagram` value. The schema lives in the diagram/
+// subpackage, imported by the project, and is never an overlay target: every
+// client filename passes validEditableName (a bare .cue name at the module root),
+// and the overlay key is server-built via filepath.Join, so the schema can never
+// be supplied, replaced, or escaped by a client.
 func (e *cueEvaluator) build(files []File, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range files {
@@ -409,9 +439,9 @@ func (e *cueEvaluator) replPath() string {
 // query. The surrounding ( ) force expr to a single expression so a client cannot
 // inject extra package fields; replImports prepends imports for exactly the
 // standard-library packages expr references (an unused import is a CUE error, so
-// this must be exact). Being in `package diagram`, the expression resolves the
-// live `diagram` and the schema definitions. replResult is looked up and
-// marshaled; it never affects /eval, which builds without this overlay.
+// this must be exact). Being in the default project `package main`, the expression
+// resolves the live `diagram`. replResult is looked up and marshaled; it never
+// affects /eval, which builds without this overlay.
 func replQuerySource(expr string) string {
-	return fmt.Sprintf("package diagram\n\n%sreplResult: (%s)\n", replImports(expr), expr)
+	return fmt.Sprintf("package main\n\n%sreplResult: (%s)\n", replImports(expr), expr)
 }

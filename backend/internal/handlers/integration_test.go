@@ -91,9 +91,11 @@ func decodeDiags(t *testing.T, rec *httptest.ResponseRecorder) []diag.Diagnostic
 	return r.Diagnostics
 }
 
-const validData = `package diagram
+const validData = `package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {
 		a: {type: "process", x: 1, y: 1, label: "a"}
 		b: {type: "process", x: 2, y: 2, label: "b"}
@@ -139,7 +141,7 @@ func TestEvalHappyPath(t *testing.T) {
 
 func TestEvalMissingDiagram(t *testing.T) {
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, "package diagram\n"))
+	rec := postJSON(router, "/eval", evalBody(t, "package main\n"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -150,9 +152,11 @@ func TestEvalMissingDiagram(t *testing.T) {
 }
 
 func TestEvalSchemaViolation(t *testing.T) {
-	data := `package diagram
+	data := `package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: "nope", y: 1, label: "l"}}
 	edges: []
 }
@@ -183,9 +187,11 @@ diagram: #Diagram & {
 func TestEvalNonConcrete(t *testing.T) {
 	// Node missing a concrete label: valid against the schema but not concrete.
 	// (x/y are optional, so a missing coordinate is concrete; label is required.)
-	data := `package diagram
+	data := `package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: 1, y: 1}}
 	edges: []
 }
@@ -203,9 +209,11 @@ diagram: #Diagram & {
 
 func TestEvalConflictingID(t *testing.T) {
 	// The node's id must equal its map key; a conflicting id is a hard error.
-	data := `package diagram
+	data := `package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {user: {id: "other", type: "process", x: 1, y: 1, label: "l"}}
 	edges: []
 }
@@ -248,11 +256,15 @@ func TestEvalTimeout(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.EvalTimeout = 5 * time.Millisecond
 	// Forcing a concrete label forces the large list build, which blows the deadline.
-	data := `package diagram
+	data := `package main
 
-import "list"
+import (
+	"list"
 
-diagram: #Diagram & {
+	d "github.com/stratorys/cueto/diagram"
+)
+
+diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: 1, y: 1, label: "\(len([for i in list.Range(0, 1000000, 1) {i}]))"}}
 	edges: []
 }
@@ -289,6 +301,10 @@ func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMes
 
 func (b *blockingEval) EvalQuery(ctx context.Context, files []cueeval.File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
 	return json.RawMessage(`null`), nil, nil
+}
+
+func (b *blockingEval) Keys(ctx context.Context, files []cueeval.File) ([]string, []diag.Diagnostic, error) {
+	return nil, nil, nil
 }
 
 func (b *blockingEval) Introspect() cueeval.CueMeta {
@@ -545,7 +561,7 @@ func TestVetOk(t *testing.T) {
 }
 
 func TestVetInvalid(t *testing.T) {
-	data := "package diagram\n\ndiagram: #Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
+	data := "package main\n\nimport d \"github.com/stratorys/cueto/diagram\"\n\ndiagram: d.#Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
 	router := realRouter(t, testConfig(t))
 	rec := postJSON(router, "/vet", evalBody(t, data))
 	if rec.Code != http.StatusOK {
@@ -627,7 +643,7 @@ func TestSaveWritesVersion(t *testing.T) {
 func TestSaveInvalidNotWritten(t *testing.T) {
 	cfg := testConfig(t)
 	router := realRouter(t, cfg)
-	data := "package diagram\n\ndiagram: #Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
+	data := "package main\n\nimport d \"github.com/stratorys/cueto/diagram\"\n\ndiagram: d.#Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
 	rec := postJSON(router, "/projects/default/save", evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
@@ -803,13 +819,14 @@ func TestEvalMultiFileUnifiesWithProvenance(t *testing.T) {
 	// data.cue (shadowing the disk seed) holds node a and the edge list; extra.cue
 	// contributes node b via path form. They unify into one diagram, and each node
 	// is attributed to its authoring file.
-	primary := cueeval.File{Name: "data.cue", Content: `package diagram
-diagram: #Diagram & {
+	primary := cueeval.File{Name: "data.cue", Content: `package main
+import d "github.com/stratorys/cueto/diagram"
+diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: 1, y: 1, label: "a"}}
 	edges: [{id: "e1", source: "a", target: "b", kind: "arrow"}]
 }
 `}
-	extra := cueeval.File{Name: "extra.cue", Content: `package diagram
+	extra := cueeval.File{Name: "extra.cue", Content: `package main
 diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 `}
 	router := realRouter(t, testConfig(t))

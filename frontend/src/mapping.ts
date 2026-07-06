@@ -7,7 +7,8 @@
 // Mapping between the diagram model and its two projections:
 //  - model -> Vue Flow nodes/edges (the canvas view)
 //  - model -> CUE text (the `data.cue` body, graph -> CUE direction)
-// schema.cue (the #Diagram / #Node / #Edge definitions) is hand-owned.
+// The #Diagram / #Node / #Edge definitions live in the imported diagram package
+// (github.com/stratorys/cueto/diagram); the default project is `package main`.
 
 import type { Edge, Node } from "@vue-flow/core";
 import type { Diagram, DiagramEdge, DiagramNode } from "./model";
@@ -271,5 +272,5 @@ export function toCue(diagram: Diagram): string {
   const edges = diagram.edges.map(edgeFields);
 
   const body = emit({ nodes, edges }, 1);
-  return `package diagram\n\ndiagram: #Diagram & ${body}\n`;
+  return `package main\n\nimport d "github.com/stratorys/cueto/diagram"\n\ndiagram: d.#Diagram & ${body}\n`;
 }

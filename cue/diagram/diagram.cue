@@ -4,9 +4,9 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-// Hand-written schema. The canvas never rewrites this file.
-// data.cue holds the concrete diagram instance and is the only file the
-// canvas round-trips.
+// The diagram schema, an importable package. A user's own package derives its
+// diagram by importing this and unifying with #Diagram, so the definitions are
+// reachable across packages instead of only as same-package fields.
 package diagram
 
 #Diagram: {

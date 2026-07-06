@@ -245,7 +245,7 @@ async function sendJSON<T>(
   return errorResult(errorBody, response.status);
 }
 
-// evalCue evaluates data.cue against schema.cue and returns the diagram JSON,
+// evalCue evaluates the project's data against the diagram schema and returns the diagram JSON,
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
   return post("/eval", { data }, async (response) => {
@@ -286,6 +286,19 @@ export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk |
   return post("/repl", body, async (response) => {
     const parsed = await readJson<{ result?: unknown }>(response);
     return { result: parsed.result ?? null };
+  });
+}
+
+// fetchReplKeys returns the dotted identifier field paths of every top-level data
+// field in the editor files (people, people.george, diagram, diagram.nodes, ...),
+// computed on the backend from the parsed CUE value. It feeds the REPL's
+// autocomplete over the whole data, not just the diagram. An invalid/incomplete
+// diagram comes back as an EvalErr, so callers keep their last good key set.
+export function fetchReplKeys(files: EditorFile[]): Promise<({ ok: true; keys: string[] }) | EvalErr> {
+  const body = { files: files.map((f) => ({ name: f.name, content: f.text })) };
+  return post("/repl/keys", body, async (response) => {
+    const parsed = await readJson<{ keys?: string[] }>(response);
+    return { keys: parsed.keys ?? [] };
   });
 }
 

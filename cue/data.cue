@@ -4,9 +4,13 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package diagram
+// The default project. It imports the diagram schema and holds the concrete
+// diagram instance, the only file the canvas round-trips.
+package main
 
-diagram: #Diagram & {
+import d "github.com/stratorys/cueto/diagram"
+
+diagram: d.#Diagram & {
 	nodes: {
 		user: {
 			type: "table"
