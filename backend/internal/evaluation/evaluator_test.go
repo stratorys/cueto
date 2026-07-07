@@ -40,15 +40,21 @@ func TestRecoverToResultPassesThrough(t *testing.T) {
 	}
 }
 
-// realEngine builds an Engine against the repo's real cue/ package so tests that
-// exercise the schema import resolve github.com/stratorys/cueto/diagram.
-func realEngine(t *testing.T) *Engine {
+// repoCueDir is the repo's real cue/ package, the engine's bundled schema dir.
+func repoCueDir(t *testing.T) string {
 	t.Helper()
 	abs, err := filepath.Abs("../../../cue")
 	if err != nil {
 		t.Fatalf("abs cue dir: %v", err)
 	}
-	return New(abs, 5*time.Second, 4<<20)
+	return abs
+}
+
+// realEngine builds an Engine against the repo's real cue/ package so tests that
+// exercise the schema import resolve github.com/stratorys/cueto/diagram.
+func realEngine(t *testing.T) *Engine {
+	t.Helper()
+	return New(repoCueDir(t), 5*time.Second, 4<<20)
 }
 
 // A user membrane (shape A per the knowledge-as-code doc): a `people` map whose
@@ -105,19 +111,16 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 		t.Fatalf("want clean vet, got %+v", diags)
 	}
 
-	out, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	out, views, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(evalDiags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, evalDiags)
 	}
-	var got struct {
-		Nodes map[string]json.RawMessage `json:"nodes"`
-	}
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("decode diagram: %v", err)
+	if len(views) != 1 || views[0] != "diagram" {
+		t.Fatalf("views = %v, want [diagram]", views)
 	}
 	// One node per person: the diagram is derived from the six-person membrane.
-	if len(got.Nodes) != 6 {
-		t.Fatalf("nodes = %d, want 6", len(got.Nodes))
+	if nodes := decodeNodes(t, out); len(nodes) != 6 {
+		t.Fatalf("nodes = %d, want 6", len(nodes))
 	}
 }
 
@@ -149,10 +152,12 @@ func TestMembraneFamilyTreeDanglingReferenceFails(t *testing.T) {
 }
 
 // tempModule writes a throwaway CUE module (its own cue.mod plus the given files,
-// keyed by module-relative path) and returns an Engine pointed at it. The fixtures'
-// diagram field is a plain concrete struct, so no schema import is needed; hints
-// degrade to a no-op because the temp module has no diagram package.
-func tempModule(t *testing.T, files map[string]string) *Engine {
+// keyed by module-relative path) and returns an Engine and the module dir. The
+// engine's schema stays the repo package (view discovery unifies against it) while
+// the module under test lives in dir, passed as the Source. The fixtures' diagram
+// fields are plain concrete structs that unify with #Diagram; hints degrade to a
+// no-op because they resolve to schema-injected positions, not these fixtures.
+func tempModule(t *testing.T, files map[string]string) (*Engine, string) {
 	t.Helper()
 	dir := t.TempDir()
 	write := func(rel, content string) {
@@ -168,7 +173,7 @@ func tempModule(t *testing.T, files map[string]string) *Engine {
 	for rel, content := range files {
 		write(rel, content)
 	}
-	return New(dir, 5*time.Second, 4<<20)
+	return New(repoCueDir(t), 5*time.Second, 4<<20), dir
 }
 
 func decodeNodes(t *testing.T, out json.RawMessage) map[string]json.RawMessage {
@@ -186,16 +191,16 @@ const subModuleRoot = `package main
 
 import "example.com/m/sub"
 
-diagram: {nodes: sub.nodes}
+diagram: {nodes: sub.nodes, edges: []}
 `
 
 // Recursive load resolves an on-disk subpackage the root imports.
 func TestBuildLoadsSubpackageFromDisk(t *testing.T) {
-	e := tempModule(t, map[string]string{
+	e, dir := tempModule(t, map[string]string{
 		"data.cue":    subModuleRoot,
 		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
 	})
-	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir})
+	out, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -206,12 +211,12 @@ func TestBuildLoadsSubpackageFromDisk(t *testing.T) {
 
 // A subdirectory overlay key lands in the right instance and unifies with the disk file.
 func TestBuildSubdirOverlayLandsInSubpackage(t *testing.T) {
-	e := tempModule(t, map[string]string{
+	e, dir := tempModule(t, map[string]string{
 		"data.cue":    subModuleRoot,
 		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
 	})
 	overlay := []domain.File{{Name: "sub/extra.cue", Content: "package sub\n\nnodes: {b: {type: \"entity\", label: \"B\"}}\n"}}
-	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: overlay})
+	out, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir, Overlay: overlay})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -222,15 +227,54 @@ func TestBuildSubdirOverlayLandsInSubpackage(t *testing.T) {
 
 // A broken sibling package the root does not import must not fail eval.
 func TestBuildIgnoresBrokenSiblingPackage(t *testing.T) {
-	e := tempModule(t, map[string]string{
-		"data.cue":          "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: \"A\"}}}\n",
+	e, dir := tempModule(t, map[string]string{
+		"data.cue":          "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: \"A\"}}, edges: []}\n",
 		"broken/broken.cue": "package broken\n\nthis is not valid cue !!!\n",
 	})
-	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir})
+	out, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
 	if len(out) == 0 {
 		t.Fatal("want diagram JSON, got empty")
+	}
+}
+
+// A knowledge-only module (no diagram-shaped field) is a valid empty view set.
+func TestEvalNoViewKnowledgeOnly(t *testing.T) {
+	e := realEngine(t)
+	files := []domain.File{{Name: "data.cue", Content: "package main\n\npeople: {george: {name: \"George\"}}\n"}}
+	out, views, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("eval err=%v diags=%+v", err, diags)
+	}
+	if len(views) != 0 {
+		t.Fatalf("views = %v, want none", views)
+	}
+	if out != nil {
+		t.Fatalf("out = %s, want nil (no view to render)", out)
+	}
+}
+
+// Multiple diagram-shaped fields are all discovered, sorted, defaulting to the one
+// named diagram; a plain knowledge field alongside them is not a view.
+func TestEvalMultipleViewsDefaultDiagram(t *testing.T) {
+	e := realEngine(t)
+	data := `package main
+
+people: {george: {name: "George"}}
+alt: {nodes: {b: {type: "entity", label: "B"}}, edges: []}
+diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
+`
+	files := []domain.File{{Name: "data.cue", Content: data}}
+	out, views, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("eval err=%v diags=%+v", err, diags)
+	}
+	if len(views) != 2 || views[0] != "alt" || views[1] != "diagram" {
+		t.Fatalf("views = %v, want [alt diagram]", views)
+	}
+	if nodes := decodeNodes(t, out); nodes["a"] == nil || len(nodes) != 1 {
+		t.Fatalf("default view nodes = %v, want the diagram field's {a}", nodes)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"time"
 
@@ -54,10 +55,12 @@ type Engine struct {
 	// Memoizes the static CUE builtin/package reference (see Introspect).
 	metaOnce sync.Once
 	meta     CueMeta
-	// Memoizes the diagram schema package root, whose #Node/#Column/#Edge
-	// definitions drive inlay-hint generation. The definitions live in the imported
-	// package now, so they are loaded once here rather than read off a project value.
+	// Memoizes the loaded diagram schema instance and its built root value. The
+	// #Node/#Column/#Edge definitions drive inlay-hint generation (off the root
+	// value); the instance is rebuilt into each per-call context so #Diagram can be
+	// unified with a project value for view discovery.
 	schemaOnce    sync.Once
+	schemaInst    *build.Instance
 	schemaRootVal cue.Value
 }
 
@@ -72,19 +75,25 @@ func New(cueDir string, timeout time.Duration, maxOutputBytes int) *Engine {
 	}
 }
 
-// schemaRoot builds the diagram schema package once and returns its root value,
-// from which hint generation reads the #Node/#Column/#Edge definitions. The
-// definitions moved out of the project root into the imported package, so they are
-// no longer top-level fields of an evaluated project. A build failure yields a
-// zero value, which makes hint generation a no-op rather than an error.
-func (e *Engine) schemaRoot() cue.Value {
+// loadSchema loads the diagram schema package once. A load failure leaves the
+// instance nil, which makes hint generation and view discovery no-ops rather than
+// errors.
+func (e *Engine) loadSchema() {
 	e.schemaOnce.Do(func() {
 		instances := load.Instances([]string{"./diagram"}, &load.Config{Dir: e.cueDir})
 		if len(instances) == 0 || instances[0].Err != nil {
 			return
 		}
+		e.schemaInst = instances[0]
 		e.schemaRootVal = cuecontext.New().BuildInstance(instances[0])
 	})
+}
+
+// schemaRoot returns the schema package root value, from which hint generation
+// reads the #Node/#Column/#Edge definitions. A zero value (load failure) makes
+// hint generation a no-op.
+func (e *Engine) schemaRoot() cue.Value {
+	e.loadSchema()
 	return e.schemaRootVal
 }
 
@@ -93,25 +102,30 @@ func (e *Engine) schemaRoot() cue.Value {
 // Hints are non-empty only on success. The error is non-nil only for operational
 // failures (timeout, output too large) not tied to a source position. Provenance
 // is derived separately by the authoring concern from the same file set.
-func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []Hint, []diag.Diagnostic, error) {
-	_, diagram, diags, err := e.evaluate(ctx, src, "")
+func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []string, []Hint, []diag.Diagnostic, error) {
+	_, diagram, views, diags, err := e.evaluate(ctx, src, "")
 	if err != nil || len(diags) > 0 {
-		return nil, nil, diags, err
+		return nil, nil, nil, diags, err
+	}
+	// No discovered view is a valid outcome (a knowledge-only module): the view list
+	// is empty and there is nothing to render, distinct from an error.
+	if !diagram.Exists() {
+		return nil, views, nil, nil, nil
 	}
 	out, merr := diagram.MarshalJSON()
 	if merr != nil {
-		return nil, nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
+		return nil, nil, nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
-		return nil, nil, nil, ErrOutputTooLarge
+		return nil, nil, nil, nil, ErrOutputTooLarge
 	}
-	return out, hintsFrom(e.schemaRoot(), diagram), nil, nil
+	return out, views, hintsFrom(e.schemaRoot(), diagram), nil, nil
 }
 
 // Vet unifies the file set and validates it against the schema, returning the
 // same diagnostics an eval would surface. Diagnostics are empty when clean.
 func (e *Engine) Vet(ctx context.Context, src Source) ([]diag.Diagnostic, error) {
-	_, _, diags, err := e.evaluate(ctx, src, "")
+	_, _, _, diags, err := e.evaluate(ctx, src, "")
 	return diags, err
 }
 
@@ -159,7 +173,7 @@ func (e *Engine) EvalExpr(ctx context.Context, source string) (json.RawMessage, 
 // output. It runs under the same deadline, panic recovery, and output bound as
 // Eval via evaluate.
 func (e *Engine) EvalQuery(ctx context.Context, src Source, expr string) (json.RawMessage, []diag.Diagnostic, error) {
-	_, result, diags, err := e.evaluate(ctx, src, expr)
+	_, result, _, diags, err := e.evaluate(ctx, src, expr)
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}
@@ -201,36 +215,39 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *Engine) evaluate(ctx context.Context, src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
+func (e *Engine) evaluate(ctx context.Context, src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
 	done := make(chan buildResult, 1)
 	go func() {
 		done <- recoverToResult(func() buildResult {
-			// primary is the value whose concreteness gates success: the diagram for
-			// a plain build, or the query result when a REPL expression is overlaid.
-			root, primary, diags, err := e.build(src, query)
-			if err == nil && len(diags) == 0 {
+			// primary is the value whose concreteness gates success: the default view
+			// for a plain build, or the query result when a REPL expression is overlaid.
+			// A knowledge-only module has no view, so primary is a zero value and there
+			// is nothing to gate.
+			root, primary, views, diags, err := e.build(src, query)
+			if err == nil && len(diags) == 0 && primary.Exists() {
 				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
 					diags = diag.From(verr, src.Dir, diag.KindIncomplete)
 				}
 			}
-			return buildResult{root, primary, diags, err}
+			return buildResult{root, primary, views, diags, err}
 		})
 	}()
 
 	select {
 	case <-ctx.Done():
-		return cue.Value{}, cue.Value{}, nil, ErrTimeout
+		return cue.Value{}, cue.Value{}, nil, nil, ErrTimeout
 	case r := <-done:
-		return r.root, r.diagram, r.diags, r.err
+		return r.root, r.diagram, r.views, r.diags, r.err
 	}
 }
 
 type buildResult struct {
 	root    cue.Value
 	diagram cue.Value
+	views   []string
 	diags   []diag.Diagnostic
 	err     error
 }
@@ -253,19 +270,20 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 }
 
 // build overlays the client's editable files on the module and returns the root
-// project's `diagram` value. The loader loads the whole module (the recursive
-// pattern), so packages the root imports and sibling packages in subdirectories
-// both resolve; eval then selects the root project instance rather than trusting
-// slice order. The schema lives in the diagram/ subpackage, imported by the
-// project, and is never an overlay target: every client filename passes
-// domain.ValidEditableName (a safe relative path that reserves the diagram/ and
-// cue.mod dirs), and the overlay key is server-built via filepath.Join, so the
-// schema can never be supplied, replaced, or escaped by a client.
-func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
+// project value, the default view to render, and the names of every discovered
+// view. The loader loads the whole module (the recursive pattern), so packages the
+// root imports and sibling packages in subdirectories both resolve; eval then
+// selects the root project instance rather than trusting slice order. The schema
+// lives in the diagram/ subpackage, imported by the project, and is never an
+// overlay target: every client filename passes domain.ValidEditableName (a safe
+// relative path that reserves the diagram/ and cue.mod dirs), and the overlay key
+// is server-built via filepath.Join, so the schema can never be supplied, replaced,
+// or escaped by a client.
+func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range src.Overlay {
 		if !domain.ValidEditableName(f.Name) {
-			return cue.Value{}, cue.Value{}, []diag.Diagnostic{{
+			return cue.Value{}, cue.Value{}, nil, []diag.Diagnostic{{
 				Message: fmt.Sprintf("invalid file name %q", f.Name),
 				Kind:    diag.KindParse,
 			}}, nil
@@ -283,30 +301,99 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.D
 
 	root := rootInstance(load.Instances([]string{"./..."}, cfg), src.Dir)
 	if root == nil {
-		return cue.Value{}, cue.Value{}, nil, errors.New("no CUE instance loaded")
+		return cue.Value{}, cue.Value{}, nil, nil, errors.New("no CUE instance loaded")
 	}
 	if err := root.Err; err != nil {
-		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindParse), nil
+		return cue.Value{}, cue.Value{}, nil, diag.From(err, src.Dir, diag.KindParse), nil
 	}
 
-	value := cuecontext.New().BuildInstance(root)
+	ctx := cuecontext.New()
+	value := ctx.BuildInstance(root)
 	if err := value.Err(); err != nil {
-		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindSchema), nil
+		return cue.Value{}, cue.Value{}, nil, diag.From(err, src.Dir, diag.KindSchema), nil
 	}
 
-	diagram := value.LookupPath(cue.ParsePath("diagram"))
-	if !diagram.Exists() {
-		return cue.Value{}, cue.Value{}, []diag.Diagnostic{{
-			Message: "no `diagram` field in data.cue",
-			Kind:    diag.KindIncomplete,
-		}}, nil
-	}
 	// A REPL query returns its bound expression as the primary value; the diagram
-	// still had to build and resolve for the expression to read it.
+	// still had to build and resolve for the expression to read it. View discovery
+	// is irrelevant to a query.
 	if query != "" {
-		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil
+		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil, nil
 	}
-	return value, diagram, nil, nil
+
+	views := e.discoverViews(ctx, value)
+	names := viewNames(views)
+	if len(views) == 0 {
+		// A knowledge-only module has no view: valid, with nothing to render.
+		return value, cue.Value{}, names, nil, nil
+	}
+	return value, views[defaultView(views)].value, names, nil, nil
+}
+
+// view is a discovered diagram-shaped field of the project value.
+type view struct {
+	name  string
+	value cue.Value
+}
+
+// discoverViews returns the top-level regular fields of value that render as
+// diagrams, sorted by name. A field is a view when it unifies with the bundled
+// #Diagram without error (closedness rejects knowledge fields like `people`) and
+// carries a `nodes` field (excludes empty structs that vacuously unify). #Diagram
+// is rebuilt into value's own context so the unification never crosses contexts.
+// Only the rendered (default) view is later concreteness-gated; other views are
+// listed, and knowledge fields are neither gated nor rendered.
+func (e *Engine) discoverViews(ctx *cue.Context, value cue.Value) []view {
+	e.loadSchema()
+	if e.schemaInst == nil {
+		return nil
+	}
+	schemaDiagram := ctx.BuildInstance(e.schemaInst).LookupPath(cue.ParsePath("#Diagram"))
+	if !schemaDiagram.Exists() {
+		return nil
+	}
+	iter, err := value.Fields()
+	if err != nil {
+		return nil
+	}
+	var views []view
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsString() {
+			continue
+		}
+		fv := iter.Value()
+		if schemaDiagram.Unify(fv).Validate() != nil {
+			continue
+		}
+		if !fv.LookupPath(cue.ParsePath("nodes")).Exists() {
+			continue
+		}
+		views = append(views, view{name: sel.Unquoted(), value: fv})
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i].name < views[j].name })
+	return views
+}
+
+// viewNames projects the sorted view names, always non-nil so the eval response
+// carries [] rather than null when there is no view.
+func viewNames(views []view) []string {
+	names := make([]string, len(views))
+	for i, v := range views {
+		names[i] = v.name
+	}
+	return names
+}
+
+// defaultView picks the view the single-view frontend renders: the one named
+// "diagram" when present (backward compatible with the seed), else the first by
+// name (views are already name-sorted).
+func defaultView(views []view) int {
+	for i, v := range views {
+		if v.name == "diagram" {
+			return i
+		}
+	}
+	return 0
 }
 
 // rootInstance returns the module-root package: the loaded instance whose

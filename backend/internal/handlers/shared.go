@@ -24,7 +24,7 @@ import (
 // interface isolates the cuelang library behind one seam so the transport stays
 // library-agnostic and tests can substitute a fake.
 type evalService interface {
-	Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error)
+	Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []diag.Diagnostic, error)
 	EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error)
 	EvalQuery(ctx context.Context, src evaluation.Source, expr string) (json.RawMessage, []diag.Diagnostic, error)
 	Keys(ctx context.Context, src evaluation.Source) ([]string, []diag.Diagnostic, error)

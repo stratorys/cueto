@@ -141,15 +141,56 @@ func TestEvalHappyPath(t *testing.T) {
 	}
 }
 
-func TestEvalMissingDiagram(t *testing.T) {
+func TestEvalNoView(t *testing.T) {
+	// A knowledge-only module has no diagram-shaped field: a valid success with an
+	// empty view list and an empty diagram, distinct from a diagnostic.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, "package main\n"))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	rec := postJSON(router, "/eval", evalBody(t, "package main\n\npeople: {george: {name: \"George\"}}\n"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	diags := decodeDiags(t, rec)
-	if len(diags) == 0 || !strings.Contains(diags[0].Message, "diagram") {
-		t.Fatalf("diagnostics = %+v, want a missing-diagram message", diags)
+	var body struct {
+		Diagram json.RawMessage `json:"diagram"`
+		Views   []string        `json:"views"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Views) != 0 {
+		t.Fatalf("views = %v, want none", body.Views)
+	}
+	if string(body.Diagram) != "{}" {
+		t.Fatalf("diagram = %s, want {}", body.Diagram)
+	}
+}
+
+func TestEvalMultipleViews(t *testing.T) {
+	// Two diagram-shaped fields are both discovered and listed; the default rendered
+	// diagram is the one named diagram.
+	data := `package main
+
+alt: {nodes: {b: {type: "entity", label: "B"}}, edges: []}
+diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Diagram struct {
+			Nodes map[string]any `json:"nodes"`
+		} `json:"diagram"`
+		Views []string `json:"views"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Views) != 2 || body.Views[0] != "alt" || body.Views[1] != "diagram" {
+		t.Fatalf("views = %v, want [alt diagram]", body.Views)
+	}
+	if _, ok := body.Diagram.Nodes["a"]; !ok || len(body.Diagram.Nodes) != 1 {
+		t.Fatalf("default diagram nodes = %v, want {a}", body.Diagram.Nodes)
 	}
 }
 
@@ -292,10 +333,10 @@ type blockingEval struct {
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []diag.Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
-	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, nil, nil
+	return json.RawMessage(`{"nodes":{},"edges":[]}`), []string{"diagram"}, nil, nil, nil
 }
 
 func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error) {

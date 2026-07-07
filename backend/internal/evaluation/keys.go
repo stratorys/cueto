@@ -37,7 +37,7 @@ const (
 // diagram are surfaced the same way a query would; the overlay is thrown away, so
 // nothing is persisted.
 func (e *Engine) Keys(ctx context.Context, src Source) ([]string, []diag.Diagnostic, error) {
-	root, _, diags, err := e.evaluate(ctx, src, "")
+	root, _, _, diags, err := e.evaluate(ctx, src, "")
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}

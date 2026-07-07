@@ -15,16 +15,18 @@ import (
 	"github.com/stratorys/cueto/backend/internal/diag"
 )
 
-// Eval returns the concrete diagram JSON, or 400 with structured diagnostics.
-// Provenance is derived by the authoring concern from the same file set, so the
-// response still carries the node/edge->file attribution the canvas needs.
+// Eval returns the default view's diagram JSON plus the names of every discovered
+// view, or 400 with structured diagnostics. A knowledge-only module is a success
+// with an empty view list and an empty diagram, distinct from an error. Provenance
+// is derived by the authoring concern from the same file set, so the response still
+// carries the node/edge->file attribution the canvas needs.
 func (h *handlers) Eval(c *gin.Context) {
 	var req dataRequest
 	if !bindJSON(c, &req) {
 		return
 	}
 	files := req.files()
-	out, hints, diags, err := h.eval.Eval(c.Request.Context(), h.source(files))
+	out, views, hints, diags, err := h.eval.Eval(c.Request.Context(), h.source(files))
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -33,8 +35,12 @@ func (h *handlers) Eval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
 		return
 	}
+	diagram := json.RawMessage(out)
+	if out == nil {
+		diagram = json.RawMessage("{}")
+	}
 	prov := h.authoring.ProvenanceFor(files)
-	c.JSON(http.StatusOK, gin.H{"diagram": json.RawMessage(out), "hints": hints, "provenance": prov})
+	c.JSON(http.StatusOK, gin.H{"diagram": diagram, "views": views, "hints": hints, "provenance": prov})
 }
 
 // EvalExpr backs /repl. With editor files it evaluates Source as an expression
