@@ -139,7 +139,7 @@ function cancelRename() {
 }
 
 const tab =
-  "flex items-center gap-1.5 border-r border-b-2 border-slate-200 px-3 py-2 font-mono text-xs cursor-pointer text-slate-500 aria-selected:border-b-amber-500 aria-selected:text-slate-800 dark:border-slate-800 dark:aria-selected:text-slate-200";
+  "flex shrink-0 items-center gap-1.5 border-r border-b-2 border-slate-200 px-3 py-2 font-mono text-xs cursor-pointer text-slate-500 aria-selected:border-b-amber-500 aria-selected:text-slate-800 dark:border-slate-800 dark:aria-selected:text-slate-200";
 // Icon-only tab-bar action (Format, Save); tooltip carries the name.
 const iconButton =
   "flex h-7 w-7 items-center justify-center rounded text-slate-500 cursor-pointer hover:bg-slate-100 hover:text-slate-800 disabled:cursor-default disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200";
@@ -149,60 +149,65 @@ const iconButton =
   <div
     class="flex h-full flex-col overflow-hidden bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-200"
   >
-    <div class="flex items-stretch overflow-x-auto border-b border-slate-200 dark:border-slate-800">
-      <ProjectSwitcher />
-      <button
-        v-for="file in files"
-        :key="file.name"
-        :class="[tab, 'group']"
-        :aria-selected="!viewingSchema && file.name === activeFile"
-        :title="'Double-click to rename'"
-        @click="selectFile(file.name)"
-        @dblclick="startRename(file.name)"
-      >
-        <input
-          v-if="editingName === file.name"
-          :ref="(el) => (renameInput = el as HTMLInputElement | null)"
-          v-model="editValue"
-          spellcheck="false"
-          class="w-24 rounded-sm border border-slate-300 bg-white px-1 text-slate-800 focus:border-amber-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-          @click.stop
-          @dblclick.stop
-          @keydown.enter.prevent="commitRename"
-          @keydown.esc.prevent="cancelRename"
-          @blur="commitRename"
-        />
-        <template v-else>{{ file.name }}</template>
-        <span
-          v-if="editingName !== file.name"
-          class="relative ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center"
+    <div class="flex items-stretch border-b border-slate-200 dark:border-slate-800">
+      <ProjectSwitcher class="shrink-0" />
+      <div class="no-scrollbar flex min-w-0 flex-1 items-stretch overflow-x-auto">
+        <button
+          v-for="file in files"
+          :key="file.name"
+          :class="[tab, 'group']"
+          :aria-selected="!viewingSchema && file.name === activeFile"
+          :title="'Double-click to rename'"
+          @click="selectFile(file.name)"
+          @dblclick="startRename(file.name)"
         >
-          <span
-            v-if="isDirty(file.name)"
-            :class="[
-              'h-1.5 w-1.5 rounded-full bg-slate-400 dark:bg-slate-300',
-              files.length > 1 ? 'group-hover:hidden' : '',
-            ]"
+          <input
+            v-if="editingName === file.name"
+            :ref="(el) => (renameInput = el as HTMLInputElement | null)"
+            v-model="editValue"
+            spellcheck="false"
+            class="w-24 rounded-sm border border-slate-300 bg-white px-1 text-slate-800 focus:border-amber-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+            @click.stop
+            @dblclick.stop
+            @keydown.enter.prevent="commitRename"
+            @keydown.esc.prevent="cancelRename"
+            @blur="commitRename"
           />
+          <template v-else>{{ file.name }}</template>
           <span
-            v-if="files.length > 1"
-            class="hidden text-slate-400 hover:text-red-500 group-hover:inline dark:text-slate-500 dark:hover:text-red-400"
-            role="button"
-            title="Close file"
-            @click.stop="emit('closeFile', file.name)"
-            >×</span
+            v-if="editingName !== file.name"
+            class="relative ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center"
           >
-        </span>
-      </button>
-      <button :class="tab" title="Add file" @click="emit('addFile')">+</button>
-      <button :class="tab" :aria-selected="viewingSchema" @click="viewingSchema = true">
-        diagram.cue
-        <span
-          class="rounded-sm border border-slate-300 px-1 text-xs uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:text-slate-500"
-          >read-only</span
-        >
-      </button>
-      <div v-if="!viewingSchema" class="ml-auto flex items-center gap-0.5 pr-2">
+            <span
+              v-if="isDirty(file.name)"
+              :class="[
+                'h-1.5 w-1.5 rounded-full bg-slate-400 dark:bg-slate-300',
+                files.length > 1 ? 'group-hover:hidden' : '',
+              ]"
+            />
+            <span
+              v-if="files.length > 1"
+              class="hidden text-slate-400 hover:text-red-500 group-hover:inline dark:text-slate-500 dark:hover:text-red-400"
+              role="button"
+              title="Close file"
+              @click.stop="emit('closeFile', file.name)"
+              >×</span
+            >
+          </span>
+        </button>
+        <button :class="tab" title="Add file" @click="emit('addFile')">+</button>
+        <button :class="tab" :aria-selected="viewingSchema" @click="viewingSchema = true">
+          diagram.cue
+          <span
+            class="rounded-sm border border-slate-300 px-1 text-xs uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:text-slate-500"
+            >read-only</span
+          >
+        </button>
+      </div>
+      <div
+        v-if="!viewingSchema"
+        class="flex shrink-0 items-center gap-0.5 border-l border-slate-200 px-2 dark:border-slate-800"
+      >
         <button :class="iconButton" title="Format" @click="emit('format')">
           <AlignLeft class="h-4 w-4" />
         </button>
