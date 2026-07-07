@@ -10,13 +10,7 @@
 // guard only; all behavior lives in the concern packages that import it.
 package domain
 
-import (
-	"path/filepath"
-	"regexp"
-	"strings"
-)
-
-// File is one client-supplied editable CUE file: a bare filename (guarded by
+// File is one client-supplied editable CUE file: a filename (guarded by
 // ValidEditableName) and its full source text. Multiple files unify into one
 // `package main`, so nodes may be authored across several files.
 type File struct {
@@ -31,31 +25,4 @@ type File struct {
 type Provenance struct {
 	Nodes map[string]string `json:"nodes"`
 	Edges string            `json:"edges"`
-}
-
-// editableNamePattern is the strict shape of a client filename: bare word plus
-// a .cue suffix, no other dots, no separators.
-var editableNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.cue$`)
-
-// ValidEditableName reports whether name is a safe client-supplied CUE filename.
-// It must be a bare base name (no path separators or traversal), match the strict
-// pattern, and not be the reserved schema.cue. The schema check is
-// case-insensitive because macOS/APFS is case-insensitive by default. schema.cue
-// stays reserved so a client can never introduce a file that shadows the schema,
-// even though the schema now lives in the diagram/ subpackage rather than a root
-// schema.cue. This guard is what lets the N-file overlay accept client filenames
-// without a client escaping the module root. It lives in domain because both the
-// evaluation and authoring concerns enforce it, and evaluation must not depend on
-// another concern to do so.
-func ValidEditableName(name string) bool {
-	if name != filepath.Base(name) {
-		return false
-	}
-	if !editableNamePattern.MatchString(name) {
-		return false
-	}
-	if strings.EqualFold(name, "schema.cue") {
-		return false
-	}
-	return true
 }

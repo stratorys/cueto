@@ -824,23 +824,23 @@ diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 	}
 }
 
-func TestEvalRejectsSchemaFilename(t *testing.T) {
-	// A client must never be able to supply schema.cue and shadow the hand-owned one.
+func TestEvalRejectsInvalidFilename(t *testing.T) {
+	// A client must never be able to escape the module root with a traversal path.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: "schema.cue", Content: "package diagram\n"}))
+	rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: "../schema.cue", Content: "package main\n"}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	diags := decodeDiags(t, rec)
-	if len(diags) == 0 || !strings.Contains(diags[0].Message, "schema.cue") {
+	if len(diags) == 0 || !strings.Contains(diags[0].Message, "../schema.cue") {
 		t.Fatalf("diagnostics = %+v, want an invalid-file-name message", diags)
 	}
 }
 
 func TestEvalRejectsTraversalFilename(t *testing.T) {
 	router := realRouter(t, testConfig(t))
-	for _, name := range []string{"../evil.cue", "sub/dir.cue", "Schema.cue"} {
-		rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: name, Content: "package diagram\n"}))
+	for _, name := range []string{"../evil.cue", "sub/../evil.cue", "sub//dir.cue", "diagram/x.cue"} {
+		rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: name, Content: "package main\n"}))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("name %q status = %d, want 400", name, rec.Code)
 		}

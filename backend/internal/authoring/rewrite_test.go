@@ -178,12 +178,12 @@ func TestRewriteSyntaxErrorDiagnostics(t *testing.T) {
 	}
 }
 
-func TestRewriteRejectsSchemaName(t *testing.T) {
-	_, diags, err := Service{}.Rewrite(RewriteOp{Name: "schema.cue", Content: "package diagram\n"})
+func TestRewriteRejectsInvalidName(t *testing.T) {
+	_, diags, err := Service{}.Rewrite(RewriteOp{Name: "../escape.cue", Content: "package main\n"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(diags) == 0 {
-		t.Fatal("want diagnostics rejecting schema.cue, got none")
+		t.Fatal("want diagnostics rejecting ../escape.cue, got none")
 	}
 }

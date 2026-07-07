@@ -254,9 +254,10 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 // build overlays the client's editable files on the default project (package
 // main) and returns the `diagram` value. The schema lives in the diagram/
 // subpackage, imported by the project, and is never an overlay target: every
-// client filename passes domain.ValidEditableName (a bare .cue name at the module
-// root), and the overlay key is server-built via filepath.Join, so the schema can
-// never be supplied, replaced, or escaped by a client.
+// client filename passes domain.ValidEditableName (a safe relative path that
+// reserves the diagram/ and cue.mod dirs), and the overlay key is server-built
+// via filepath.Join, so the schema can never be supplied, replaced, or escaped
+// by a client.
 func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range src.Overlay {
