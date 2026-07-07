@@ -138,7 +138,10 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
         <h3 class="mb-1 font-semibold text-emerald-700">Added nodes</h3>
         <ul class="space-y-0.5">
           <li v-for="n in diff.nodesAdded" :key="n.id">
-            <button class="w-full truncate rounded px-2 py-1 text-left hover:bg-emerald-50" @click="setHighlight([n.id])">
+            <button
+              class="w-full truncate rounded px-2 py-1 text-left hover:bg-emerald-50"
+              @click="setHighlight([n.id])"
+            >
               + {{ n.label || n.id }}
             </button>
           </li>
@@ -158,7 +161,10 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
         <h3 class="mb-1 font-semibold text-amber-700">Changed nodes</h3>
         <ul class="space-y-0.5">
           <li v-for="c in diff.nodesChanged" :key="c.id">
-            <button class="w-full truncate rounded px-2 py-1 text-left hover:bg-amber-50" @click="setHighlight([c.id])">
+            <button
+              class="w-full truncate rounded px-2 py-1 text-left hover:bg-amber-50"
+              @click="setHighlight([c.id])"
+            >
               {{ c.after.label || c.id }}
               <span class="text-xs text-slate-400">({{ c.fields.join(", ") }})</span>
             </button>
@@ -170,7 +176,10 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
         <h3 class="mb-1 font-semibold text-emerald-700">Added edges</h3>
         <ul class="space-y-0.5">
           <li v-for="e in diff.edgesAdded" :key="e.id">
-            <button class="w-full truncate rounded px-2 py-1 text-left hover:bg-emerald-50" @click="setHighlight([e.source, e.target], [e.id])">
+            <button
+              class="w-full truncate rounded px-2 py-1 text-left hover:bg-emerald-50"
+              @click="setHighlight([e.source, e.target], [e.id])"
+            >
               + {{ e.source }} -> {{ e.target }}
             </button>
           </li>
@@ -190,7 +199,10 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
         <h3 class="mb-1 font-semibold text-amber-700">Rewired edges</h3>
         <ul class="space-y-0.5">
           <li v-for="e in diff.edgesRewired" :key="e.id">
-            <button class="w-full truncate rounded px-2 py-1 text-left hover:bg-amber-50" @click="setHighlight([e.after.source, e.after.target], [e.id])">
+            <button
+              class="w-full truncate rounded px-2 py-1 text-left hover:bg-amber-50"
+              @click="setHighlight([e.after.source, e.after.target], [e.id])"
+            >
               {{ e.before.source }} -> {{ e.before.target }}
               <span class="text-slate-400">becomes</span>
               {{ e.after.source }} -> {{ e.after.target }}

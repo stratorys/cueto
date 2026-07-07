@@ -35,9 +35,7 @@ const labels = computed(() => {
 const label = (id: string) => labels.value.get(id) ?? id;
 
 // Nodes eligible for the what-if toggle (containers are structural).
-const nodes = computed(() =>
-  diagram.value.nodes.filter((n) => n.type !== "container"),
-);
+const nodes = computed(() => diagram.value.nodes.filter((n) => n.type !== "container"));
 </script>
 
 <template>

@@ -19,7 +19,12 @@ SPDX-License-Identifier: MPL-2.0
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  insertNewlineAndIndent,
+} from "@codemirror/commands";
 import {
   acceptCompletion,
   autocompletion,
@@ -284,23 +289,30 @@ const replTheme = EditorView.theme(
     <!-- Body: scroll-back log with the reference browser as an optional side column. -->
     <div class="flex min-h-0 flex-1">
       <!-- Scroll-back log. -->
-      <div
-        ref="logEl"
-        class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 font-mono text-xs"
-      >
+      <div ref="logEl" class="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 font-mono text-xs">
         <div v-if="!entries.length" class="space-y-2 text-slate-500">
           <p>
             Query the diagram in the editor - e.g.
             <button
               class="font-mono text-slate-400 hover:text-amber-400"
               @click="setInput('diagram.nodes.user.label')"
-            >diagram.nodes.user.label</button>. Results never touch your files.
+            >
+              diagram.nodes.user.label</button
+            >. Results never touch your files.
           </p>
           <div class="flex flex-wrap gap-1.5">
-            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>Enter</kbd> run</span>
-            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>↑</kbd><kbd>↓</kbd> history</span>
-            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>⌃Space</kbd> complete</span>
-            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"><kbd>⌘K</kbd> clear</span>
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"
+              ><kbd>Enter</kbd> run</span
+            >
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"
+              ><kbd>↑</kbd><kbd>↓</kbd> history</span
+            >
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"
+              ><kbd>⌃Space</kbd> complete</span
+            >
+            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400"
+              ><kbd>⌘K</kbd> clear</span
+            >
           </div>
         </div>
         <div v-for="(entry, i) in entries" :key="i" class="group space-y-0.5">
@@ -317,19 +329,15 @@ const replTheme = EditorView.theme(
             <LoaderCircle class="h-3 w-3 animate-spin" />
             <span>running…</span>
           </div>
-          <pre
-            v-else-if="!entry.ok"
-            class="whitespace-pre-wrap break-words text-red-400"
-          >{{ entry.error }}</pre>
+          <pre v-else-if="!entry.ok" class="whitespace-pre-wrap break-words text-red-400">{{
+            entry.error
+          }}</pre>
           <JsonTree v-else :value="entry.value" />
         </div>
       </div>
 
       <!-- Reference browser: diagram keys, CUE builtins, importable packages. -->
-      <div
-        v-if="showRef"
-        class="flex w-72 min-h-0 flex-none flex-col border-l border-slate-800"
-      >
+      <div v-if="showRef" class="flex w-72 min-h-0 flex-none flex-col border-l border-slate-800">
         <div class="flex-none border-b border-slate-800 px-3 py-1.5">
           <input
             v-model="refFilter"

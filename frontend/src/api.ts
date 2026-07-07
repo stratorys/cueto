@@ -135,14 +135,6 @@ export interface SaveOk {
   version: string;
 }
 
-// Result of /vet: ok:true when the diagram passes the schema; otherwise
-// diagnostics carry the findings.
-export interface VetOk {
-  ok: true;
-  passes: boolean;
-  diagnostics: Diagnostic[];
-}
-
 export interface FormatOk {
   ok: true;
   formatted: string;
@@ -213,9 +205,7 @@ function errorResult(
   status: number,
 ): EvalErr {
   const diagnostics = body.diagnostics ?? [];
-  const error = diagnostics.length
-    ? summarize(diagnostics)
-    : (body.error ?? `HTTP ${status}`);
+  const error = diagnostics.length ? summarize(diagnostics) : (body.error ?? `HTTP ${status}`);
   return { ok: false, error, diagnostics };
 }
 
@@ -354,7 +344,9 @@ export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk |
 // computed on the backend from the parsed CUE value. It feeds the REPL's
 // autocomplete over the whole data, not just the diagram. An invalid/incomplete
 // diagram comes back as an EvalErr, so callers keep their last good key set.
-export function fetchReplKeys(files: EditorFile[]): Promise<({ ok: true; keys: string[] }) | EvalErr> {
+export function fetchReplKeys(
+  files: EditorFile[],
+): Promise<{ ok: true; keys: string[] } | EvalErr> {
   const body = { files: files.map((f) => ({ name: f.name, content: f.text })) };
   return post(proj() + "/repl/keys", body, async (response) => {
     const parsed = await readJson<{ keys?: string[] }>(response);
@@ -383,26 +375,6 @@ export function rewriteFile(op: {
   return post("/rewrite", op, async (response) => {
     const body = await readJson<{ content?: string }>(response);
     return { content: body.content ?? "" };
-  });
-}
-
-// vetCue validates data against the schema. A well-formed but non-passing diagram
-// comes back as ok:true, passes:false with diagnostics; only a transport/
-// operational failure is an EvalErr.
-export function vetCue(data: string): Promise<VetOk | EvalErr> {
-  return post(proj() + "/vet", { data }, async (response) => {
-    const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
-    return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
-  });
-}
-
-// vetFiles is the multi-file sibling of vetCue: it validates the whole package
-// (all files unify) against the schema.
-export function vetFiles(files: EditorFile[]): Promise<VetOk | EvalErr> {
-  const mapped = files.map((f) => ({ name: f.name, content: f.text }));
-  return post(proj() + "/vet", { files: mapped }, async (response) => {
-    const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
-    return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
 }
 
@@ -436,7 +408,7 @@ export function createProject(name: string): Promise<ProjectOk | EvalErr> {
 
 // getTree returns the current project's .cue files as workspace-relative slash
 // paths (subdirectories included), for the file tree.
-export function getTree(): Promise<({ ok: true; files: string[] }) | EvalErr> {
+export function getTree(): Promise<{ ok: true; files: string[] } | EvalErr> {
   return get(proj() + "/tree", async (response) => {
     const body = await readJson<{ files?: string[] }>(response);
     return { files: body.files ?? [] };
@@ -461,7 +433,12 @@ export function saveWorkspaceFile(
 // deleteWorkspaceFile removes path from the current project's working tree. The
 // removal shows in git status for the user to commit; cueto never commits it.
 export function deleteWorkspaceFile(path: string): Promise<OkResult | EvalErr> {
-  return sendJSON("DELETE", `${proj()}/file?path=${encodeURIComponent(path)}`, undefined, async () => ({}));
+  return sendJSON(
+    "DELETE",
+    `${proj()}/file?path=${encodeURIComponent(path)}`,
+    undefined,
+    async () => ({}),
+  );
 }
 
 // listWorkspaceHistory returns the git commits that touched path, newest first. A
@@ -496,12 +473,10 @@ interface EvalDiagram {
 
 export function fromEval(raw: unknown, provenance?: Provenance): Diagram {
   const source = (raw ?? {}) as EvalDiagram;
-  const nodes: DiagramNode[] = Object.entries(source.nodes ?? {}).map(
-    ([id, node]) => {
-      const owner = provenance?.nodes[id];
-      return owner ? { ...node, id, sourceFile: owner } : { ...node, id };
-    },
-  );
+  const nodes: DiagramNode[] = Object.entries(source.nodes ?? {}).map(([id, node]) => {
+    const owner = provenance?.nodes[id];
+    return owner ? { ...node, id, sourceFile: owner } : { ...node, id };
+  });
   const edgeOwner = provenance?.edges;
   const edges: DiagramEdge[] = (source.edges ?? []).map((edge) =>
     edgeOwner ? { ...edge, sourceFile: edgeOwner } : edge,

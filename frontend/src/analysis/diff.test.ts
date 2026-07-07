@@ -50,7 +50,10 @@ describe("diffDiagrams", () => {
   });
 
   it("detects column changes via structural comparison", () => {
-    const before = diagram([node("t", { type: "table", columns: [{ name: "id", dbType: "int" }] })], []);
+    const before = diagram(
+      [node("t", { type: "table", columns: [{ name: "id", dbType: "int" }] })],
+      [],
+    );
     const after = diagram(
       [node("t", { type: "table", columns: [{ name: "id", dbType: "uuid" }] })],
       [],

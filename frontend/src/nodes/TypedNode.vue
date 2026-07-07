@@ -12,11 +12,7 @@ import { NodeResizer } from "@vue-flow/node-resizer";
 import type { TypedNodeType } from "../model";
 import ColorPopover from "../components/ColorPopover.vue";
 import EdgeHandles from "./EdgeHandles.vue";
-import {
-  commitNodeLabel,
-  commitNodeResize,
-  connecting,
-} from "../composables/useDiagramCanvas";
+import { commitNodeLabel, commitNodeResize, connecting } from "../composables/useDiagramCanvas";
 
 // Typed domain node: a fixed silhouette chosen by `data.type`, with no per-node
 // payload (unlike a table's columns). "entity" is a titled box, "process" a
@@ -45,8 +41,7 @@ const dataRows = computed<{ key: string; value: string }[]>(() => {
   if (!payload || typeof payload !== "object") return [];
   return Object.entries(payload).map(([key, value]) => ({
     key,
-    value:
-      value === null || typeof value !== "object" ? String(value) : JSON.stringify(value),
+    value: value === null || typeof value !== "object" ? String(value) : JSON.stringify(value),
   }));
 });
 
@@ -80,9 +75,7 @@ const boxStyle = computed(() => ({
   borderColor: props.data.stroke,
 }));
 
-function onResizeEnd(event: {
-  params: { x: number; y: number; width: number; height: number };
-}) {
+function onResizeEnd(event: { params: { x: number; y: number; width: number; height: number } }) {
   commitNodeResize(props.id, event.params);
 }
 </script>
@@ -106,7 +99,9 @@ function onResizeEnd(event: {
       class="flex h-full min-h-12 w-full min-w-28 flex-col overflow-hidden rounded-md border border-slate-400 bg-white transition-colors group-hover:border-amber-500"
       :style="boxStyle"
     >
-      <div class="shrink-0 border-b border-slate-200 bg-slate-100 px-2.5 py-1 text-center text-sm font-semibold text-slate-700">
+      <div
+        class="shrink-0 border-b border-slate-200 bg-slate-100 px-2.5 py-1 text-center text-sm font-semibold text-slate-700"
+      >
         <span v-if="!editing">{{ data.label || "Entity" }}</span>
       </div>
       <!-- Data card: one row per field of #Node.data (mirrors TableNode's rows). -->
@@ -124,12 +119,19 @@ function onResizeEnd(event: {
     </div>
 
     <!-- Decision: a rotated square with upright content. -->
-    <div v-else-if="kind === 'decision'" class="relative flex h-full min-h-16 w-full min-w-16 items-center justify-center">
+    <div
+      v-else-if="kind === 'decision'"
+      class="relative flex h-full min-h-16 w-full min-w-16 items-center justify-center"
+    >
       <div
         class="absolute inset-2 rotate-45 rounded-sm border border-slate-400 bg-white transition-colors group-hover:border-amber-500"
         :style="boxStyle"
       />
-      <span v-if="!editing && data.label" class="relative z-10 px-2 text-center text-xs text-slate-600">{{ data.label }}</span>
+      <span
+        v-if="!editing && data.label"
+        class="relative z-10 px-2 text-center text-xs text-slate-600"
+        >{{ data.label }}</span
+      >
     </div>
 
     <!-- Process: a rounded rectangle (a flowchart process step). -->
@@ -138,7 +140,9 @@ function onResizeEnd(event: {
       class="flex h-full min-h-12 w-full min-w-24 items-center justify-center rounded-2xl border border-slate-400 bg-white transition-colors group-hover:border-amber-500"
       :style="boxStyle"
     >
-      <span v-if="!editing && data.label" class="px-2 text-center text-sm text-slate-600">{{ data.label }}</span>
+      <span v-if="!editing && data.label" class="px-2 text-center text-sm text-slate-600">{{
+        data.label
+      }}</span>
     </div>
 
     <!-- Inline label editor overlay (one at a time, silhouette-agnostic). -->

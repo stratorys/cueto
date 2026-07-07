@@ -65,7 +65,9 @@ const button =
         class="w-full max-w-sm rounded-lg border border-slate-700 bg-slate-900 p-4 shadow-xl"
       >
         <h2 class="font-mono text-sm text-slate-100">{{ state.title }}</h2>
-        <p v-if="state.message" class="mt-1.5 text-xs leading-snug text-slate-400">{{ state.message }}</p>
+        <p v-if="state.message" class="mt-1.5 text-xs leading-snug text-slate-400">
+          {{ state.message }}
+        </p>
 
         <input
           v-if="state.kind === 'prompt'"
@@ -77,7 +79,10 @@ const button =
         />
 
         <div class="mt-4 flex justify-end gap-2">
-          <button :class="[button, 'border-slate-700 text-slate-300 hover:border-slate-500']" @click="cancel">
+          <button
+            :class="[button, 'border-slate-700 text-slate-300 hover:border-slate-500']"
+            @click="cancel"
+          >
             {{ state.cancelLabel }}
           </button>
           <button

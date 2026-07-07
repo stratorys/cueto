@@ -8,6 +8,15 @@
    <html> element (toggled by useTheme), not from prefers-color-scheme. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Horizontal scroll without the native scrollbar chrome, which otherwise sits on
+   top of the tab strip's active-tab underline. Wheel/trackpad scroll still works. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 @layer base {
   html,
   body,

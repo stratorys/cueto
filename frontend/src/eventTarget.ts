@@ -17,9 +17,7 @@ export function inputEl(event: Event): HTMLInputElement | null {
 export function fieldValue(event: Event): string | undefined {
   const target = event.target;
   const value =
-    target instanceof HTMLInputElement || target instanceof HTMLSelectElement
-      ? target.value
-      : "";
+    target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
   return value || undefined;
 }
 

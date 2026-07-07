@@ -4,17 +4,17 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-import { createApp } from 'vue'
+import { createApp } from "vue";
 // Self-hosted coding font for the editor and REPL (bundled, no external request).
-import '@fontsource/jetbrains-mono/latin-400.css'
-import '@fontsource/jetbrains-mono/latin-500.css'
-import '@fontsource/jetbrains-mono/latin-600.css'
-import '@fontsource/jetbrains-mono/latin-700.css'
-import './style.css'
-import App from './App.vue'
-import { useTheme } from './composables/useTheme'
+import "@fontsource/jetbrains-mono/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-500.css";
+import "@fontsource/jetbrains-mono/latin-600.css";
+import "@fontsource/jetbrains-mono/latin-700.css";
+import "./style.css";
+import App from "./App.vue";
+import { useTheme } from "./composables/useTheme";
 
 // Apply the persisted/system theme before the first render so there is no light flash.
-useTheme()
+useTheme();
 
-createApp(App).mount('#app')
+createApp(App).mount("#app");

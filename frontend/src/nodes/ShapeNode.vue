@@ -67,9 +67,7 @@ const boxStyle = computed(() => ({
   borderColor: props.data.stroke,
 }));
 
-function onResizeEnd(event: {
-  params: { x: number; y: number; width: number; height: number };
-}) {
+function onResizeEnd(event: { params: { x: number; y: number; width: number; height: number } }) {
   commitNodeResize(props.id, event.params);
 }
 
@@ -112,7 +110,12 @@ function onEndDown(which: number) {
     <ColorPopover v-if="selected" :id="id" />
 
     <!-- Line: follows the drag direction via `flip`; the border color sets its stroke. -->
-    <svg v-if="shape === 'line'" viewBox="0 0 100 100" preserveAspectRatio="none" class="h-full w-full">
+    <svg
+      v-if="shape === 'line'"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      class="h-full w-full"
+    >
       <line
         :x1="2"
         :y1="data.flip ? 2 : 98"
@@ -125,12 +128,19 @@ function onEndDown(which: number) {
     </svg>
 
     <!-- Diamond: a rotated square with upright content. -->
-    <div v-else-if="shape === 'diamond'" class="relative flex h-full min-h-16 w-full min-w-16 items-center justify-center">
+    <div
+      v-else-if="shape === 'diamond'"
+      class="relative flex h-full min-h-16 w-full min-w-16 items-center justify-center"
+    >
       <div
         class="absolute inset-2 rotate-45 rounded-sm border border-slate-400 bg-white transition-colors group-hover:border-amber-500"
         :style="boxStyle"
       />
-      <span v-if="!editing && data.label" class="relative z-10 px-2 text-center text-xs text-slate-600">{{ data.label }}</span>
+      <span
+        v-if="!editing && data.label"
+        class="relative z-10 px-2 text-center text-xs text-slate-600"
+        >{{ data.label }}</span
+      >
     </div>
 
     <!-- Text: a bare label; a border only appears when a border color is set. -->
@@ -140,7 +150,11 @@ function onEndDown(which: number) {
       :class="data.stroke ? 'border' : ''"
       :style="boxStyle"
     >
-      <span v-if="!editing" class="text-center text-sm" :class="data.label ? 'text-slate-700' : 'text-slate-400'">
+      <span
+        v-if="!editing"
+        class="text-center text-sm"
+        :class="data.label ? 'text-slate-700' : 'text-slate-400'"
+      >
         {{ data.label || "Text" }}
       </span>
     </div>
@@ -152,7 +166,9 @@ function onEndDown(which: number) {
       :class="shape === 'ellipse' ? '' : 'rounded-md'"
       :style="[boxStyle, shape === 'ellipse' ? { borderRadius: '50%' } : {}]"
     >
-      <span v-if="!editing && data.label" class="px-2 text-center text-sm text-slate-600">{{ data.label }}</span>
+      <span v-if="!editing && data.label" class="px-2 text-center text-sm text-slate-600">{{
+        data.label
+      }}</span>
     </div>
 
     <!-- Inline label editor overlay (one at a time, shape-agnostic). -->

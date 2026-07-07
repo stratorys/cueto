@@ -76,7 +76,9 @@ const row =
               />
               <span class="truncate">{{ p.name }}</span>
             </button>
-            <p v-if="!projects.length" class="px-3 py-1.5 font-mono text-xs text-slate-500">No projects</p>
+            <p v-if="!projects.length" class="px-3 py-1.5 font-mono text-xs text-slate-500">
+              No projects
+            </p>
           </div>
 
           <div class="my-1 border-t border-slate-200 dark:border-slate-800"></div>

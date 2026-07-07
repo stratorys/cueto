@@ -134,9 +134,7 @@ export function rebuildGraph(keepEdgePoints = false) {
   // back to the top level so the canvas never renders an empty view.
   if (
     focusedContainer.value &&
-    !diagram.value.nodes.some(
-      (n) => n.id === focusedContainer.value && n.type === "container",
-    )
+    !diagram.value.nodes.some((n) => n.id === focusedContainer.value && n.type === "container")
   ) {
     focusedContainer.value = null;
   }
@@ -168,10 +166,7 @@ function applyHighlightClasses() {
   for (const edge of edges.value) edge.class = highlightClass(edge.id, "edge");
 }
 
-watch(
-  [highlightedNodeIds, highlightedEdgeIds, highlightMode],
-  applyHighlightClasses,
-);
+watch([highlightedNodeIds, highlightedEdgeIds, highlightMode], applyHighlightClasses);
 
 // Auto-layout the whole diagram with elkjs: hierarchy-aware node placement plus
 // orthogonal edge routing. Node geometry is written back as one undoable step and
@@ -219,9 +214,7 @@ export async function layoutAuto() {
   );
   const subgraph: Diagram = {
     nodes: diagram.value.nodes.filter((n) => derivedIds.has(n.id)),
-    edges: diagram.value.edges.filter(
-      (e) => derivedIds.has(e.source) && derivedIds.has(e.target),
-    ),
+    edges: diagram.value.edges.filter((e) => derivedIds.has(e.source) && derivedIds.has(e.target)),
   };
   // Lay out only once the cards have real measured sizes; feeding ELK the fallback
   // size packs the tall table nodes together (see whenMeasured).

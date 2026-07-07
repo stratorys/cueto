@@ -36,6 +36,8 @@ const button =
     <button :class="button" title="Tidy the diagram with auto-layout" @click="$emit('layout')">
       <Network class="h-4 w-4" />
     </button>
-    <span class="min-w-[3rem] px-1 text-center font-mono text-xs text-slate-500 tabular-nums">{{ zoomPercent }}</span>
+    <span class="min-w-[3rem] px-1 text-center font-mono text-xs text-slate-500 tabular-nums">{{
+      zoomPercent
+    }}</span>
   </div>
 </template>

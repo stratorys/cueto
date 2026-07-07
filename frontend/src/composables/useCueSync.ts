@@ -341,7 +341,8 @@ async function deleteFile(name: string) {
   if (!hasProject()) return;
   const ok = await confirmDialog({
     title: `Delete ${name}?`,
-    message: "This deletes the file from the project on disk. If it was committed, recover it with git.",
+    message:
+      "This deletes the file from the project on disk. If it was committed, recover it with git.",
     confirmLabel: "Delete",
     danger: true,
   });

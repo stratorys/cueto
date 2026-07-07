@@ -78,12 +78,21 @@ function onDragStart(event: DragEvent, kind: string) {
       :title="`${item.title} (${item.key})`"
       draggable="true"
       class="relative flex h-8 w-8 cursor-grab items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 active:cursor-grabbing"
-      :class="active === item.shape ? (locked ? 'bg-amber-100 text-amber-700 ring-2 ring-amber-500' : 'bg-amber-100 text-amber-700 ring-1 ring-amber-400') : ''"
+      :class="
+        active === item.shape
+          ? locked
+            ? 'bg-amber-100 text-amber-700 ring-2 ring-amber-500'
+            : 'bg-amber-100 text-amber-700 ring-1 ring-amber-400'
+          : ''
+      "
       @dragstart="onDragStart($event, item.shape)"
       @click="onArm($event, item.shape)"
     >
       <component :is="item.icon" class="h-5 w-5" />
-      <span class="pointer-events-none absolute bottom-0 right-0.5 text-[9px] font-medium leading-none text-slate-400">{{ item.key }}</span>
+      <span
+        class="pointer-events-none absolute bottom-0 right-0.5 text-[9px] font-medium leading-none text-slate-400"
+        >{{ item.key }}</span
+      >
     </button>
     <template v-if="allowConnect">
       <div class="mx-0.5 h-6 w-px bg-slate-200" />
@@ -94,7 +103,10 @@ function onDragStart(event: DragEvent, kind: string) {
         @click="onArm($event, 'connect')"
       >
         <Waypoints class="h-5 w-5" />
-        <span class="pointer-events-none absolute bottom-0 right-0.5 text-[9px] font-medium leading-none text-slate-400">C</span>
+        <span
+          class="pointer-events-none absolute bottom-0 right-0.5 text-[9px] font-medium leading-none text-slate-400"
+          >C</span
+        >
       </button>
     </template>
     <div class="mx-0.5 h-6 w-px bg-slate-200" />

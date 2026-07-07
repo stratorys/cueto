@@ -29,7 +29,9 @@ const item = "flex items-center gap-1 px-2 h-full";
 </script>
 
 <template>
-  <div class="flex h-6 flex-none items-center justify-between border-t border-slate-200 bg-white font-mono text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+  <div
+    class="flex h-6 flex-none items-center justify-between border-t border-slate-200 bg-white font-mono text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400"
+  >
     <div class="flex h-full items-center">
       <button
         v-if="problemCount"
@@ -52,8 +54,14 @@ const item = "flex items-center gap-1 px-2 h-full";
         :class="item"
         class="text-emerald-600 dark:text-emerald-400"
         :title="saveState.version"
-      >Written to file</span>
-      <span v-else-if="saveState.status === 'error'" :class="item" class="text-red-600 dark:text-red-400">Save failed</span>
+        >Written to file</span
+      >
+      <span
+        v-else-if="saveState.status === 'error'"
+        :class="item"
+        class="text-red-600 dark:text-red-400"
+        >Save failed</span
+      >
     </div>
 
     <div class="flex h-full items-center">
@@ -72,7 +80,12 @@ const item = "flex items-center gap-1 px-2 h-full";
         :title="showHints ? 'Hide type hints' : 'Show type hints'"
         @click="$emit('toggleHints')"
       >
-        <Lightbulb class="h-3 w-3" :class="showHints ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'" />
+        <Lightbulb
+          class="h-3 w-3"
+          :class="
+            showHints ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'
+          "
+        />
         Hints
       </button>
       <span :class="item" class="tabular-nums">Ln {{ cursor.line }}, Col {{ cursor.col }}</span>

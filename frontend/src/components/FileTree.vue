@@ -106,8 +106,12 @@ const rows = computed<Row[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-hidden bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300">
-    <div class="flex items-center justify-between px-3 py-2 text-xs font-medium tracking-wide text-slate-400 uppercase dark:text-slate-500">
+  <div
+    class="flex h-full flex-col overflow-hidden bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-300"
+  >
+    <div
+      class="flex items-center justify-between px-3 py-2 text-xs font-medium tracking-wide text-slate-400 uppercase dark:text-slate-500"
+    >
       <span>Files</span>
       <div class="flex items-center gap-0.5">
         <button
@@ -134,19 +138,28 @@ const rows = computed<Row[]>(() => {
         :key="row.node.path"
         type="button"
         class="group flex w-full items-center gap-1 py-1 pr-2 text-left font-mono text-xs hover:bg-slate-100 dark:hover:bg-slate-800"
-        :class="!row.node.dir && row.node.path === activeFile ? 'bg-slate-100 text-amber-600 dark:bg-slate-800 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'"
+        :class="
+          !row.node.dir && row.node.path === activeFile
+            ? 'bg-slate-100 text-amber-600 dark:bg-slate-800 dark:text-amber-400'
+            : 'text-slate-700 dark:text-slate-300'
+        "
         :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
         @click="row.node.dir ? toggleDir(row.node.path) : emit('select', row.node.path)"
       >
         <template v-if="row.node.dir">
-          <ChevronDown v-if="!collapsed.has(row.node.path)" class="h-3.5 w-3.5 shrink-0 text-slate-500" />
+          <ChevronDown
+            v-if="!collapsed.has(row.node.path)"
+            class="h-3.5 w-3.5 shrink-0 text-slate-500"
+          />
           <ChevronRight v-else class="h-3.5 w-3.5 shrink-0 text-slate-500" />
           <span class="truncate text-slate-500 dark:text-slate-400">{{ row.node.name }}</span>
         </template>
         <template v-else>
           <FileCode2 class="ml-3.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
           <span class="truncate">{{ row.node.name }}</span>
-          <span class="relative ml-auto inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+          <span
+            class="relative ml-auto inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+          >
             <span
               v-if="isDirty(row.node.path)"
               class="h-1.5 w-1.5 rounded-full bg-slate-400 group-hover:hidden"

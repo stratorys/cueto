@@ -91,13 +91,7 @@ function placeShape(shape: ShapeKind, clientX: number, clientY: number) {
 // Draw a shape from a press-drag-release: the two client corners define its size
 // AND its position (it lands exactly on the drawn box). A gesture too small to be
 // a drag creates nothing - a bare click does not drop a shape.
-function drawShape(
-  shape: ShapeKind,
-  x0: number,
-  y0: number,
-  x1: number,
-  y1: number,
-) {
+function drawShape(shape: ShapeKind, x0: number, y0: number, x1: number, y1: number) {
   const a = screenToFlowCoordinate({ x: x0, y: y0 });
   const b = screenToFlowCoordinate({ x: x1, y: y1 });
   const width = Math.abs(b.x - a.x);
@@ -177,21 +171,25 @@ function lineEndpoints(n: {
   const w = n.width ?? 1;
   const h = n.height ?? 1;
   return n.flip
-    ? [{ x, y }, { x: x + w, y: y + h }]
-    : [{ x, y: y + h }, { x: x + w, y }];
+    ? [
+        { x, y },
+        { x: x + w, y: y + h },
+      ]
+    : [
+        { x, y: y + h },
+        { x: x + w, y },
+      ];
 }
 
 // Live endpoint drag for a line. beginLineDrag pins the other endpoint; dragLineTo
 // updates the view through Vue Flow's typed API and records the geometry in
 // `last`; endLineDrag commits `last` once - converting the line to a relation if
 // both ends landed on shapes.
-let lineDrag:
-  | {
-      id: string;
-      fixed: { x: number; y: number };
-      last: { x: number; y: number; width: number; height: number; flip: boolean } | null;
-    }
-  | null = null;
+let lineDrag: {
+  id: string;
+  fixed: { x: number; y: number };
+  last: { x: number; y: number; width: number; height: number; flip: boolean } | null;
+} | null = null;
 
 export function beginLineDrag(id: string, whichEnd: number) {
   const n = diagram.value.nodes.find((m) => m.id === id);
@@ -275,10 +273,7 @@ function isSelfOrDescendant(candidate: string, ancestorId: string): boolean {
 // Innermost container whose absolute box contains `point`, excluding `dragId`
 // and anything nested inside it. Innermost = smallest area, so nesting a node in
 // a container that itself sits in another lands it in the inner one.
-function containerAt(
-  point: { x: number; y: number },
-  dragId: string,
-): string | null {
+function containerAt(point: { x: number; y: number }, dragId: string): string | null {
   let best: string | null = null;
   let bestArea = Infinity;
   for (const n of diagram.value.nodes) {
@@ -287,12 +282,7 @@ function containerAt(
     const w = n.width ?? 0;
     const h = n.height ?? 0;
     const at = absolutePosition(n.id);
-    if (
-      point.x >= at.x &&
-      point.x <= at.x + w &&
-      point.y >= at.y &&
-      point.y <= at.y + h
-    ) {
+    if (point.x >= at.x && point.x <= at.x + w && point.y >= at.y && point.y <= at.y + h) {
       const area = w * h;
       if (area < bestArea) {
         best = n.id;
@@ -336,9 +326,7 @@ onNodeDragStop(({ node }) => {
   }
   // Absolute top-left at the drop: parent's absolute position + reported (relative)
   // position. A top-level node's reported position is already absolute.
-  const parentAbs = current.parent
-    ? absolutePosition(current.parent)
-    : { x: 0, y: 0 };
+  const parentAbs = current.parent ? absolutePosition(current.parent) : { x: 0, y: 0 };
   const droppedAbs = {
     x: parentAbs.x + node.position.x,
     y: parentAbs.y + node.position.y,
@@ -407,9 +395,7 @@ onNodesChange((changes) => {
     commit((draft) => {
       draft.nodes = draft.nodes.filter((n) => !kill.has(n.id));
       // Drop any edge whose endpoint was removed - a dangling edge fails CUE eval.
-      draft.edges = draft.edges.filter(
-        (e) => !kill.has(e.source) && !kill.has(e.target),
-      );
+      draft.edges = draft.edges.filter((e) => !kill.has(e.source) && !kill.has(e.target));
     });
     rebuildGraph();
     syncTextFromModel();
@@ -417,9 +403,7 @@ onNodesChange((changes) => {
 });
 
 onEdgesChange((changes) => {
-  const removed = new Set(
-    changes.filter((c) => c.type === "remove").map((c) => c.id),
-  );
+  const removed = new Set(changes.filter((c) => c.type === "remove").map((c) => c.id));
   if (!removed.size) return;
   void nextTick(() => {
     // Edges torn out as a side effect of a node deletion are already gone from the
@@ -437,9 +421,12 @@ onEdgesChange((changes) => {
 
 // Which end of an edge is being dragged (read from the grabbed updater anchor),
 // and whether it reconnected to a valid handle before release.
-let edgeDrag:
-  | { id: string; end: "source" | "target"; reconnected: boolean; start: { x: number; y: number } }
-  | null = null;
+let edgeDrag: {
+  id: string;
+  end: "source" | "target";
+  reconnected: boolean;
+  start: { x: number; y: number };
+} | null = null;
 
 // Midpoint of a shape's t/r/b/l side in absolute coords - where a converted line
 // starts. Falls back to measured dimensions for auto-sized nodes (e.g. tables).

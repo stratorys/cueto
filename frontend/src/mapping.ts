@@ -82,9 +82,7 @@ export function toFlowNodes(
 ): Node[] {
   const byId = new Map(diagram.nodes.map((n) => [n.id, n]));
   const visible = visibleIds(diagram, focus);
-  const shown = visible
-    ? diagram.nodes.filter((n) => visible.has(n.id))
-    : diagram.nodes;
+  const shown = visible ? diagram.nodes.filter((n) => visible.has(n.id)) : diagram.nodes;
   return sortParentsFirst(shown).map((node) => {
     const isFocusRoot = node.id === focus;
     // A data-derived node has no coordinates: position comes from the last
@@ -231,9 +229,7 @@ function emit(value: unknown, indent: number): string {
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value).filter(([, v]) => v !== undefined);
     if (entries.length === 0) return "{}";
-    const lines = entries.map(
-      ([k, v]) => `${padIn}${cueKey(k)}: ${emit(v, indent + 1)}`,
-    );
+    const lines = entries.map(([k, v]) => `${padIn}${cueKey(k)}: ${emit(v, indent + 1)}`);
     return `{\n${lines.join("\n")}\n${pad}}`;
   }
 

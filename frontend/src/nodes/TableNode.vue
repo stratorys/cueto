@@ -12,11 +12,7 @@ import { Handle, Position } from "@vue-flow/core";
 import { NodeResizer } from "@vue-flow/node-resizer";
 import type { Column } from "../model";
 import ColorPopover from "../components/ColorPopover.vue";
-import {
-  commitNodeLabel,
-  commitNodeResize,
-  connecting,
-} from "../composables/useDiagramCanvas";
+import { commitNodeLabel, commitNodeResize, connecting } from "../composables/useDiagramCanvas";
 
 // Custom node for a DB table: a header (the table name) + one row per column.
 // Columns are edited in the CUE pane (they round-trip through the model); the
@@ -62,9 +58,7 @@ const cardStyle = computed(() => ({
 }));
 
 // --- resize -----------------------------------------------------------------
-function onResizeEnd(event: {
-  params: { x: number; y: number; width: number; height: number };
-}) {
+function onResizeEnd(event: { params: { x: number; y: number; width: number; height: number } }) {
   commitNodeResize(props.id, event.params);
 }
 </script>
@@ -84,7 +78,11 @@ function onResizeEnd(event: {
 
     <div
       class="flex h-full w-full min-w-44 flex-col overflow-hidden rounded-md border bg-white text-sm shadow-sm transition-colors"
-      :class="selected ? 'border-amber-500 ring-1 ring-amber-500/40' : 'border-slate-400 group-hover:border-amber-500'"
+      :class="
+        selected
+          ? 'border-amber-500 ring-1 ring-amber-500/40'
+          : 'border-slate-400 group-hover:border-amber-500'
+      "
       :style="cardStyle"
     >
       <div
@@ -115,8 +113,16 @@ function onResizeEnd(event: {
         <Handle :id="`${col.name}-target`" type="target" :position="Position.Left" />
         <span class="min-w-0 flex-1 text-slate-800">
           {{ col.name }}
-          <span v-if="col.pk" class="ml-1 inline-flex items-center rounded bg-amber-100 px-1 text-xs text-amber-800">PK</span>
-          <span v-if="col.fk" class="ml-1 inline-flex items-center rounded bg-blue-100 px-1 text-xs text-blue-800">FK</span>
+          <span
+            v-if="col.pk"
+            class="ml-1 inline-flex items-center rounded bg-amber-100 px-1 text-xs text-amber-800"
+            >PK</span
+          >
+          <span
+            v-if="col.fk"
+            class="ml-1 inline-flex items-center rounded bg-blue-100 px-1 text-xs text-blue-800"
+            >FK</span
+          >
         </span>
         <span class="text-right font-mono text-slate-500">{{ col.dbType }}</span>
         <Handle :id="`${col.name}-source`" type="source" :position="Position.Right" />

@@ -60,8 +60,15 @@ describe("buildDeco", () => {
   });
 
   it("emits a line decoration and a widget for an error (no underline)", () => {
-    const ranges = collect(buildDeco([{ line: 2, column: 3, text: "oops", variant: "error" }], doc));
-    expect(ranges).toContainEqual({ from: 16, to: 16, cls: "cm-xray-line-error", widget: undefined });
+    const ranges = collect(
+      buildDeco([{ line: 2, column: 3, text: "oops", variant: "error" }], doc),
+    );
+    expect(ranges).toContainEqual({
+      from: 16,
+      to: 16,
+      cls: "cm-xray-line-error",
+      widget: undefined,
+    });
     expect(ranges).toContainEqual({ from: 25, to: 25, cls: undefined, widget: "oops" });
     expect(ranges.some((r) => r.cls?.startsWith("cm-xray-underline"))).toBe(false);
   });
@@ -73,7 +80,9 @@ describe("buildDeco", () => {
   });
 
   it("emits only a widget for a type/optional hint (no line tint)", () => {
-    const ranges = collect(buildDeco([{ line: 2, column: 1, text: ": string", variant: "type" }], doc));
+    const ranges = collect(
+      buildDeco([{ line: 2, column: 1, text: ": string", variant: "type" }], doc),
+    );
     expect(ranges).toHaveLength(1);
     expect(ranges[0]).toEqual({ from: 25, to: 25, cls: undefined, widget: ": string" });
   });

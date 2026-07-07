@@ -169,7 +169,7 @@ export async function layoutDiagram(
   const edges: Record<string, { x: number; y: number }[]> = {};
   function collectEdges(elkNode: ElkNode) {
     const offset =
-      elkNode.id === "root" ? { x: 0, y: 0 } : absById.get(elkNode.id) ?? { x: 0, y: 0 };
+      elkNode.id === "root" ? { x: 0, y: 0 } : (absById.get(elkNode.id) ?? { x: 0, y: 0 });
     for (const edge of elkNode.edges ?? []) {
       const section = edge.sections?.[0];
       if (!section) continue;

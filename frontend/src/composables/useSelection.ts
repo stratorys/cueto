@@ -35,9 +35,7 @@ watch(
 // The selected node or edge resolved against the model, for the inspector's
 // property editor. null when nothing (or a since-removed element) is selected.
 export const selectedElement = computed<
-  | { kind: "node"; node: DiagramNode }
-  | { kind: "edge"; edge: DiagramEdge }
-  | null
+  { kind: "node"; node: DiagramNode } | { kind: "edge"; edge: DiagramEdge } | null
 >(() => {
   const id = selectedElementId.value;
   if (!id) return null;
@@ -104,10 +102,7 @@ export function commitNodeLabel(id: string, label: string) {
 
 // Persist a shape's fill and/or border color from the selection popover. A patch
 // value of undefined clears that field (back to the default look).
-export function commitNodeColor(
-  id: string,
-  patch: { fill?: string; stroke?: string },
-) {
+export function commitNodeColor(id: string, patch: { fill?: string; stroke?: string }) {
   commit((draft) => {
     const target = draft.nodes.find((n) => n.id === id);
     if (!target) return;
@@ -122,10 +117,7 @@ export function commitNodeColor(
 // is set, or cleared when its value is empty (so data.cue stays minimal and the
 // field falls back to its optional-absent default). Mirrors commitNodeColor's
 // "key in patch" clear-semantics.
-function commitEdgeGovernance(
-  id: string,
-  patch: Partial<Pick<DiagramEdge, "card">>,
-) {
+function commitEdgeGovernance(id: string, patch: Partial<Pick<DiagramEdge, "card">>) {
   commit((draft) => {
     const target = draft.edges.find((e) => e.id === id);
     if (!target) return;

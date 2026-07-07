@@ -6,13 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Diagram, DiagramEdge, DiagramNode, NodeType } from "../model";
-import {
-  blastRadius,
-  findCycles,
-  orphans,
-  simulateDown,
-  singlePointsOfFailure,
-} from "./graph";
+import { blastRadius, findCycles, orphans, simulateDown, singlePointsOfFailure } from "./graph";
 
 // Compact fixture builders: ids only, geometry is irrelevant to graph analysis.
 function node(id: string, type: NodeType = "shape"): DiagramNode {

@@ -185,7 +185,12 @@ function endpointUnder(
     const nodeId = node.getAttribute("data-id");
     if (!nodeId) return null;
     const r = node.getBoundingClientRect();
-    const side = { t: clientY - r.top, b: r.bottom - clientY, l: clientX - r.left, r: r.right - clientX };
+    const side = {
+      t: clientY - r.top,
+      b: r.bottom - clientY,
+      l: clientX - r.left,
+      r: r.right - clientX,
+    };
     const handleId = Object.entries(side).sort((a, b) => a[1] - b[1])[0][0];
     return { nodeId, handleId };
   }
@@ -363,7 +368,9 @@ onBeforeUnmount(() => {
         v-for="name in views"
         :key="name"
         class="cursor-pointer rounded-md px-2 py-1 text-xs font-medium"
-        :class="name === activeView ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'"
+        :class="
+          name === activeView ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'
+        "
         @click="selectView(name)"
       >
         {{ name }}
@@ -389,7 +396,10 @@ onBeforeUnmount(() => {
       v-if="breadcrumb.length"
       class="absolute left-1/2 top-16 z-10 flex -translate-x-1/2 items-center gap-1 rounded-lg border border-slate-200 bg-white/90 px-2 py-1 text-sm shadow-sm backdrop-blur"
     >
-      <button class="rounded px-1.5 py-0.5 text-slate-600 hover:bg-slate-100" @click="setFocus(null)">
+      <button
+        class="rounded px-1.5 py-0.5 text-slate-600 hover:bg-slate-100"
+        @click="setFocus(null)"
+      >
         All
       </button>
       <template v-for="(crumb, i) in breadcrumb" :key="crumb.id">
@@ -461,32 +471,56 @@ onBeforeUnmount(() => {
       >
         <rect
           v-if="activeTool === 'rectangle'"
-          x="1" y="1" width="98" height="98" rx="5"
-          fill="rgba(245,158,11,0.1)" stroke="#f59e0b" stroke-width="2"
+          x="1"
+          y="1"
+          width="98"
+          height="98"
+          rx="5"
+          fill="rgba(245,158,11,0.1)"
+          stroke="#f59e0b"
+          stroke-width="2"
           vector-effect="non-scaling-stroke"
         />
         <ellipse
           v-else-if="activeTool === 'ellipse'"
-          cx="50" cy="50" rx="49" ry="49"
-          fill="rgba(245,158,11,0.1)" stroke="#f59e0b" stroke-width="2"
+          cx="50"
+          cy="50"
+          rx="49"
+          ry="49"
+          fill="rgba(245,158,11,0.1)"
+          stroke="#f59e0b"
+          stroke-width="2"
           vector-effect="non-scaling-stroke"
         />
         <polygon
           v-else-if="activeTool === 'diamond'"
           points="50,1 99,50 50,99 1,50"
-          fill="rgba(245,158,11,0.1)" stroke="#f59e0b" stroke-width="2"
+          fill="rgba(245,158,11,0.1)"
+          stroke="#f59e0b"
+          stroke-width="2"
           vector-effect="non-scaling-stroke"
         />
         <line
           v-else-if="activeTool === 'line'"
-          x1="1" :y1="drawFlip ? 1 : 99" x2="99" :y2="drawFlip ? 99 : 1"
-          stroke="#f59e0b" stroke-width="2"
+          x1="1"
+          :y1="drawFlip ? 1 : 99"
+          x2="99"
+          :y2="drawFlip ? 99 : 1"
+          stroke="#f59e0b"
+          stroke-width="2"
           vector-effect="non-scaling-stroke"
         />
         <rect
           v-else-if="activeTool === 'text'"
-          x="1" y="1" width="98" height="98" rx="3"
-          fill="rgba(245,158,11,0.05)" stroke="#f59e0b" stroke-width="2" stroke-dasharray="4 3"
+          x="1"
+          y="1"
+          width="98"
+          height="98"
+          rx="3"
+          fill="rgba(245,158,11,0.05)"
+          stroke="#f59e0b"
+          stroke-width="2"
+          stroke-dasharray="4 3"
           vector-effect="non-scaling-stroke"
         />
       </svg>

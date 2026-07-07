@@ -29,11 +29,7 @@ function frame(source: Point, target: Point) {
 }
 
 // Absolute canvas point for a relative waypoint, given the current endpoints.
-export function waypointToAbsolute(
-  source: Point,
-  target: Point,
-  wp: EdgeWaypoint,
-): Point {
+export function waypointToAbsolute(source: Point, target: Point, wp: EdgeWaypoint): Point {
   const f = frame(source, target);
   return {
     x: source.x + wp.t * f.dx + wp.off * f.nx,
@@ -44,11 +40,7 @@ export function waypointToAbsolute(
 // Relative waypoint for an absolute point, given the current endpoints. Inverse
 // of waypointToAbsolute: t is the projection onto the source->target line, off
 // the signed distance from it along the unit normal.
-export function absoluteToWaypoint(
-  source: Point,
-  target: Point,
-  p: Point,
-): EdgeWaypoint {
+export function absoluteToWaypoint(source: Point, target: Point, p: Point): EdgeWaypoint {
   const f = frame(source, target);
   const rx = p.x - source.x;
   const ry = p.y - source.y;

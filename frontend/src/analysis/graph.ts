@@ -49,11 +49,7 @@ export function buildAdjacency(d: Diagram): Adjacency {
 }
 
 // Transitive impact set of a single node, excluding the seed itself.
-export function blastRadius(
-  d: Diagram,
-  seed: string,
-  dir: Direction = "dependents",
-): Set<string> {
+export function blastRadius(d: Diagram, seed: string, dir: Direction = "dependents"): Set<string> {
   const seen = reach(buildAdjacency(d), [seed], dir);
   seen.delete(seed);
   return seen;

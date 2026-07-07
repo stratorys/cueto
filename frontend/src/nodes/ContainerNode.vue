@@ -66,9 +66,7 @@ const boxStyle = computed(() => ({
   borderColor: props.data.stroke,
 }));
 
-function onResizeEnd(event: {
-  params: { x: number; y: number; width: number; height: number };
-}) {
+function onResizeEnd(event: { params: { x: number; y: number; width: number; height: number } }) {
   commitNodeResize(props.id, event.params);
 }
 </script>

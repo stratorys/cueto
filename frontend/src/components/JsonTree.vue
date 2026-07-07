@@ -14,6 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 import { computed, ref } from "vue";
 
 const props = withDefaults(defineProps<{ value: unknown; keyName?: string; depth?: number }>(), {
+  keyName: undefined,
   depth: 0,
 });
 

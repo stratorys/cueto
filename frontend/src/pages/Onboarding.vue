@@ -15,7 +15,15 @@ SPDX-License-Identifier: MPL-2.0
 // switches to the Editor. Self-contained - it drives the shared useProjects()
 // singleton directly, same as ProjectSwitcher.
 import { computed, ref } from "vue";
-import { ArrowLeft, Boxes, Check, FolderGit2, FolderPlus, GitBranch, SquareTerminal } from "lucide-vue-next";
+import {
+  ArrowLeft,
+  Boxes,
+  Check,
+  FolderGit2,
+  FolderPlus,
+  GitBranch,
+  SquareTerminal,
+} from "lucide-vue-next";
 import { useProjects } from "../composables/useProjects";
 
 const { projects, currentProjectId, currentProject, switchProject, createProject, leaveHome } =
@@ -105,8 +113,8 @@ function open(id: string) {
         </button>
       </div>
       <p class="mb-6 text-sm text-slate-600">
-        Design diagrams whose source of truth is CUE. Open a project to start, or create one -
-        cueto will git-init a new module for it.
+        Design diagrams whose source of truth is CUE. Open a project to start, or create one - cueto
+        will git-init a new module for it.
       </p>
 
       <!-- Explainer: how the app works -->
@@ -122,16 +130,16 @@ function open(id: string) {
           <FolderGit2 class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
           <span class="text-sm text-slate-600">
             <span class="font-medium text-slate-800">Two-way editing.</span>
-            Drag and edit nodes on the canvas; cueto rewrites your CUE, preserving hand-written
-            code and comments.
+            Drag and edit nodes on the canvas; cueto rewrites your CUE, preserving hand-written code
+            and comments.
           </span>
         </li>
         <li class="flex gap-3">
           <GitBranch class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
           <span class="text-sm text-slate-600">
             <span class="font-medium text-slate-800">Git-backed history.</span>
-            Every project is a git repository with its own CUE module; saves write real files.
-            cueto never commits for you.
+            Every project is a git repository with its own CUE module; saves write real files. cueto
+            never commits for you.
           </span>
         </li>
         <li class="flex gap-3">
@@ -145,7 +153,9 @@ function open(id: string) {
 
       <!-- Existing projects -->
       <div v-if="projects.length" class="mb-6">
-        <h2 class="mb-2 font-mono text-xs uppercase tracking-wide text-slate-400">Open a project</h2>
+        <h2 class="mb-2 font-mono text-xs uppercase tracking-wide text-slate-400">
+          Open a project
+        </h2>
         <div class="overflow-hidden rounded-md border border-slate-200 bg-white">
           <button
             v-for="p in projects"

@@ -207,11 +207,9 @@ function commitLabel() {
           :class="selected ? 'text-amber-600' : 'text-slate-700'"
           >{{ data.label }}</span
         >
-        <span
-          v-if="meta"
-          class="bg-slate-50 px-1 text-[10px] font-medium text-slate-400"
-          >{{ meta }}</span
-        >
+        <span v-if="meta" class="bg-slate-50 px-1 text-[10px] font-medium text-slate-400">{{
+          meta
+        }}</span>
       </template>
     </div>
   </EdgeLabelRenderer>

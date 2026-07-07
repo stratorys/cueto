@@ -146,7 +146,9 @@ const iconButton =
 </script>
 
 <template>
-  <div class="flex h-full flex-col overflow-hidden bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-200">
+  <div
+    class="flex h-full flex-col overflow-hidden bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-200"
+  >
     <div class="flex items-stretch overflow-x-auto border-b border-slate-200 dark:border-slate-800">
       <ProjectSwitcher />
       <button
@@ -154,13 +156,13 @@ const iconButton =
         :key="file.name"
         :class="[tab, 'group']"
         :aria-selected="!viewingSchema && file.name === activeFile"
+        :title="'Double-click to rename'"
         @click="selectFile(file.name)"
         @dblclick="startRename(file.name)"
-        :title="'Double-click to rename'"
       >
         <input
           v-if="editingName === file.name"
-          :ref="(el) => (renameInput = (el as HTMLInputElement | null))"
+          :ref="(el) => (renameInput = el as HTMLInputElement | null)"
           v-model="editValue"
           spellcheck="false"
           class="w-24 rounded-sm border border-slate-300 bg-white px-1 text-slate-800 focus:border-amber-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
@@ -188,17 +190,17 @@ const iconButton =
             role="button"
             title="Close file"
             @click.stop="emit('closeFile', file.name)"
-          >×</span>
+            >×</span
+          >
         </span>
       </button>
       <button :class="tab" title="Add file" @click="emit('addFile')">+</button>
-      <button
-        :class="tab"
-        :aria-selected="viewingSchema"
-        @click="viewingSchema = true"
-      >
+      <button :class="tab" :aria-selected="viewingSchema" @click="viewingSchema = true">
         diagram.cue
-        <span class="rounded-sm border border-slate-300 px-1 text-xs uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:text-slate-500">read-only</span>
+        <span
+          class="rounded-sm border border-slate-300 px-1 text-xs uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:text-slate-500"
+          >read-only</span
+        >
       </button>
       <div v-if="!viewingSchema" class="ml-auto flex items-center gap-0.5 pr-2">
         <button :class="iconButton" title="Format" @click="emit('format')">
@@ -228,11 +230,7 @@ const iconButton =
         @save="emit('save')"
         @cursor="cursor = $event"
       />
-      <CodeEditor
-        v-show="viewingSchema"
-        :model-value="schemaSource"
-        read-only
-      />
+      <CodeEditor v-show="viewingSchema" :model-value="schemaSource" read-only />
     </div>
 
     <!-- Problems strip: a slim collapsible list, each row jumps the cursor to its
@@ -247,13 +245,24 @@ const iconButton =
         class="flex w-full items-start gap-2 px-3 py-1 text-left hover:bg-slate-200 dark:hover:bg-slate-800/60"
         @click="jumpTo(d.line, d.column)"
       >
-        <span class="shrink-0 tabular-nums text-slate-400 dark:text-slate-500">{{ d.line }}:{{ d.column || 1 }}</span>
-        <span :class="d.kind === 'incomplete' ? 'text-amber-600 dark:text-amber-300' : 'text-red-600 dark:text-red-300'">{{ d.message }}</span>
+        <span class="shrink-0 tabular-nums text-slate-400 dark:text-slate-500"
+          >{{ d.line }}:{{ d.column || 1 }}</span
+        >
+        <span
+          :class="
+            d.kind === 'incomplete'
+              ? 'text-amber-600 dark:text-amber-300'
+              : 'text-red-600 dark:text-red-300'
+          "
+          >{{ d.message }}</span
+        >
       </button>
       <div
         v-if="!problems.length && error"
         class="px-3 py-1.5 leading-snug whitespace-pre-wrap text-red-600 dark:text-red-300"
-      >{{ error }}</div>
+      >
+        {{ error }}
+      </div>
     </div>
 
     <StatusBar

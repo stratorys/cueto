@@ -52,9 +52,11 @@ watch(selectedElementId, (id, prev) => {
         v-for="t in tabs"
         :key="t.id"
         class="min-w-0 flex-1 truncate px-2 py-2 font-medium transition-colors"
-        :class="tab === t.id
-          ? 'border-b-2 border-amber-500 text-amber-700'
-          : 'text-slate-500 hover:text-slate-800'"
+        :class="
+          tab === t.id
+            ? 'border-b-2 border-amber-500 text-amber-700'
+            : 'text-slate-500 hover:text-slate-800'
+        "
         @click="tab = t.id"
       >
         {{ t.label }}

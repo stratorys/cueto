@@ -60,7 +60,7 @@ function toAnnotations(): RawAnnotation[] {
       variant: d.kind === "incomplete" ? "warning" : "error",
     });
   }
-  for (const h of props.showHints === false ? [] : props.hints ?? []) {
+  for (const h of props.showHints === false ? [] : (props.hints ?? [])) {
     if (!h.line) continue;
     out.push({
       line: h.line,
@@ -108,9 +108,7 @@ function pushDiagnostics() {
 // a graph edit regenerated the doc, so editing never yanks the viewport.
 function pushFocus(scroll = false) {
   if (!view) return;
-  const range = props.focusId
-    ? findElementRange(view.state.doc.toString(), props.focusId)
-    : null;
+  const range = props.focusId ? findElementRange(view.state.doc.toString(), props.focusId) : null;
   const effects: StateEffect<unknown>[] = [setFocusRange.of(range)];
   if (range && scroll) effects.push(EditorView.scrollIntoView(range.from, { y: "center" }));
   view.dispatch({ effects });
@@ -118,7 +116,7 @@ function pushFocus(scroll = false) {
 
 const host = ref<HTMLDivElement>();
 let view: EditorView | undefined;
-const readOnly = new Compartment();
+const readOnlyCompartment = new Compartment();
 // Set while pushing an external value into the editor, so the resulting doc
 // change doesn't echo back out as a user edit.
 let applyingExternal = false;
@@ -279,15 +277,12 @@ onMounted(() => {
         cueMode,
         ...(props.readOnly
           ? []
-          : [
-              autocompletion({ override: [cueCompletionSource(completionData)] }),
-              lintGutter(),
-            ]),
+          : [autocompletion({ override: [cueCompletionSource(completionData)] }), lintGutter()]),
         editorAnnotations(),
         editorFocus(),
         themeCompartment.of(themeExtension(paneTheme.value)),
         EditorState.tabSize.of(2),
-        readOnly.of(EditorState.readOnly.of(!!props.readOnly)),
+        readOnlyCompartment.of(EditorState.readOnly.of(!!props.readOnly)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applyingExternal) {
             emit("update:modelValue", update.state.doc.toString());
@@ -321,13 +316,19 @@ defineExpose({ revealLine });
 
 // Re-render the x-ray whenever eval produces new diagnostics or hints. Not a doc
 // change, so it never echoes back through the update listener.
-watch(() => [props.diagnostics, props.hints, props.showHints], () => {
-  pushAnnotations();
-  pushDiagnostics();
-});
+watch(
+  () => [props.diagnostics, props.hints, props.showHints],
+  () => {
+    pushAnnotations();
+    pushDiagnostics();
+  },
+);
 
 // Re-tint and scroll whenever the canvas selection changes.
-watch(() => props.focusId, () => pushFocus(true));
+watch(
+  () => props.focusId,
+  () => pushFocus(true),
+);
 
 // Swap the editor chrome and token colors when the pane theme toggles.
 watch(paneTheme, (value) => {
@@ -355,7 +356,7 @@ watch(
   () => props.readOnly,
   (value) => {
     view?.dispatch({
-      effects: readOnly.reconfigure(EditorState.readOnly.of(!!value)),
+      effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(!!value)),
     });
   },
 );

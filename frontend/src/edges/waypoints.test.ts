@@ -65,7 +65,14 @@ describe("roundedPath", () => {
   });
 
   it("rounds an interior corner into an arc (L into a quadratic and out)", () => {
-    const d = roundedPath([{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }], 10);
+    const d = roundedPath(
+      [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 50, y: 50 },
+      ],
+      10,
+    );
     expect(d).toContain("Q 50 0");
     expect(d.startsWith("M 0 0")).toBe(true);
     expect(d.trimEnd().endsWith("50 50")).toBe(true);

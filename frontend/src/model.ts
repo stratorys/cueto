@@ -124,9 +124,27 @@ export interface Provenance {
 // A hardcoded starter model. Re-evaluated from the Go /eval service on text edits.
 export const sampleDiagram: Diagram = {
   nodes: [
-    { id: "a", type: "shape", shape: "rectangle", x: 120, y: 140, width: 140, height: 72, label: "" },
+    {
+      id: "a",
+      type: "shape",
+      shape: "rectangle",
+      x: 120,
+      y: 140,
+      width: 140,
+      height: 72,
+      label: "",
+    },
     { id: "b", type: "shape", shape: "ellipse", x: 440, y: 180, width: 140, height: 90, label: "" },
-    { id: "c", type: "shape", shape: "diamond", x: 280, y: 380, width: 110, height: 110, label: "" },
+    {
+      id: "c",
+      type: "shape",
+      shape: "diamond",
+      x: 280,
+      y: 380,
+      width: 110,
+      height: 110,
+      label: "",
+    },
   ],
   edges: [
     {
