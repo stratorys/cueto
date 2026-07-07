@@ -92,7 +92,7 @@ const {
       >
         <FileTree
           v-if="!treeCollapsed"
-          class="w-44 flex-none border-r border-slate-800"
+          class="w-44 flex-none border-r border-slate-200 dark:border-slate-800"
           :files="files"
           :active-file="activeFileName"
           @select="setActiveFile"
@@ -103,7 +103,7 @@ const {
         <button
           v-else
           type="button"
-          class="flex w-7 flex-none items-center justify-center border-r border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200"
+          class="flex w-7 flex-none items-center justify-center border-r border-slate-200 bg-white text-slate-500 hover:text-slate-800 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
           title="Show files"
           @click="treeCollapsed = false"
         >

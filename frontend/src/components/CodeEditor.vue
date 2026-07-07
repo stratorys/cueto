@@ -13,8 +13,10 @@ import { EditorView, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { autocompletion } from "@codemirror/autocomplete";
 import { lintGutter, setDiagnostics, type Diagnostic as LintDiagnostic } from "@codemirror/lint";
+import { syntaxHighlighting } from "@codemirror/language";
 import { basicSetup } from "codemirror";
-import { cueLanguage } from "../cueLanguage";
+import { cueMode, cueHighlightStyle, cueLightHighlightStyle } from "../cueLanguage";
+import { useTheme, type Theme } from "../composables/useTheme";
 import { editorAnnotations, setAnnotations, type RawAnnotation } from "../editorAnnotations";
 import { editorFocus, setFocusRange } from "../editorFocus";
 import { findElementRange } from "../cueSourceMap";
@@ -122,11 +124,10 @@ const readOnly = new Compartment();
 let applyingExternal = false;
 
 // The pane owns the background; the editor is transparent over it. Colors are
-// fixed hex (CodeMirror themes are JS objects, not Tailwind classes). The code
-// pane is always dark (the rest of the app is light), so { dark: true } is
-// passed below - otherwise the cursor and selection layers render invisible on
-// the dark background.
-const theme = EditorView.theme(
+// fixed hex (CodeMirror themes are JS objects, not Tailwind classes). Two themes
+// are defined because the pane is toggleable (useTheme); the `{ dark }` flag keeps
+// the cursor/selection layers legible on the matching background.
+const darkTheme = EditorView.theme(
   {
     "&": { height: "100%", backgroundColor: "transparent", color: "#e2e8f0" },
     ".cm-scroller": {
@@ -190,6 +191,77 @@ const theme = EditorView.theme(
   { dark: true },
 );
 
+// Light-pane counterpart: dark ink on the pane's white background, same amber
+// accent for search matches and focus.
+const lightTheme = EditorView.theme(
+  {
+    "&": { height: "100%", backgroundColor: "transparent", color: "#1e293b" },
+    ".cm-scroller": {
+      fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
+      fontSize: "13px",
+      lineHeight: "20px",
+    },
+    ".cm-content": { caretColor: "#1e293b" },
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "#1e293b",
+      borderLeftWidth: "2px",
+    },
+    ".cm-gutters": {
+      backgroundColor: "transparent",
+      color: "#94a3b8",
+      border: "none",
+    },
+    ".cm-activeLine": { backgroundColor: "rgba(148, 163, 184, 0.12)" },
+    ".cm-activeLineGutter": { backgroundColor: "rgba(148, 163, 184, 0.12)" },
+    "&.cm-focused": { outline: "none" },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+      backgroundColor: "rgba(148, 163, 184, 0.35)",
+    },
+    ".cm-panels": { backgroundColor: "#f1f5f9", color: "#1e293b" },
+    ".cm-panels.cm-panels-bottom": { borderTop: "1px solid #e2e8f0" },
+    ".cm-panels.cm-panels-top": { borderBottom: "1px solid #e2e8f0" },
+    ".cm-panel.cm-search": {
+      backgroundColor: "#f1f5f9",
+      padding: "6px 8px",
+      fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
+      fontSize: "12px",
+    },
+    ".cm-panel.cm-search label": { color: "#475569" },
+    ".cm-panel.cm-search input": {
+      backgroundColor: "#ffffff",
+      color: "#1e293b",
+      border: "1px solid #cbd5e1",
+      borderRadius: "4px",
+      padding: "2px 6px",
+    },
+    ".cm-panel.cm-search input:focus": { outline: "none", borderColor: "#f59e0b" },
+    ".cm-panel.cm-search button": {
+      backgroundColor: "#ffffff",
+      color: "#334155",
+      border: "1px solid #cbd5e1",
+      borderRadius: "4px",
+      backgroundImage: "none",
+    },
+    ".cm-panel.cm-search button:hover": { backgroundColor: "#e2e8f0" },
+    ".cm-panel.cm-search .cm-button[name='close'], .cm-panel.cm-search button[name='close']": {
+      color: "#475569",
+    },
+    ".cm-searchMatch": { backgroundColor: "rgba(245, 158, 11, 0.25)" },
+    ".cm-searchMatch-selected": { backgroundColor: "rgba(245, 158, 11, 0.55)" },
+  },
+  { dark: false },
+);
+
+// Theme lives in a compartment so a toggle can swap the editor chrome and the CUE
+// token colors together without rebuilding the view.
+const { theme: paneTheme } = useTheme();
+const themeCompartment = new Compartment();
+function themeExtension(t: Theme) {
+  return t === "dark"
+    ? [darkTheme, syntaxHighlighting(cueHighlightStyle)]
+    : [lightTheme, syntaxHighlighting(cueLightHighlightStyle)];
+}
+
 onMounted(() => {
   view = new EditorView({
     parent: host.value,
@@ -204,7 +276,7 @@ onMounted(() => {
           indentWithTab,
           { key: "Mod-s", preventDefault: true, run: () => (emit("save"), true) },
         ]),
-        cueLanguage(),
+        cueMode,
         ...(props.readOnly
           ? []
           : [
@@ -213,7 +285,7 @@ onMounted(() => {
             ]),
         editorAnnotations(),
         editorFocus(),
-        theme,
+        themeCompartment.of(themeExtension(paneTheme.value)),
         EditorState.tabSize.of(2),
         readOnly.of(EditorState.readOnly.of(!!props.readOnly)),
         EditorView.updateListener.of((update) => {
@@ -256,6 +328,11 @@ watch(() => [props.diagnostics, props.hints, props.showHints], () => {
 
 // Re-tint and scroll whenever the canvas selection changes.
 watch(() => props.focusId, () => pushFocus(true));
+
+// Swap the editor chrome and token colors when the pane theme toggles.
+watch(paneTheme, (value) => {
+  view?.dispatch({ effects: themeCompartment.reconfigure(themeExtension(value)) });
+});
 
 // External value change (e.g. a graph edit regenerated the CUE): replace the doc
 // without re-emitting.

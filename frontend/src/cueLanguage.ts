@@ -6,9 +6,10 @@
 
 // A minimal CUE language mode for CodeMirror 6.
 // It is a lexer, not a parser - enough to color the two files this app shows
-// (generated data.cue, hand-owned schema.cue). The editor panel is dark in both
-// app themes, so the token colors are fixed hex values (CodeMirror themes are JS
-// objects, not Tailwind classes).
+// (generated data.cue, hand-owned schema.cue). Token colors are fixed hex values
+// (CodeMirror themes are JS objects, not Tailwind classes); a dark and a light
+// style are provided because the editor pane is theme-toggleable (the REPL, which
+// reuses cueLanguage(), stays dark).
 
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -16,7 +17,7 @@ import type { Extension } from "@codemirror/state";
 
 const KEYWORD = /^(?:package|import|true|false|null|for|in|if|let)\b/;
 
-const cueMode = StreamLanguage.define<Record<string, never>>({
+export const cueMode = StreamLanguage.define<Record<string, never>>({
   name: "cue",
   token(stream) {
     if (stream.eatSpace()) return null;
@@ -53,7 +54,8 @@ const cueMode = StreamLanguage.define<Record<string, never>>({
   },
 });
 
-const cueHighlightStyle = HighlightStyle.define([
+// Dark-pane token colors (bright hues on a slate-900 background).
+export const cueHighlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: "#64748b", fontStyle: "italic" },
   { tag: tags.string, color: "#86efac" },
   { tag: tags.typeName, color: "#d97706", fontWeight: "600" },
@@ -64,8 +66,20 @@ const cueHighlightStyle = HighlightStyle.define([
   { tag: tags.punctuation, color: "#64748b" },
 ]);
 
-// The lexer plus the highlight style. Both the code editor and the REPL input sit
-// on a dark pane, so one dark style serves both.
+// Light-pane token colors (saturated 600/700 hues readable on white).
+export const cueLightHighlightStyle = HighlightStyle.define([
+  { tag: tags.comment, color: "#64748b", fontStyle: "italic" },
+  { tag: tags.string, color: "#15803d" },
+  { tag: tags.typeName, color: "#b45309", fontWeight: "600" },
+  { tag: tags.keyword, color: "#7c3aed" },
+  { tag: tags.number, color: "#dc2626" },
+  { tag: tags.propertyName, color: "#2563eb" },
+  { tag: tags.variableName, color: "#1e293b" },
+  { tag: tags.punctuation, color: "#64748b" },
+]);
+
+// The lexer plus the dark highlight style. Used by the REPL input, which stays on a
+// dark pane; the code editor composes the mode with a theme-swappable style itself.
 export function cueLanguage(): Extension {
   return [cueMode, syntaxHighlighting(cueHighlightStyle)];
 }

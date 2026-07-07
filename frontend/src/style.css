@@ -4,6 +4,10 @@
 @import "@vue-flow/controls/dist/style.css";
 @import "@vue-flow/node-resizer/dist/style.css";
 
+/* Class-based dark mode: `dark:` variants activate when `.dark` is present on the
+   <html> element (toggled by useTheme), not from prefers-color-scheme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   html,
   body,

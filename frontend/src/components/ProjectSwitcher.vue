@@ -44,14 +44,14 @@ function home() {
 }
 
 const row =
-  "flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-xs text-slate-300 cursor-pointer hover:bg-slate-800 disabled:cursor-default disabled:opacity-40";
+  "flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-xs text-slate-700 cursor-pointer hover:bg-slate-100 disabled:cursor-default disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800";
 </script>
 
 <template>
-  <div class="flex items-stretch border-r border-slate-800">
+  <div class="flex items-stretch border-r border-slate-200 dark:border-slate-800">
     <button
       ref="trigger"
-      class="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-slate-300 cursor-pointer hover:bg-slate-800"
+      class="flex items-center gap-1.5 px-3 py-2 font-mono text-xs text-slate-700 cursor-pointer hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
       title="Switch project"
       @click="toggle"
     >
@@ -65,7 +65,7 @@ const row =
         <!-- Backdrop: any outside click closes the dropdown. -->
         <div class="fixed inset-0 z-40" @click="open = false"></div>
         <div
-          class="fixed z-50 min-w-56 rounded-md border border-slate-700 bg-slate-900 py-1 shadow-lg"
+          class="fixed z-50 min-w-56 rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
           :style="{ left: `${pos.left}px`, top: `${pos.top}px` }"
         >
           <div class="max-h-64 overflow-y-auto">
@@ -79,7 +79,7 @@ const row =
             <p v-if="!projects.length" class="px-3 py-1.5 font-mono text-xs text-slate-500">No projects</p>
           </div>
 
-          <div class="my-1 border-t border-slate-800"></div>
+          <div class="my-1 border-t border-slate-200 dark:border-slate-800"></div>
 
           <button :class="row" @click="home()">
             <House class="h-3.5 w-3.5 shrink-0 text-slate-500" />

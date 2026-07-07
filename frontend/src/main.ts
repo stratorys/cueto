@@ -12,5 +12,9 @@ import '@fontsource/jetbrains-mono/latin-600.css'
 import '@fontsource/jetbrains-mono/latin-700.css'
 import './style.css'
 import App from './App.vue'
+import { useTheme } from './composables/useTheme'
+
+// Apply the persisted/system theme before the first render so there is no light flash.
+useTheme()
 
 createApp(App).mount('#app')
