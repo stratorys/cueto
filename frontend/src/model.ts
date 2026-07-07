@@ -25,6 +25,14 @@ export type Tool = ShapeKind | "connect";
 // Edge cardinality (mirrors the optional schema field).
 export type EdgeCard = "1-1" | "1-n" | "n-n";
 
+// One cosmetic routing bend point, stored relative to the source->target line: t
+// is the fraction along it (0 at source, 1 at target), off the signed
+// perpendicular offset in graph units. Relative so it survives an endpoint move.
+export interface EdgeWaypoint {
+  t: number;
+  off: number;
+}
+
 // One column of a DB table node. Mirrors the CUE #Column.
 export interface Column {
   name: string;
@@ -85,6 +93,11 @@ export interface DiagramEdge {
   label?: string;
   // Optional cardinality, round-tripped to CUE.
   card?: EdgeCard;
+  // Optional cosmetic routing: bend points the user dragged, each stored relative
+  // to the source->target line (t = fraction along it, off = signed perpendicular
+  // offset in graph units) so they track when an endpoint moves. Round-trips to
+  // CUE; absent -> the edge is auto-routed.
+  points?: EdgeWaypoint[];
   // Which editable file authored this edge (from /eval provenance). Edges are a
   // single unsplittable list, so in practice all edges share one owner file.
   sourceFile?: string;

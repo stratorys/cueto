@@ -11,7 +11,7 @@
 // (github.com/stratorys/cueto/diagram); the default project is `package main`.
 
 import type { Edge, Node } from "@vue-flow/core";
-import type { Diagram, DiagramEdge, DiagramNode } from "./model";
+import type { Diagram, DiagramEdge, DiagramNode, EdgeWaypoint } from "./model";
 
 // --- model -> Vue Flow ------------------------------------------------------
 
@@ -144,10 +144,29 @@ export type EdgePoints = Record<string, { x: number; y: number }[]>;
 // written into the model or the CUE, so the derived file stays coordinate-free.
 export type NodePositions = Record<string, { x: number; y: number }>;
 
+// User-dragged cosmetic routing per edge id for a data-derived diagram. The edge
+// analog of NodePositions: ephemeral view state (never written to the coordinate-free
+// CUE), applied on top of the ELK route so a relation can be nudged for readability.
+// A hand-drawn diagram carries its waypoints on the edge itself (edge.points) instead.
+export type EdgeWaypoints = Record<string, EdgeWaypoint[]>;
+
+// The node-level handles TableNode exposes at its header. Any other handle id is a
+// per-column handle (`${col}-source` / `${col}-target`).
+const TABLE_HANDLES = new Set(["table-source", "table-target"]);
+
+// A model-view edge whose source docks to a specific foreign-key column (not the table
+// header). Such an edge must draw from that column handle, so it ignores the ELK route -
+// which can only reach the table border - and falls back to the handle-anchored
+// smooth-step path.
+function isColumnAnchored(edge: DiagramEdge): boolean {
+  return !!edge.sourceHandle && !TABLE_HANDLES.has(edge.sourceHandle);
+}
+
 export function toFlowEdges(
   diagram: Diagram,
   focus: string | null = null,
   edgePoints: EdgePoints = {},
+  pinnedWaypoints: EdgeWaypoints = {},
 ): Edge[] {
   const visible = visibleIds(diagram, focus);
   // Ordinal of each self-referential edge among its node's self-loops. ELK does not
@@ -177,7 +196,10 @@ export function toFlowEdges(
         updatable: true,
         style: { stroke: "#64748b" },
         data: {
-          points: edgePoints[edge.id],
+          points: isColumnAnchored(edge) ? undefined : edgePoints[edge.id],
+          // A hand-drawn edge carries its waypoints in the model (edge.points, round-
+          // tripped to CUE); a derived edge takes them from ephemeral view state.
+          waypoints: edge.points ?? pinnedWaypoints[edge.id],
           kind: edge.kind,
           label: edge.label,
           card: edge.card,
@@ -251,6 +273,7 @@ function edgeFields(edge: DiagramEdge): Record<string, unknown> {
     kind: edge.kind,
     label: edge.label,
     card: edge.card,
+    points: edge.points,
   };
 }
 

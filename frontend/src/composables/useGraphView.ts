@@ -10,8 +10,8 @@
 // other canvas composables.
 
 import { computed, nextTick, ref, watch } from "vue";
-import type { Diagram } from "../model";
-import type { EdgePoints, NodePositions } from "../mapping";
+import type { Diagram, EdgeWaypoint } from "../model";
+import type { EdgePoints, EdgeWaypoints, NodePositions } from "../mapping";
 import { toFlowEdges, toFlowNodes } from "../mapping";
 import { layoutDiagram } from "../useLayout";
 import { useDiagram } from "../useDiagram";
@@ -56,6 +56,23 @@ export const autoPositions = ref<NodePositions>({});
 // rest of the graph while these pinned nodes keep where the user put them, so manual
 // readability tweaks survive edits. Pruned to nodes that still exist.
 const pinnedPositions = ref<NodePositions>({});
+
+// Cosmetic routing a user dragged onto a derived edge. The edge analog of
+// pinnedPositions: ephemeral view state (never written to the coordinate-free CUE),
+// sticky across re-evals so readability tweaks survive edits, and pruned to edges
+// that still exist. A hand-drawn edge stores its waypoints on the model instead.
+const pinnedWaypoints = ref<EdgeWaypoints>({});
+
+// pinEdgeWaypoints records a derived edge's dragged route and re-renders. Mirrors
+// pinAutoPosition: view state only, so the route never reaches the file. An empty
+// list drops the pin so the edge falls back to its ELK route.
+export function pinEdgeWaypoints(id: string, waypoints: EdgeWaypoint[]) {
+  const next = { ...pinnedWaypoints.value };
+  if (waypoints.length) next[id] = waypoints;
+  else delete next[id];
+  pinnedWaypoints.value = next;
+  rebuildGraph(true);
+}
 
 // An ELK edge polyline is anchored to where ELK placed its endpoints. Once a node
 // moves outside ELK - a manual drag, or a pin overriding ELK's placement on re-layout -
@@ -125,7 +142,12 @@ export function rebuildGraph(keepEdgePoints = false) {
   }
   if (!keepEdgePoints) edgePoints.value = {};
   nodes.value = toFlowNodes(diagram.value, focusedContainer.value, autoPositions.value);
-  edges.value = toFlowEdges(diagram.value, focusedContainer.value, edgePoints.value);
+  edges.value = toFlowEdges(
+    diagram.value,
+    focusedContainer.value,
+    edgePoints.value,
+    pinnedWaypoints.value,
+  );
   applyHighlightClasses();
 }
 
@@ -227,6 +249,14 @@ export async function layoutAuto() {
   }
   pinnedPositions.value = pins;
   autoPositions.value = positions;
+  // Drop pinned edge routes whose edge no longer exists (the data changed), the edge
+  // analog of pruning node pins, so a removed relation cannot resurrect a stale route.
+  const liveEdgeIds = new Set(diagram.value.edges.map((e) => e.id));
+  const keptWaypoints: EdgeWaypoints = {};
+  for (const [id, route] of Object.entries(pinnedWaypoints.value)) {
+    if (liveEdgeIds.has(id)) keptWaypoints[id] = route;
+  }
+  pinnedWaypoints.value = keptWaypoints;
   // A pinned node was moved back to its pin after ELK routed its edges, so those routes
   // are stale; drop them (kept routes are all between ELK-placed nodes).
   edgePoints.value = routesClearedAround(result.edges, new Set(Object.keys(pins)));

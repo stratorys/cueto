@@ -42,6 +42,43 @@ describe("edgesBody cardinality", () => {
   });
 });
 
+describe("edge routing waypoints", () => {
+  it("emits dragged points to CUE and passes them into the edge data", () => {
+    const points = [{ t: 0.5, off: 20 }];
+    expect(edgesBody([edge({ points })])).toContain("off: 20");
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [edge({ source: "a", target: "b", points })],
+    };
+    expect(toFlowEdges(diagram)[0].data?.waypoints).toEqual(points);
+  });
+
+  it("omits points when absent", () => {
+    expect(edgesBody([edge()])).not.toContain("points:");
+  });
+
+  it("applies pinned waypoints to a derived edge (view state, not CUE)", () => {
+    const pinned = [{ t: 0.5, off: 30 }];
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [edge({ source: "a", target: "b" })],
+    };
+    const [flow] = toFlowEdges(diagram, null, {}, { e1: pinned });
+    expect(flow.data?.waypoints).toEqual(pinned);
+  });
+
+  it("prefers the edge's own points over a pinned route", () => {
+    const own = [{ t: 0.25, off: 10 }];
+    const pinned = [{ t: 0.75, off: 40 }];
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [edge({ source: "a", target: "b", points: own })],
+    };
+    const [flow] = toFlowEdges(diagram, null, {}, { e1: pinned });
+    expect(flow.data?.waypoints).toEqual(own);
+  });
+});
+
 describe("node type fidelity", () => {
   it("round-trips the typed node types to CUE", () => {
     for (const type of ["entity", "process", "decision"] as const) {

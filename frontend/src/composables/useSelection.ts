@@ -10,10 +10,10 @@
 // Module-level singleton, shared with the other canvas composables.
 
 import { computed, ref, watch } from "vue";
-import type { DiagramEdge, DiagramNode, NodeType } from "../model";
+import type { DiagramEdge, DiagramNode, EdgeWaypoint, NodeType } from "../model";
 import { useDiagram } from "../useDiagram";
 import { store } from "./flowStore";
-import { rebuildGraph } from "./useGraphView";
+import { isAutoLayout, pinEdgeWaypoints, rebuildGraph } from "./useGraphView";
 import { syncTextFromModel } from "./useCueSync";
 
 const { diagram, commit } = useDiagram();
@@ -66,6 +66,27 @@ export function commitEdgeLabel(id: string, label: string) {
   commit((draft) => {
     const target = draft.edges.find((e) => e.id === id);
     if (target) target.label = label || undefined;
+  });
+  rebuildGraph();
+  syncTextFromModel();
+}
+
+// Persist an edge's dragged routing waypoints. Values are rounded so the stored form
+// stays terse; an empty list clears the route so a straight edge keeps none. A derived
+// (data-layout) diagram is coordinate-free, so its routes live in ephemeral view state
+// and never touch the file; a hand-drawn edge round-trips them to CUE via edge.points.
+export function commitEdgeWaypoints(id: string, points: EdgeWaypoint[]) {
+  const rounded = points.map((p) => ({
+    t: Math.round(p.t * 1000) / 1000,
+    off: Math.round(p.off),
+  }));
+  if (isAutoLayout.value) {
+    pinEdgeWaypoints(id, rounded);
+    return;
+  }
+  commit((draft) => {
+    const target = draft.edges.find((e) => e.id === id);
+    if (target) target.points = rounded.length ? rounded : undefined;
   });
   rebuildGraph();
   syncTextFromModel();

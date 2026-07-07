@@ -61,4 +61,9 @@ package diagram
 	// Optional free-form text drawn on the edge, edited inline on the canvas.
 	label?:        string
 	card?:         "1-1" | "1-n" | "n-n"
+	// Optional cosmetic routing: bend points the user dragged, stored relative to
+	// the source->target line so they follow when either endpoint moves. Each point
+	// is a fraction t of the way from source to target and a signed perpendicular
+	// offset in graph units. Absent -> the edge is auto-routed.
+	points?: [...{t: number, off: number}]
 }

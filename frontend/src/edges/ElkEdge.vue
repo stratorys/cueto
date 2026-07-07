@@ -10,25 +10,27 @@ SPDX-License-Identifier: MPL-2.0
 import { computed, nextTick, ref, watch } from "vue";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath } from "@vue-flow/core";
 import type { EdgeProps } from "@vue-flow/core";
-import type { DiagramEdge } from "../model";
+import type { DiagramEdge, EdgeWaypoint } from "../model";
 import {
   editingEdgeId,
   startEdgeEdit,
   cancelEdgeEdit,
   commitEdgeLabel,
+  commitEdgeWaypoints,
 } from "../composables/useDiagramCanvas";
+import { screenToFlowCoordinate } from "../composables/flowStore";
+import { absoluteToWaypoint, orthogonalRoute, roundedPath, waypointToAbsolute } from "./waypoints";
+import type { Point } from "./waypoints";
 
-// Edge that draws the exact orthogonal polyline elkjs computed for it, passed in
-// as absolute-coordinate `data.points`. Until a layout runs (or after a manual
-// drag clears the stale points) it falls back to Vue Flow's smooth-step path, so
-// every edge renders regardless of layout state. `data.kind` picks the visual
-// connector: a filled arrowhead, a hollow inheritance triangle, or a dashed line
-// (markers are defined once in MarkerDefs, rendered by DiagramCanvas). A free-form
-// `label` (double-click to edit) and the cardinality (card) render as pills at
-// the edge midpoint.
+// Draws an edge in priority order: the user's cosmetic trunk (data.waypoints, stored
+// relative so it tracks endpoint moves), else the elkjs orthogonal route (data.points),
+// else a smooth-step fallback. Grab the line and drag to slide its right-angle trunk
+// aside for readability; drag back toward straight to release it. The relation is never
+// demoted, only rerouted.
 const props = defineProps<
   EdgeProps<{
-    points?: { x: number; y: number }[];
+    points?: Point[];
+    waypoints?: EdgeWaypoint[];
     kind?: DiagramEdge["kind"];
     label?: string;
     card?: string;
@@ -36,19 +38,12 @@ const props = defineProps<
   }>
 >();
 
-// Marker follows `kind`; the marker shapes inherit the edge stroke via
-// `context-stroke`, so they track the amber selection color too. "relation" and
-// "line" carry no marker.
 const markerUrl = computed(() => {
   if (props.data?.kind === "arrow") return "url(#cueto-arrow)";
   if (props.data?.kind === "inherit") return "url(#cueto-inherit)";
   return undefined;
 });
 
-// The edge stroke is set inline (from the mapping), which beats the default
-// theme's `.selected` CSS rule - so selection is drawn here instead: an amber,
-// thicker stroke that overrides the base style while the edge is selected. A
-// "line" kind renders dashed.
 const edgeStyle = computed(() => {
   const dash = props.data?.kind === "line" ? { strokeDasharray: "6 4" } : {};
   return props.selected
@@ -56,10 +51,27 @@ const edgeStyle = computed(() => {
     : { ...(props.style as object), ...dash };
 });
 
-// The SVG path plus the point where labels sit. For a laid-out polyline the label
-// rides the middle of the central segment; the smooth-step fallback reports its
-// own label anchor.
+// Live waypoints while dragging (uncommitted); otherwise the persisted ones.
+const liveWaypoints = ref<EdgeWaypoint[] | null>(null);
+const waypoints = computed(() => liveWaypoints.value ?? props.data?.waypoints ?? []);
+
+const source = computed<Point>(() => ({ x: props.sourceX, y: props.sourceY }));
+const target = computed<Point>(() => ({ x: props.targetX, y: props.targetY }));
+
+// Self-loops route as an arc and coincident endpoints make the relative math
+// degenerate, so waypoint editing is limited to distinct-endpoint edges. A derived
+// edge is routable too - its waypoints live in ephemeral view state (commitEdgeWaypoints)
+// rather than the coordinate-free CUE, so a relation can be nudged for readability.
+const routable = computed(() => props.source !== props.target);
+
 const route = computed(() => {
+  // A cosmetic reroute: a right-angle path bent through the dragged point (free in both
+  // axes), rounded corners for cleanliness, label riding the bend the user placed.
+  if (waypoints.value.length) {
+    const through = waypointToAbsolute(source.value, target.value, waypoints.value[0]);
+    const pts = orthogonalRoute(source.value, target.value, through);
+    return { d: roundedPath(pts, 12), labelX: through.x, labelY: through.y };
+  }
   const points = props.data?.points;
   if (points && points.length >= 2) {
     const d = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
@@ -68,11 +80,6 @@ const route = computed(() => {
     const b = points[mid + 1] ?? a;
     return { d, labelX: (a.x + b.x) / 2, labelY: (a.y + b.y) / 2 };
   }
-  // Self-loop (source === target, e.g. a self-referential relation): ELK gives no
-  // route, so draw a compact arch from the source handle up and back to the target
-  // handle, with the label at its apex. Multiple self-loops on one node fan out by
-  // `selfIndex` - each successive arch reaches wider and higher - so they never stack
-  // and their labels sit at different heights.
   if (props.source === props.target) {
     const fan = (props.data?.selfIndex ?? 0) * 34;
     const top = Math.min(props.sourceY, props.targetY) - 56 - fan;
@@ -91,10 +98,54 @@ const route = computed(() => {
   return { d, labelX, labelY };
 });
 
-// Cardinality shown as a compact secondary pill, e.g. "1-n".
+// Grab-to-slide drag state. Pressing the selected line and dragging slides the relation's
+// trunk to follow the cursor - a single offset, never a chain of points. It only commits
+// once the pointer actually moves, so a press without a drag leaves no stray offset.
+const DRAG_THRESHOLD_PX = 3;
+// Released within this many graph units of the straight route, the reroute is dropped -
+// drag the line back toward straight to release it.
+const STRAIGHTEN_OFF = 8;
+let dragging = false;
+let dragOriginX = 0;
+let dragOriginY = 0;
+let dragMoved = false;
+
+function onDragMove(event: PointerEvent) {
+  if (!dragging) return;
+  if (Math.hypot(event.clientX - dragOriginX, event.clientY - dragOriginY) > DRAG_THRESHOLD_PX) {
+    dragMoved = true;
+  }
+  const p = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+  liveWaypoints.value = [absoluteToWaypoint(source.value, target.value, p)];
+}
+
+function onDragEnd() {
+  window.removeEventListener("pointermove", onDragMove);
+  window.removeEventListener("pointerup", onDragEnd);
+  if (dragMoved && liveWaypoints.value) {
+    const wp = liveWaypoints.value[0];
+    // Slid back near the straight route it clears, so straightening needs no extra affordance.
+    commitEdgeWaypoints(props.id, wp && Math.abs(wp.off) >= STRAIGHTEN_OFF ? [wp] : []);
+  }
+  liveWaypoints.value = null;
+  dragging = false;
+  dragMoved = false;
+}
+
+// Press on the edge line: start sliding its trunk from the current cursor position.
+function onLineDown(event: PointerEvent) {
+  const p = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+  liveWaypoints.value = [absoluteToWaypoint(source.value, target.value, p)];
+  dragging = true;
+  dragOriginX = event.clientX;
+  dragOriginY = event.clientY;
+  dragMoved = false;
+  window.addEventListener("pointermove", onDragMove);
+  window.addEventListener("pointerup", onDragEnd);
+}
+
 const meta = computed(() => props.data?.card ?? "");
 
-// --- inline label editing (double-click the edge) ---------------------------
 const editing = computed(() => editingEdgeId.value === props.id);
 const draft = ref("");
 const input = ref<HTMLInputElement>();
@@ -114,6 +165,21 @@ function commitLabel() {
 
 <template>
   <BaseEdge :id="id" :path="route.d" :marker-end="markerUrl" :style="edgeStyle" />
+
+  <!-- Grab band, shown once the edge is selected: press-drag to slide the relation's
+       trunk aside for readability, drag back to straighten. `.stop` keeps the drag from
+       reaching Vue Flow's edge-reconnect (updatable), which would detach the endpoint. -->
+  <path
+    v-if="routable && selected"
+    class="cursor-grab"
+    :d="route.d"
+    fill="none"
+    stroke="transparent"
+    stroke-width="14"
+    style="pointer-events: stroke"
+    @pointerdown.stop.prevent="onLineDown"
+  />
+
   <EdgeLabelRenderer>
     <div
       v-if="data?.label || meta || editing"
