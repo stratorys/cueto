@@ -11,9 +11,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -163,35 +160,18 @@ func TestProjectSampleSeedWritesVersion(t *testing.T) {
 	}
 }
 
-func TestLegacyStoreMigratesToDefault(t *testing.T) {
-	cfg := testConfig(t)
-	// Pre-seed a legacy flat store: a loose version file + an index line, as written
-	// before projects existed.
-	hash := strings.Repeat("a", 64)
-	if err := os.WriteFile(filepath.Join(cfg.VersionsDir, hash+".cue"), []byte("package diagram\n"), 0o644); err != nil {
-		t.Fatalf("seed legacy version: %v", err)
-	}
-	indexLine := `{"version":"` + hash + `","savedAt":"2026-01-01T00:00:00Z"}` + "\n"
-	if err := os.WriteFile(filepath.Join(cfg.VersionsDir, "index.jsonl"), []byte(indexLine), 0o644); err != nil {
-		t.Fatalf("seed legacy index: %v", err)
-	}
-
-	router := realRouter(t, cfg)
-	// First project op bootstraps + migrates.
+func TestBootstrapCreatesDefaultProject(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	// The first project op bootstraps a single empty default project.
 	if got := listProjects(t, router); len(got) != 1 || got[0].ID != workspace.DefaultProjectID {
 		t.Fatalf("projects = %+v, want a single default", got)
 	}
-	// The legacy version now lives under default and is listed with its indexed time.
 	rec := getJSON(router, "/projects/default/versions")
 	var out struct {
 		Versions []domain.Version `json:"versions"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if len(out.Versions) != 1 || out.Versions[0].Version != hash {
-		t.Fatalf("migrated versions = %+v, want the legacy hash", out.Versions)
-	}
-	// The loose files are gone from the root.
-	if _, err := os.Stat(filepath.Join(cfg.VersionsDir, hash+".cue")); !os.IsNotExist(err) {
-		t.Fatalf("legacy version file should have moved out of the root")
+	if len(out.Versions) != 0 {
+		t.Fatalf("fresh default versions = %+v, want none", out.Versions)
 	}
 }

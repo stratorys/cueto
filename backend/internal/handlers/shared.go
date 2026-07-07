@@ -63,7 +63,7 @@ type handlers struct {
 type dataRequest struct {
 	Data string `json:"data"`
 	// Editable file set for multi-file packages. When empty, Data is treated as a
-	// single legacy data.cue, so older single-file clients keep working.
+	// single data.cue, so single-file clients keep working.
 	Files []domain.File `json:"files"`
 }
 

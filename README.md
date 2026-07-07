@@ -143,7 +143,7 @@ flowchart LR
   subgraph be["backend/ (Go + gin)"]
     api["/eval /repl /vet /format\n/rewrite /projects /versions"]
     eval["CUE evaluator (bounded, in-process)"]
-    versions[("versions/ (per-project immutable snapshots)")]
+    versions[("data/ (registry + per-project immutable versions)")]
   end
 
   subgraph cue["cue/ (source of truth)"]

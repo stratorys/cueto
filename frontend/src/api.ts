@@ -162,7 +162,7 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json().catch(() => ({}))) as T;
 }
 
-// Build an EvalErr from an error response body. Falls back to the legacy `error`
+// Build an EvalErr from an error response body. Falls back to a plain `error`
 // field, then to the HTTP status, so a transition or proxy error still surfaces.
 function errorResult(
   body: { diagnostics?: Diagnostic[]; error?: string },

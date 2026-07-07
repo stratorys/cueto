@@ -50,7 +50,7 @@ func realEngine(t *testing.T) *Engine {
 	}
 	return New(config.Config{
 		CueDir:         abs,
-		VersionsDir:    t.TempDir(),
+		DataDir:        t.TempDir(),
 		MaxOutputBytes: 4 << 20,
 		EvalTimeout:    5 * time.Second,
 	})

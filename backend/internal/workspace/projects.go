@@ -20,8 +20,8 @@ import (
 	"github.com/stratorys/cueto/backend/internal/domain"
 )
 
-// DefaultProjectID is the auto-created project that adopts any legacy flat
-// version store on first run.
+// DefaultProjectID is the project created on first run so the app always has
+// somewhere to land.
 const DefaultProjectID = "default"
 
 // projectIDPattern is the exact shape of a project id: a bare lowercase slug that
@@ -101,10 +101,10 @@ func (w *Workspace) writeRegistryLocked(list []domain.Project) error {
 	return os.Rename(tmp, w.registryPath())
 }
 
-// ensureBootstrapLocked creates the registry on first use. When a legacy flat
-// version store exists (loose <hash>.cue files and an index.jsonl directly under
-// dataDir, from before projects), it migrates them into the "default" project
-// so no saved history is lost. A no-op once projects.json exists. Must hold w.mu.
+// ensureBootstrapLocked creates the registry on first use, seeding a single empty
+// "default" project so the app always has somewhere to land (users get the
+// committed sample via "New from sample"). A no-op once projects.json exists. Must
+// hold w.mu.
 func (w *Workspace) ensureBootstrapLocked() error {
 	if _, err := os.Stat(w.registryPath()); err == nil {
 		return nil
@@ -113,9 +113,6 @@ func (w *Workspace) ensureBootstrapLocked() error {
 	}
 
 	now := time.Now().UTC()
-	if err := w.migrateLegacyStoreLocked(); err != nil {
-		return err
-	}
 	return w.writeRegistryLocked([]domain.Project{{
 		ID:        DefaultProjectID,
 		Name:      "Default",
@@ -124,43 +121,8 @@ func (w *Workspace) ensureBootstrapLocked() error {
 	}})
 }
 
-// migrateLegacyStoreLocked moves any loose version files and index.jsonl at the
-// data root into dataDir/default/. Safe when there is nothing to move. A fresh
-// store with nothing to migrate leaves the default project empty (a blank
-// canvas); users get the committed sample via "New from sample".
-func (w *Workspace) migrateLegacyStoreLocked() error {
-	entries, err := os.ReadDir(w.dataDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	dest := w.projectDir(DefaultProjectID)
-	moved := false
-	for _, entry := range entries {
-		name := entry.Name()
-		isVersion := !entry.IsDir() && strings.HasSuffix(name, ".cue")
-		isIndex := !entry.IsDir() && name == "index.jsonl"
-		if !isVersion && !isIndex {
-			continue
-		}
-		if !moved {
-			if err := os.MkdirAll(dest, 0o755); err != nil {
-				return err
-			}
-			moved = true
-		}
-		if err := os.Rename(filepath.Join(w.dataDir, name), filepath.Join(dest, name)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ListProjects returns the registered projects, newest-updated first. The first
-// call bootstraps the registry, migrating any legacy flat version store into a
-// "default" project.
+// call bootstraps the registry with a default project.
 func (w *Workspace) ListProjects(_ context.Context) ([]domain.Project, error) {
 	if w.dataDir == "" {
 		return nil, ErrNoDataDir

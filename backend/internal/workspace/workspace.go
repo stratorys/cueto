@@ -31,11 +31,11 @@ type Workspace struct {
 	mu sync.Mutex
 }
 
-// New returns a Workspace rooted at cfg.VersionsDir, reading its seed from
+// New returns a Workspace rooted at cfg.DataDir, reading its seed from
 // cfg.CueDir. An empty data dir is valid to construct but every operation then
 // fails with ErrNoDataDir.
 func New(cfg config.Config) *Workspace {
-	return &Workspace{dataDir: cfg.VersionsDir, seedDir: cfg.CueDir}
+	return &Workspace{dataDir: cfg.DataDir, seedDir: cfg.CueDir}
 }
 
 // Storage errors, distinct from user-input diagnostics. Callers map these to

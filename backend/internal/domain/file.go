@@ -40,10 +40,10 @@ var editableNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.cue$`)
 // ValidEditableName reports whether name is a safe client-supplied CUE filename.
 // It must be a bare base name (no path separators or traversal), match the strict
 // pattern, and not be the reserved schema.cue. The schema check is
-// case-insensitive because macOS/APFS is case-insensitive by default. The schema
-// now lives in the diagram/ subpackage rather than a root schema.cue, so this
-// reservation is vestigial; it is kept until the legacy layout is retired
-// (Phase 3). This guard is what lets the N-file overlay accept client filenames
+// case-insensitive because macOS/APFS is case-insensitive by default. schema.cue
+// stays reserved so a client can never introduce a file that shadows the schema,
+// even though the schema now lives in the diagram/ subpackage rather than a root
+// schema.cue. This guard is what lets the N-file overlay accept client filenames
 // without a client escaping the module root. It lives in domain because both the
 // evaluation and authoring concerns enforce it, and evaluation must not depend on
 // another concern to do so.

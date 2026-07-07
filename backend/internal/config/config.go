@@ -21,7 +21,7 @@ import (
 // how CUE_DIR and PORT already work.
 type Config struct {
 	CueDir         string
-	VersionsDir    string        // where saved versions are written (outside CueDir)
+	DataDir        string // owns the project registry and per-project versions (outside CueDir)
 	Port           string
 	MaxBodyBytes   int64         // request body cap, bytes
 	MaxOutputBytes int           // evaluated JSON cap, bytes
@@ -31,30 +31,30 @@ type Config struct {
 
 // Load reads configuration from the environment, applying safe defaults.
 // CueDir is resolved to an absolute path so overlay and diagnostics paths are
-// stable regardless of the working directory. VERSIONS_DIR is required and must
-// resolve outside CUE_DIR, so saved versions never overwrite the seed data.cue
-// or join the default `package main`.
+// stable regardless of the working directory. DATA_DIR is required and must
+// resolve outside CUE_DIR, so the project store never overwrites the seed data.cue
+// or joins the default `package main`.
 func Load() (Config, error) {
 	cueDir, err := filepath.Abs(envString("CUE_DIR", "../cue"))
 	if err != nil {
 		return Config{}, err
 	}
 
-	rawVersions := envString("VERSIONS_DIR", "")
-	if rawVersions == "" {
-		return Config{}, errors.New("VERSIONS_DIR is required")
+	rawData := envString("DATA_DIR", "")
+	if rawData == "" {
+		return Config{}, errors.New("DATA_DIR is required")
 	}
-	versionsDir, err := filepath.Abs(rawVersions)
+	dataDir, err := filepath.Abs(rawData)
 	if err != nil {
 		return Config{}, err
 	}
-	if versionsDir == cueDir || strings.HasPrefix(versionsDir, cueDir+string(filepath.Separator)) {
-		return Config{}, fmt.Errorf("VERSIONS_DIR (%s) must be outside CUE_DIR (%s)", versionsDir, cueDir)
+	if dataDir == cueDir || strings.HasPrefix(dataDir, cueDir+string(filepath.Separator)) {
+		return Config{}, fmt.Errorf("DATA_DIR (%s) must be outside CUE_DIR (%s)", dataDir, cueDir)
 	}
 
 	return Config{
 		CueDir:         cueDir,
-		VersionsDir:    versionsDir,
+		DataDir:        dataDir,
 		Port:           envString("PORT", "8091"),
 		MaxBodyBytes:   envInt64("MAX_BODY_BYTES", 1<<20),        // 1 MiB
 		MaxOutputBytes: int(envInt64("MAX_OUTPUT_BYTES", 4<<20)), // 4 MiB

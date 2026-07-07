@@ -27,8 +27,8 @@ type Version struct {
 
 // Manifest is a saved version's whole file set: an ordered list of
 // (filename -> blob hash) entries, so a version can snapshot more than a single
-// data.cue. It is a placeholder in the re-layout step and becomes the on-disk
-// version model once the manifest/blob store lands.
+// data.cue. It is the on-disk version model: a version id is the hash of a
+// manifest's bytes, and each entry's blob is stored content-addressed beside it.
 type Manifest struct {
 	Entries []ManifestEntry `json:"entries"`
 }

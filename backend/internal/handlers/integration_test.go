@@ -43,7 +43,7 @@ func testConfig(t *testing.T) config.Config {
 	}
 	return config.Config{
 		CueDir:         abs,
-		VersionsDir:    t.TempDir(),
+		DataDir:        t.TempDir(),
 		MaxBodyBytes:   1 << 20,
 		MaxOutputBytes: 4 << 20,
 		EvalTimeout:    2 * time.Second,
@@ -595,17 +595,26 @@ func TestSaveWritesVersion(t *testing.T) {
 	if !body.OK || body.Version == "" {
 		t.Fatalf("want ok:true with a version, got %q", rec.Body.String())
 	}
-	// The saved version file holds exactly the submitted text, under the project dir.
-	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID, body.Version+".cue"))
+	// The submitted text is stored verbatim as the version's single blob, under the
+	// project's version store.
+	blobsDir := filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "blobs")
+	blobs, err := os.ReadDir(blobsDir)
 	if err != nil {
-		t.Fatalf("read version: %v", err)
+		t.Fatalf("read blobs: %v", err)
+	}
+	if len(blobs) != 1 {
+		t.Fatalf("want 1 blob, got %d", len(blobs))
+	}
+	saved, err := os.ReadFile(filepath.Join(blobsDir, blobs[0].Name()))
+	if err != nil {
+		t.Fatalf("read blob: %v", err)
 	}
 	if string(saved) != validData {
 		t.Fatalf("version content mismatch")
 	}
-	// The seed data.cue in the CUE dir must be untouched.
-	if _, err := os.Stat(filepath.Join(cfg.VersionsDir, "data.cue")); !os.IsNotExist(err) {
-		t.Fatalf("versions dir should not contain data.cue")
+	// The data root holds the registry and project dirs, never a stray data.cue.
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "data.cue")); !os.IsNotExist(err) {
+		t.Fatalf("data dir should not contain data.cue")
 	}
 }
 
@@ -617,16 +626,14 @@ func TestSaveInvalidNotWritten(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
-	// No version file is written into the project's store for invalid data. The dir
-	// may be absent (nothing ever created it), which is also "no versions".
-	entries, err := os.ReadDir(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID))
+	// No manifest is written into the project's store for invalid data. The dir may
+	// be absent (nothing ever created it), which is also "no versions".
+	entries, err := os.ReadDir(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "manifests"))
 	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read project versions dir: %v", err)
+		t.Fatalf("read project manifests dir: %v", err)
 	}
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".cue") {
-			t.Fatalf("invalid data must not be persisted, found %s", entry.Name())
-		}
+	if len(entries) != 0 {
+		t.Fatalf("invalid data must not be persisted, found %d manifests", len(entries))
 	}
 }
 
@@ -638,15 +645,9 @@ func TestSaveIdempotent(t *testing.T) {
 	if first.Body.String() != second.Body.String() {
 		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
 	}
-	entries, _ := os.ReadDir(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID))
-	cueFiles := 0
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".cue") {
-			cueFiles++
-		}
-	}
-	if cueFiles != 1 {
-		t.Fatalf("want 1 version file, got %d", cueFiles)
+	entries, _ := os.ReadDir(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "manifests"))
+	if len(entries) != 1 {
+		t.Fatalf("want 1 manifest, got %d", len(entries))
 	}
 }
 
@@ -730,8 +731,8 @@ func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	postJSON(router, "/projects/default/save", evalBody(t, validData))
 	postJSON(router, "/projects/default/save", evalBody(t, validData)) // idempotent re-save
 
-	// The index records the save exactly once (the re-save reused the file).
-	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID, "index.jsonl"))
+	// The index records the save exactly once (the re-save reused the manifest).
+	index, err := os.ReadFile(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "index.jsonl"))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
@@ -756,22 +757,22 @@ func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	}
 }
 
-func TestConfigRejectsVersionsInsideCueDir(t *testing.T) {
+func TestConfigRejectsDataDirInsideCueDir(t *testing.T) {
 	cueDir, err := filepath.Abs("../../../cue")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CUE_DIR", cueDir)
-	t.Setenv("VERSIONS_DIR", filepath.Join(cueDir, "versions"))
+	t.Setenv("DATA_DIR", filepath.Join(cueDir, "data"))
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for VERSIONS_DIR inside CUE_DIR, got nil")
+		t.Fatal("want error for DATA_DIR inside CUE_DIR, got nil")
 	}
 }
 
-func TestConfigRequiresVersionsDir(t *testing.T) {
-	t.Setenv("VERSIONS_DIR", "")
+func TestConfigRequiresDataDir(t *testing.T) {
+	t.Setenv("DATA_DIR", "")
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for missing VERSIONS_DIR, got nil")
+		t.Fatal("want error for missing DATA_DIR, got nil")
 	}
 }
 
