@@ -13,8 +13,8 @@
 // A text-originated eval must never clobber what the user is typing, hence the
 // explicit calls.
 
-import { nextTick, ref } from "vue";
-import type { Diagnostic, Hint } from "../api";
+import { computed, nextTick, ref } from "vue";
+import type { Diagnostic, Hint, TraceEntry } from "../api";
 import {
   deleteWorkspaceFile,
   evalFiles,
@@ -27,6 +27,7 @@ import {
   saveWorkspaceFile,
 } from "../api";
 import { confirmDialog } from "./useModal";
+import { indexTrace } from "../inference";
 import type { EditorFile } from "../model";
 import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody } from "../mapping";
 import { useDiagram } from "../useDiagram";
@@ -66,6 +67,14 @@ export const hints = ref<Hint[]>([]);
 // view that disappears falls back to the default rather than leaving a stale tab.
 export const views = ref<string[]>([]);
 export const activeView = ref<string>("");
+
+// The inference trace of the last eval: one entry per derived element, empty when the
+// rendered view was authored rather than inferred. traceById indexes it by element id
+// (node/edge id) so the inspector can look up why an element exists in O(1), and its
+// non-emptiness is the signal that the current view is derived and therefore view-only.
+export const trace = ref<TraceEntry[]>([]);
+export const traceById = computed(() => indexTrace(trace.value));
+export const isInferredView = computed(() => trace.value.length > 0);
 
 // pickActiveView mirrors the backend's default-view choice (the one named
 // "diagram", else the first by name) so the switcher highlights the tab that was
@@ -245,6 +254,7 @@ export async function runEval() {
   hints.value = result.hints;
   provenance.value = result.provenance;
   views.value = result.views;
+  trace.value = result.trace;
   activeView.value = pickActiveView(result.views, activeView.value);
   // Eval is now authoritative for ownership, so drop the creation-time overrides.
   newNodeOwner.clear();

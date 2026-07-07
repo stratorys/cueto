@@ -9,7 +9,9 @@ package evaluation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	"cuelang.org/go/cue/cuecontext"
@@ -256,6 +258,90 @@ people: {marty: {name: "Marty McFly", year: 1968}}
 	}
 	if _, present := n.Data["name"]; present {
 		t.Fatalf("label source should not appear in data card, data = %v", n.Data)
+	}
+}
+
+// TestInferDataCardExcludesReference confirms a reference field is drawn as an edge, not
+// duplicated in the member's data card (the projection convention in the fixture spec).
+func TestInferDataCardExcludesReference(t *testing.T) {
+	e := realEngine(t)
+	got, _ := inferFrom(t, e, `
+#TeamKey: or([for k, _ in teams {k}])
+teams: [ID=string]: {}
+teams: {red: {}}
+people: [ID=string]: {name: string, team: #TeamKey, year: int}
+people: {marty: {name: "Marty", team: "red", year: 1968}}
+`)
+	n, ok := got.Nodes["people/marty"]
+	if !ok {
+		t.Fatalf("missing node people/marty in %v", nodeIDs(got))
+	}
+	if _, present := n.Data["team"]; present {
+		t.Fatalf("reference field must not appear in data card, data = %v", n.Data)
+	}
+	if got := n.Data["year"]; got == nil {
+		t.Fatalf("non-reference scalar year should remain on the data card, data = %v", n.Data)
+	}
+}
+
+// TestInferLabelFallsBackToKey covers fixture case 9: a member with no name-like field is
+// labeled by its registry key.
+func TestInferLabelFallsBackToKey(t *testing.T) {
+	e := realEngine(t)
+	got, _ := inferFrom(t, e, `
+people: [ID=string]: {year: int}
+people: {marty: {year: 1968}}
+`)
+	if got.Nodes["people/marty"].Label != "marty" {
+		t.Fatalf("label = %q, want key fallback %q", got.Nodes["people/marty"].Label, "marty")
+	}
+}
+
+// TestInferEmitOrder pins the deterministic edge emit order: edges arrive globally sorted
+// by (source, field, target id), not merely as an unordered set. The test reads the raw
+// edge slice without pre-sorting it.
+func TestInferEmitOrder(t *testing.T) {
+	e := realEngine(t)
+	got, _ := inferFrom(t, e, familyInferFixture)
+	want := []string{
+		"people/dave--father-->people/george",
+		"people/dave--mother-->people/lorraine",
+		"people/linda--father-->people/george",
+		"people/linda--mother-->people/lorraine",
+		"people/marty--father-->people/george",
+		"people/marty--mother-->people/lorraine",
+	}
+	ids := make([]string, 0, len(got.Edges))
+	for _, ed := range got.Edges {
+		ids = append(ids, ed.ID)
+	}
+	if !eq(ids, want) {
+		t.Fatalf("edge emit order = %v, want %v", ids, want)
+	}
+}
+
+// TestInferBoundsExceeded confirms a registry over the node cap returns the bound
+// diagnostic rather than a truncated diagram.
+func TestInferBoundsExceeded(t *testing.T) {
+	e := realEngine(t)
+	var b strings.Builder
+	b.WriteString("people: [ID=string]: {name: string}\npeople: {\n")
+	for i := 0; i <= inferNodeMax; i++ {
+		fmt.Fprintf(&b, "m%d: {name: \"n%d\"}\n", i, i)
+	}
+	b.WriteString("}\n")
+
+	ctx := cuecontext.New()
+	v := ctx.CompileString(b.String())
+	if err := v.Err(); err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	views, diags := e.inferViews(ctx, v)
+	if len(views) != 0 {
+		t.Fatalf("over-cap module must not yield a view, got %d", len(views))
+	}
+	if len(diags) == 0 || !strings.Contains(diags[0].Message, "over the limit") {
+		t.Fatalf("want a bound diagnostic, got %+v", diags)
 	}
 }
 

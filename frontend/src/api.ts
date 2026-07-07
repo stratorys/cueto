@@ -52,12 +52,29 @@ export interface Hint {
   kind: string;
 }
 
+// One trace entry from /eval: the machine-readable reason an inferred element
+// exists. Present only when the rendered view was derived (registries + key-set
+// references), not authored; a declared view carries no trace. It backs the legend
+// and the "why is this here" inspector.
+export interface TraceEntry {
+  // The node id or edge id the entry explains (matches the diagram element id).
+  element: string;
+  kind: "node" | "edge";
+  // Which detector produced it: a registry node, a key-set reference edge, or an
+  // explicit @ref attribute edge.
+  rule: "registry" | "key-set-ref" | "attr-ref";
+  // The registry field (node), or "source.field -> target" (edge).
+  detail: string;
+}
+
 export interface EvalOk {
   ok: true;
   diagram: unknown;
   hints: Hint[];
   // Names of every discovered diagram view; empty for a knowledge-only module.
   views: string[];
+  // Per-element inference trace; empty unless the rendered view was derived.
+  trace: TraceEntry[];
 }
 
 // Multi-file eval also reports provenance: which file authored each element.
@@ -68,6 +85,8 @@ export interface EvalFilesOk {
   provenance: Provenance;
   // Names of every discovered diagram view; empty for a knowledge-only module.
   views: string[];
+  // Per-element inference trace; empty unless the rendered view was derived.
+  trace: TraceEntry[];
 }
 
 // Result of /rewrite: the file's new text after splicing canvas edits.
@@ -274,8 +293,18 @@ async function sendJSON<T>(
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
   return post(proj() + "/eval", { data }, async (response) => {
-    const body = await readJson<{ diagram?: unknown; hints?: Hint[]; views?: string[] }>(response);
-    return { diagram: body.diagram, hints: body.hints ?? [], views: body.views ?? [] };
+    const body = await readJson<{
+      diagram?: unknown;
+      hints?: Hint[];
+      views?: string[];
+      trace?: TraceEntry[];
+    }>(response);
+    return {
+      diagram: body.diagram,
+      hints: body.hints ?? [],
+      views: body.views ?? [],
+      trace: body.trace ?? [],
+    };
   });
 }
 
@@ -292,12 +321,14 @@ export function evalFiles(files: EditorFile[], view = ""): Promise<EvalFilesOk |
       hints?: Hint[];
       provenance?: Provenance;
       views?: string[];
+      trace?: TraceEntry[];
     }>(response);
     return {
       diagram: parsed.diagram,
       hints: parsed.hints ?? [],
       provenance: parsed.provenance ?? { nodes: {}, edges: "" },
       views: parsed.views ?? [],
+      trace: parsed.trace ?? [],
     };
   });
 }

@@ -105,7 +105,7 @@ func (e *Engine) inferViews(ctx *cue.Context, project cue.Value) ([]inferredView
 // projectInstanceView draws each concrete member as a node and each declared reference
 // as an edge between member nodes: the populated graph.
 func (e *Engine) projectInstanceView(ctx *cue.Context, registries []registry) (inferredView, []diag.Diagnostic) {
-	nodes, nodeTrace := projectNodes(registries)
+	nodes, nodeTrace := projectNodes(ctx, registries)
 	if len(nodes) > inferNodeMax {
 		return inferredView{}, boundDiag("nodes", len(nodes), inferNodeMax)
 	}
@@ -217,11 +217,14 @@ type projectedNode struct {
 
 // projectNodes turns every registry member into an entity node and returns one trace
 // entry per node. The label is the first present name-like field, else the member key;
-// remaining concrete scalar fields (not the label source) form the data card.
-func projectNodes(registries []registry) ([]projectedNode, []TraceEntry) {
+// remaining concrete scalar fields (not the label source, not a reference) form the data
+// card. Reference fields are excluded because they already surface as edges (instances)
+// and foreign-key columns (model), so repeating them in the card would duplicate them.
+func projectNodes(ctx *cue.Context, registries []registry) ([]projectedNode, []TraceEntry) {
 	var nodes []projectedNode
 	var trace []TraceEntry
 	for _, reg := range registries {
+		refFields := referenceFields(detectReferences(ctx, reg, registries))
 		for _, key := range reg.keys {
 			member := reg.members[key]
 			id := nodeID(reg.field, key)
@@ -230,7 +233,7 @@ func projectNodes(registries []registry) ([]projectedNode, []TraceEntry) {
 				id:    id,
 				typ:   "entity",
 				label: label,
-				data:  scalarData(member, labelField),
+				data:  scalarData(member, labelField, refFields),
 			})
 			trace = append(trace, TraceEntry{
 				Element: id, Kind: "node", Rule: "registry", Detail: reg.field,
@@ -351,11 +354,24 @@ func memberLabel(member cue.Value, key string) (string, string) {
 	return key, ""
 }
 
+// referenceFields is the set of member-schema field names detected as references, so
+// projectNodes can keep them out of the data card (they are drawn as edges instead).
+func referenceFields(refs []reference) map[string]bool {
+	if len(refs) == 0 {
+		return nil
+	}
+	set := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		set[r.field] = true
+	}
+	return set
+}
+
 // scalarData collects a member's remaining concrete scalar fields (string, int, float,
-// bool) into the data card, skipping the label source, structs, and lists. A field that
-// is a reference is a scalar string too and is kept in the data card as well; the edge
-// it produces is separate.
-func scalarData(member cue.Value, labelField string) map[string]interface{} {
+// bool) into the data card, skipping the label source, reference fields, structs, and
+// lists. A reference is a scalar string too, but it is drawn as an edge (and a foreign-key
+// column in the model view), so keeping it here would duplicate it.
+func scalarData(member cue.Value, labelField string, refFields map[string]bool) map[string]interface{} {
 	iter, err := member.Fields()
 	if err != nil {
 		return nil
@@ -367,7 +383,7 @@ func scalarData(member cue.Value, labelField string) map[string]interface{} {
 			continue
 		}
 		name := sel.Unquoted()
-		if name == labelField {
+		if name == labelField || refFields[name] {
 			continue
 		}
 		fv := iter.Value()

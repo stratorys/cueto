@@ -425,7 +425,7 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string
 }
 
 // inferredNames lists the derived view names for the switcher, in the order inferViews
-// returns them (instances, model).
+// returns them (model, instances).
 func inferredNames(views []inferredView) []string {
 	names := make([]string, len(views))
 	for i, v := range views {
