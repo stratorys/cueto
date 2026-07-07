@@ -149,8 +149,8 @@ function onEndDown(which: number) {
     <div
       v-else
       class="flex h-full min-h-12 w-full min-w-24 items-center justify-center border border-slate-400 bg-white transition-colors group-hover:border-amber-500"
-      :class="shape === 'ellipse' ? 'rounded-full' : 'rounded-md'"
-      :style="boxStyle"
+      :class="shape === 'ellipse' ? '' : 'rounded-md'"
+      :style="[boxStyle, shape === 'ellipse' ? { borderRadius: '50%' } : {}]"
     >
       <span v-if="!editing && data.label" class="px-2 text-center text-sm text-slate-600">{{ data.label }}</span>
     </div>
