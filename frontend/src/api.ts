@@ -67,6 +67,20 @@ export interface TraceEntry {
   detail: string;
 }
 
+// One legend row from /eval: a discovered registry, the node kind it renders as in
+// the current view, and how many nodes it contributes. Mirrors the backend
+// evaluation.LegendEntry. Present only when the rendered view was derived; a declared
+// view carries no legend. Backs the canvas legend overlay.
+export interface LegendEntry {
+  // The registry field name (the domain node kind).
+  field: string;
+  // How the registry draws in the current view: one table (model view) or one node
+  // per member (instance view).
+  kind: "table" | "entity";
+  // Node count the registry contributes to this view.
+  count: number;
+}
+
 export interface EvalOk {
   ok: true;
   diagram: unknown;
@@ -87,6 +101,8 @@ export interface EvalFilesOk {
   views: string[];
   // Per-element inference trace; empty unless the rendered view was derived.
   trace: TraceEntry[];
+  // Registry legend for the rendered view; empty unless the view was derived.
+  legend: LegendEntry[];
 }
 
 // Result of /rewrite: the file's new text after splicing canvas edits.
@@ -312,6 +328,7 @@ export function evalFiles(files: EditorFile[], view = ""): Promise<EvalFilesOk |
       provenance?: Provenance;
       views?: string[];
       trace?: TraceEntry[];
+      legend?: LegendEntry[];
     }>(response);
     return {
       diagram: parsed.diagram,
@@ -319,6 +336,7 @@ export function evalFiles(files: EditorFile[], view = ""): Promise<EvalFilesOk |
       provenance: parsed.provenance ?? { nodes: {}, edges: "" },
       views: parsed.views ?? [],
       trace: parsed.trace ?? [],
+      legend: parsed.legend ?? [],
     };
   });
 }

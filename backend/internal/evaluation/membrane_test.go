@@ -57,7 +57,7 @@ func TestMembraneValid(t *testing.T) {
 		t.Fatalf("check should be clean, got %+v", checkDiags)
 	}
 
-	out, views, _, trace, evalDiags, err := e.Eval(context.Background(), src)
+	out, views, _, trace, _, evalDiags, err := e.Eval(context.Background(), src)
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}

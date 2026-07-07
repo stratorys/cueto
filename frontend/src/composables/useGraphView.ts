@@ -11,7 +11,7 @@
 
 import { computed, nextTick, ref, watch } from "vue";
 import type { Diagram, EdgeWaypoint } from "../model";
-import type { EdgePoints, EdgeWaypoints, NodePositions } from "../mapping";
+import type { EdgePoints, EdgeWaypoints, NodeBoxes, NodePositions } from "../mapping";
 import { toFlowEdges, toFlowNodes } from "../mapping";
 import { layoutDiagram } from "../useLayout";
 import { useDiagram } from "../useDiagram";
@@ -33,6 +33,28 @@ export const GRID_COLOR = "#e2e8f0";
 // The measured on-screen size of a rendered node, or undefined if it has none yet.
 function measuredSize(id: string): { width: number; height: number } | undefined {
   return findNode(id)?.dimensions;
+}
+
+// Each node's box (position + size) so toFlowEdges can dock a relation to the side that
+// faces the other end. Position comes from the model (hand-drawn) or the auto-layout
+// (derived); size from the live measurement, falling back to the model or a default so
+// docking still works before the cards have measured. Nodes without a position yet are
+// skipped, so their edges keep the stored handles until the next rebuild.
+function nodeBoxes(): NodeBoxes {
+  const boxes: NodeBoxes = {};
+  for (const node of diagram.value.nodes) {
+    const pos =
+      node.x === undefined || node.y === undefined
+        ? autoPositions.value[node.id]
+        : { x: node.x, y: node.y };
+    if (!pos) continue;
+    const size = measuredSize(node.id) ?? {
+      width: node.width ?? 160,
+      height: node.height ?? 80,
+    };
+    boxes[node.id] = { x: pos.x, y: pos.y, w: size.width, h: size.height };
+  }
+  return boxes;
 }
 
 // Controlled view state: the arrays ARE the view; Vue Flow keeps its store in
@@ -145,6 +167,7 @@ export function rebuildGraph(keepEdgePoints = false) {
     focusedContainer.value,
     edgePoints.value,
     pinnedWaypoints.value,
+    nodeBoxes(),
   );
   applyHighlightClasses();
 }

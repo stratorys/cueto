@@ -111,7 +111,7 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 		t.Fatalf("want clean vet, got %+v", diags)
 	}
 
-	out, views, _, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	out, views, _, _, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(evalDiags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, evalDiags)
 	}
@@ -200,7 +200,7 @@ func TestBuildLoadsSubpackageFromDisk(t *testing.T) {
 		"data.cue":    subModuleRoot,
 		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
 	})
-	out, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
+	out, _, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -216,7 +216,7 @@ func TestBuildSubdirOverlayLandsInSubpackage(t *testing.T) {
 		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
 	})
 	overlay := []domain.File{{Name: "sub/extra.cue", Content: "package sub\n\nnodes: {b: {type: \"entity\", label: \"B\"}}\n"}}
-	out, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir, Overlay: overlay})
+	out, _, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir, Overlay: overlay})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -231,7 +231,7 @@ func TestBuildIgnoresBrokenSiblingPackage(t *testing.T) {
 		"data.cue":          "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: \"A\"}}, edges: []}\n",
 		"broken/broken.cue": "package broken\n\nthis is not valid cue !!!\n",
 	})
-	out, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
+	out, _, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: dir})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -244,7 +244,7 @@ func TestBuildIgnoresBrokenSiblingPackage(t *testing.T) {
 func TestEvalNoViewKnowledgeOnly(t *testing.T) {
 	e := realEngine(t)
 	files := []domain.File{{Name: "data.cue", Content: "package main\n\npeople: {george: {name: \"George\"}}\n"}}
-	out, views, _, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	out, views, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -267,7 +267,7 @@ alt: {nodes: {b: {type: "entity", label: "B"}}, edges: []}
 diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
 `
 	files := []domain.File{{Name: "data.cue", Content: data}}
-	out, views, _, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	out, views, _, _, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -324,7 +324,7 @@ func TestVetNonConcreteViewIsClean(t *testing.T) {
 		t.Fatalf("want clean vet for a valid non-concrete diagram, got %+v", diags)
 	}
 
-	_, _, _, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	_, _, _, _, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}

@@ -283,6 +283,44 @@ func TestEvalNoView(t *testing.T) {
 	}
 }
 
+func TestEvalInferredLegend(t *testing.T) {
+	// A schema-and-data module with no diagram field infers a view, and the response
+	// carries the registry legend the frontend renders: one entry per registry, drawn
+	// as a table in the default (model) view. This pins the wire contract end to end.
+	data := `package main
+
+#Person: {name: string}
+people: [ID=string]: #Person
+people: {
+	george: {name: "George"}
+	lorraine: {name: "Lorraine"}
+}
+`
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Views  []string `json:"views"`
+		Legend []struct {
+			Field string `json:"field"`
+			Kind  string `json:"kind"`
+			Count int    `json:"count"`
+		} `json:"legend"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Views) != 2 {
+		t.Fatalf("views = %v, want the two inferred views", body.Views)
+	}
+	if len(body.Legend) != 1 || body.Legend[0].Field != "people" ||
+		body.Legend[0].Kind != "table" || body.Legend[0].Count != 1 {
+		t.Fatalf("legend = %+v, want one people/table/1 entry", body.Legend)
+	}
+}
+
 func TestEvalMultipleViews(t *testing.T) {
 	// Two diagram-shaped fields are both discovered and listed; the default rendered
 	// diagram is the one named diagram.
@@ -486,10 +524,10 @@ type blockingEval struct {
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []evaluation.TraceEntry, []diag.Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []evaluation.TraceEntry, []evaluation.LegendEntry, []diag.Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
-	return json.RawMessage(`{"nodes":{},"edges":[]}`), []string{"diagram"}, nil, nil, nil, nil
+	return json.RawMessage(`{"nodes":{},"edges":[]}`), []string{"diagram"}, nil, nil, nil, nil, nil
 }
 
 func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error) {

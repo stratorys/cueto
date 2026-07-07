@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Diagram, DiagramEdge, DiagramNode } from "./model";
-import { edgesBody, nodeBody, toCue, toFlowEdges } from "./mapping";
+import { edgesBody, facingHandle, nodeBody, toCue, toFlowEdges } from "./mapping";
 
 // Optional metadata is authored via the inspector and only reaches CUE through
 // these pure serializers, so lock in that the fields round-trip (and that absent
@@ -76,6 +76,49 @@ describe("edge routing waypoints", () => {
     };
     const [flow] = toFlowEdges(diagram, null, {}, { e1: pinned });
     expect(flow.data?.waypoints).toEqual(own);
+  });
+});
+
+describe("facingHandle (nearest-dot docking)", () => {
+  // A table box centered at the origin; `ref` is where the edge needs to go.
+  const self = { x: -50, y: -20, w: 100, h: 40 };
+
+  it("keeps a source dot on the right when the other end is to the right", () => {
+    expect(facingHandle("powers-source", self, { x: 500, y: 0 })).toBe("powers-source");
+  });
+
+  it("flips a source dot to the left when the other end is to the left", () => {
+    expect(facingHandle("powers-source", self, { x: -500, y: 0 })).toBe("powers-source-l");
+  });
+
+  it("keeps a target dot on the left, or mirrors it right when the other end is right", () => {
+    expect(facingHandle("id-target", self, { x: -500, y: 0 })).toBe("id-target");
+    expect(facingHandle("id-target", self, { x: 500, y: 0 })).toBe("id-target-r");
+  });
+
+  it("flips the header handles too", () => {
+    expect(facingHandle("table-source", self, { x: -500, y: 0 })).toBe("table-source-l");
+    expect(facingHandle("table-target", self, { x: 500, y: 0 })).toBe("table-target-r");
+  });
+
+  it("leaves a shape side handle and unknown ids untouched", () => {
+    expect(facingHandle("r", self, { x: -500, y: 0 })).toBe("r");
+    expect(facingHandle(undefined, self, { x: 0, y: 0 })).toBeUndefined();
+  });
+
+  it("re-docks an edge in toFlowEdges from the node boxes", () => {
+    // b sits far left of a, so a's source dot flips left and b's target dot flips right.
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [edge({ source: "a", target: "b", sourceHandle: "fk-source", targetHandle: "id-target" })],
+    };
+    const boxes = {
+      a: { x: 0, y: 0, w: 100, h: 40 },
+      b: { x: -400, y: 0, w: 100, h: 40 },
+    };
+    const [flow] = toFlowEdges(diagram, null, {}, {}, boxes);
+    expect(flow.sourceHandle).toBe("fk-source-l");
+    expect(flow.targetHandle).toBe("id-target-r");
   });
 });
 

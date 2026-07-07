@@ -433,7 +433,7 @@ func TestEvalInfersFamilyDiagram(t *testing.T) {
 	files := []domain.File{{Name: "data.cue", Content: "package main\n" + familyInferFixture}}
 
 	// Default (no View): the model view, one table node for the people registry.
-	out, views, hints, trace, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	out, views, hints, trace, legend, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -449,14 +449,22 @@ func TestEvalInfersFamilyDiagram(t *testing.T) {
 	if hints != nil {
 		t.Fatalf("inferred diagram carries no source, want no hints, got %d", len(hints))
 	}
+	// Model view legend: one entry per registry, drawn as a table, one node each.
+	if len(legend) != 1 || legend[0].Field != "people" || legend[0].Kind != "table" || legend[0].Count != 1 {
+		t.Fatalf("model legend = %+v, want one people/table/1 entry", legend)
+	}
 
 	// The instances view renders the six people.
-	out, _, _, _, diags, err = e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files, View: viewInstances})
+	out, _, _, _, legend, diags, err = e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files, View: viewInstances})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("instances eval err=%v diags=%+v", err, diags)
 	}
 	if nodes := decodeNodes(t, out); len(nodes) != 6 {
 		t.Fatalf("instance nodes = %d, want 6", len(nodes))
+	}
+	// Instance view legend: the people registry, drawn as entities, one node per member.
+	if len(legend) != 1 || legend[0].Field != "people" || legend[0].Kind != "entity" || legend[0].Count != 6 {
+		t.Fatalf("instance legend = %+v, want one people/entity/6 entry", legend)
 	}
 }
 
@@ -513,7 +521,7 @@ func TestEvalExplicitViewWinsOverInference(t *testing.T) {
 	e := realEngine(t)
 	files := []domain.File{{Name: "data.cue", Content: familyMembrane}}
 
-	_, views, _, trace, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	_, views, _, trace, legend, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
@@ -522,5 +530,8 @@ func TestEvalExplicitViewWinsOverInference(t *testing.T) {
 	}
 	if trace != nil {
 		t.Fatalf("declared view must carry no inference trace, got %+v", trace)
+	}
+	if legend != nil {
+		t.Fatalf("declared view must carry no legend, got %+v", legend)
 	}
 }

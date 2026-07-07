@@ -33,7 +33,7 @@ func (h *handlers) Eval(c *gin.Context) {
 	files := req.files()
 	src := h.source(dir, files)
 	src.View = req.View
-	out, views, hints, trace, diags, err := h.eval.Eval(c.Request.Context(), src)
+	out, views, hints, trace, legend, diags, err := h.eval.Eval(c.Request.Context(), src)
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -47,7 +47,7 @@ func (h *handlers) Eval(c *gin.Context) {
 		diagram = json.RawMessage("{}")
 	}
 	prov := h.authoring.ProvenanceFor(files)
-	c.JSON(http.StatusOK, gin.H{"diagram": diagram, "views": views, "hints": hints, "provenance": prov, "trace": trace})
+	c.JSON(http.StatusOK, gin.H{"diagram": diagram, "views": views, "hints": hints, "provenance": prov, "trace": trace, "legend": legend})
 }
 
 // EvalExpr backs /repl. With editor files it evaluates Source as an expression

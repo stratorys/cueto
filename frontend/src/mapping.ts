@@ -152,6 +152,57 @@ export type EdgeWaypoints = Record<string, EdgeWaypoint[]>;
 // per-column handle (`${col}-source` / `${col}-target`).
 const TABLE_HANDLES = new Set(["table-source", "table-target"]);
 
+// A node's absolute box, for choosing which side a relation should dock to.
+export interface NodeBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export type NodeBoxes = Record<string, NodeBox>;
+
+function boxCenter(b: NodeBox): { x: number; y: number } {
+  return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+}
+
+// Pick the table connection dot on the side facing `ref` (the other endpoint, or the
+// bend the user dragged), so a relation hooks to the nearest dot instead of a fixed one.
+// Source dots sit on the right by default and target dots on the left; the mirror dots
+// TableNode renders carry the `-l` / `-r` suffix. Only table handles (`…-source` /
+// `…-target`, including the header's) flip; a shape's own side handle (t/r/b/l) and any
+// unknown id pass through untouched, so manual endpoint reconnects are never overridden.
+export function facingHandle(
+  handle: string | undefined,
+  self: NodeBox,
+  ref: { x: number; y: number },
+): string | undefined {
+  if (!handle) return handle;
+  const toLeft = ref.x - boxCenter(self).x < 0;
+  if (handle.endsWith("-source")) return toLeft ? `${handle}-l` : handle;
+  if (handle.endsWith("-target")) return toLeft ? handle : `${handle}-r`;
+  return handle;
+}
+
+// The source/target handles for an edge, re-docked to the sides that face each other.
+// Falls back to the stored handles when either box is missing (positions not laid out
+// yet) or the edge is a self-loop. Keyed off node centers only - not the dragged bend -
+// so flipping a handle (which moves the endpoint) can't feed back into the bend and make
+// a just-released relation jump.
+function dockedHandles(
+  edge: DiagramEdge,
+  boxes: NodeBoxes,
+): { sourceHandle?: string; targetHandle?: string } {
+  const self = boxes[edge.source];
+  const other = boxes[edge.target];
+  if (!self || !other || edge.source === edge.target) {
+    return { sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle };
+  }
+  return {
+    sourceHandle: facingHandle(edge.sourceHandle, self, boxCenter(other)),
+    targetHandle: facingHandle(edge.targetHandle, other, boxCenter(self)),
+  };
+}
+
 // A model-view edge whose source docks to a specific foreign-key column (not the table
 // header). Such an edge must draw from that column handle, so it ignores the ELK route -
 // which can only reach the table border - and falls back to the handle-anchored
@@ -165,6 +216,7 @@ export function toFlowEdges(
   focus: string | null = null,
   edgePoints: EdgePoints = {},
   pinnedWaypoints: EdgeWaypoints = {},
+  boxes: NodeBoxes = {},
 ): Edge[] {
   const visible = visibleIds(diagram, focus);
   // Ordinal of each self-referential edge among its node's self-loops. ELK does not
@@ -180,12 +232,13 @@ export function toFlowEdges(
         edge.source === edge.target
           ? (selfLoopOrdinal[edge.source] = (selfLoopOrdinal[edge.source] ?? -1) + 1)
           : 0;
+      const docked = dockedHandles(edge, boxes);
       return {
         id: edge.id,
         source: edge.source,
         target: edge.target,
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
+        sourceHandle: docked.sourceHandle,
+        targetHandle: docked.targetHandle,
         // `type` selects the ELK-polyline edge component (orthogonal to the visual
         // `kind`, which ElkEdge reads from data to pick its marker/dash).
         type: "elk",

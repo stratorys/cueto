@@ -90,9 +90,13 @@ function onResizeEnd(event: { params: { x: number; y: number; width: number; hei
         @dblclick.stop="startEdit"
       >
         <!-- Node-level handles at the header, for entity-level edges (a reference to the
-             whole table, e.g. the inferred model view) that dock to no single column. -->
+             whole table, e.g. the inferred model view) that dock to no single column.
+             Each side is mirrored so a relation can hook to whichever faces the other end
+             (facingHandle in mapping picks the `-l` / `-r` variant). -->
         <Handle id="table-target" type="target" :position="Position.Left" />
+        <Handle id="table-source-l" type="source" :position="Position.Left" />
         <Handle id="table-source" type="source" :position="Position.Right" />
+        <Handle id="table-target-r" type="target" :position="Position.Right" />
         <input
           v-if="editing"
           ref="input"
@@ -110,7 +114,9 @@ function onResizeEnd(event: { params: { x: number; y: number; width: number; hei
         :key="col.name"
         class="col relative flex items-center justify-between gap-3 border-t border-slate-100 px-2.5 py-1"
       >
+        <!-- Left+right of each side so a column relation hooks to the nearest dot. -->
         <Handle :id="`${col.name}-target`" type="target" :position="Position.Left" />
+        <Handle :id="`${col.name}-source-l`" type="source" :position="Position.Left" />
         <span class="min-w-0 flex-1 text-slate-800">
           {{ col.name }}
           <span
@@ -126,6 +132,7 @@ function onResizeEnd(event: { params: { x: number; y: number; width: number; hei
         </span>
         <span class="text-right font-mono text-slate-500">{{ col.dbType }}</span>
         <Handle :id="`${col.name}-source`" type="source" :position="Position.Right" />
+        <Handle :id="`${col.name}-target-r`" type="target" :position="Position.Right" />
       </div>
     </div>
   </div>

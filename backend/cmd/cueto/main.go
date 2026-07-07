@@ -150,7 +150,7 @@ func runGraph(args []string) error {
 	if err != nil {
 		return err
 	}
-	out, views, _, trace, diags, err := engine.Eval(context.Background(), src)
+	out, views, _, trace, legend, diags, err := engine.Eval(context.Background(), src)
 	if err != nil {
 		return err
 	}
@@ -165,6 +165,7 @@ func runGraph(args []string) error {
 		"views":   views,
 		"diagram": diagram,
 		"trace":   trace,
+		"legend":  legend,
 	}, "", "  ")
 	if err != nil {
 		return err

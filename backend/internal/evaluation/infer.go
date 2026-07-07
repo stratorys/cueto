@@ -51,6 +51,27 @@ type TraceEntry struct {
 	Detail  string `json:"detail"` // registry field, or "source.field -> target"
 }
 
+// LegendEntry is one row of the diagram legend: a discovered registry, the node kind it
+// renders as in the current view, and how many nodes it contributes there. The legend is
+// per-view because a registry draws as one table in the model view and as one node per
+// member in the instance view. It is carried in the eval response only for inferred views.
+type LegendEntry struct {
+	Field string `json:"field"`
+	Kind  string `json:"kind"` // "table" | "entity"
+	Count int    `json:"count"`
+}
+
+// registryLegend builds one legend entry per registry for a view: the registry field
+// name, the node kind it renders as, and how many nodes it contributes (count, via
+// perReg). Registries are already name-sorted, so the legend is deterministic.
+func registryLegend(registries []registry, kind string, perReg func(registry) int) []LegendEntry {
+	legend := make([]LegendEntry, 0, len(registries))
+	for _, reg := range registries {
+		legend = append(legend, LegendEntry{Field: reg.field, Kind: kind, Count: perReg(reg)})
+	}
+	return legend
+}
+
 // registry is a detected open-label struct: its field name, its member schema (the
 // pattern constraint, reached via the AnyString selector), and its concrete members
 // keyed by label. keys is the sorted member key set.
@@ -70,11 +91,13 @@ const (
 )
 
 // inferredView is one derived diagram: its switcher name, the validated #Diagram value
-// ready to marshal, and the trace of which rule produced each element.
+// ready to marshal, the trace of which rule produced each element, and the legend of
+// registries drawn in this view.
 type inferredView struct {
 	name    string
 	diagram cue.Value
 	trace   []TraceEntry
+	legend  []LegendEntry
 }
 
 // inferViews detects the module's registries and references and projects them into the
@@ -117,7 +140,8 @@ func (e *Engine) projectInstanceView(ctx *cue.Context, registries []registry) (i
 	if diags != nil {
 		return inferredView{}, diags
 	}
-	return inferredView{name: viewInstances, diagram: diagram, trace: append(nodeTrace, edgeTrace...)}, nil
+	legend := registryLegend(registries, "entity", func(r registry) int { return len(r.keys) })
+	return inferredView{name: viewInstances, diagram: diagram, trace: append(nodeTrace, edgeTrace...), legend: legend}, nil
 }
 
 // projectModelView draws each registry as one table node whose columns are its schema
@@ -135,7 +159,8 @@ func (e *Engine) projectModelView(ctx *cue.Context, registries []registry) (infe
 	if diags != nil {
 		return inferredView{}, diags
 	}
-	return inferredView{name: viewModel, diagram: diagram, trace: trace}, nil
+	legend := registryLegend(registries, "table", func(registry) int { return 1 })
+	return inferredView{name: viewModel, diagram: diagram, trace: trace, legend: legend}, nil
 }
 
 // detectRegistries returns the top-level regular fields of project whose labels are

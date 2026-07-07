@@ -160,6 +160,8 @@ flowchart LR
   api --> projectsdir
 ```
 
+The CUE evaluator is a pure, adapter-independent core: it takes a prepared file set and returns JSON, views, inference trace and legend, hints, and diagnostics, under fixed size, output, deadline, and concurrency bounds. It knows nothing about HTTP, disks, or projects. The same engine backs two adapters today - the gin HTTP server and the `cueto` CLI (see [Command line](#command-line-ci)) - so a diagram vets and evaluates identically in the editor and in CI. Persistence and transport are thin shells around that one core.
+
 ## How it works
 
 1. `cue/diagram/` is the hand-owned schema package (`#Diagram`, `#Node`, `#Column`, `#Edge`). It is never rewritten by the app.

@@ -14,7 +14,7 @@
 // explicit calls.
 
 import { computed, nextTick, ref } from "vue";
-import type { Diagnostic, Hint, TraceEntry } from "../api";
+import type { Diagnostic, Hint, LegendEntry, TraceEntry } from "../api";
 import {
   deleteWorkspaceFile,
   evalFiles,
@@ -75,6 +75,12 @@ export const activeView = ref<string>("");
 export const trace = ref<TraceEntry[]>([]);
 export const traceById = computed(() => indexTrace(trace.value));
 export const isInferredView = computed(() => trace.value.length > 0);
+
+// The registry legend of the last eval: one entry per registry drawn in the rendered
+// view (its node kind and node count), empty when the view was authored rather than
+// inferred. Drives the canvas legend overlay; backend-authoritative (not derived from
+// the rendered nodes) so a registry with no members still lists.
+export const legend = ref<LegendEntry[]>([]);
 
 // pickActiveView mirrors the backend's default-view choice (the one named
 // "diagram", else the first by name) so the switcher highlights the tab that was
@@ -255,6 +261,7 @@ export async function runEval() {
   provenance.value = result.provenance;
   views.value = result.views;
   trace.value = result.trace;
+  legend.value = result.legend;
   activeView.value = pickActiveView(result.views, activeView.value);
   // Eval is now authoritative for ownership, so drop the creation-time overrides.
   newNodeOwner.clear();

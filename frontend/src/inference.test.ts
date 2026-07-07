@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { TraceEntry } from "./api";
-import { indexTrace, legendKinds } from "./inference";
+import { indexTrace } from "./inference";
 
 // A small trace mirroring an inferred two-registry module: two registry nodes and one
 // key-set reference edge, the shape the backend emits for the "why" inspector + legend.
@@ -36,29 +36,5 @@ describe("indexTrace", () => {
 
   it("is empty for a declared view with no trace", () => {
     expect(indexTrace([]).size).toBe(0);
-  });
-});
-
-describe("legendKinds", () => {
-  it("lists one sorted entry per distinct registry", () => {
-    expect(legendKinds(trace)).toEqual(["people", "teams"]);
-  });
-
-  it("dedupes registries with many members and ignores edges", () => {
-    const many: TraceEntry[] = [
-      { element: "people/a", kind: "node", rule: "registry", detail: "people" },
-      { element: "people/b", kind: "node", rule: "registry", detail: "people" },
-      {
-        element: "people/a--friend-->people/b",
-        kind: "edge",
-        rule: "key-set-ref",
-        detail: "people.friend -> people",
-      },
-    ];
-    expect(legendKinds(many)).toEqual(["people"]);
-  });
-
-  it("is empty for a declared view", () => {
-    expect(legendKinds([])).toEqual([]);
   });
 });
