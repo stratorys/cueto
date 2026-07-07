@@ -61,33 +61,81 @@ type registry struct {
 	keys    []string
 }
 
-// inferDiagram detects registries and references in the built project value and
-// projects them into a #Diagram-shaped value, validated against the bundled schema
-// before returning. The returned value is concrete and ready to marshal; the trace
-// has one entry per emitted element. A nil value with nil diagnostics means the module
-// has nothing to infer (no registries), a valid empty outcome the caller renders as no
-// view. Diagnostics are returned for a bounds breach or a projection that fails schema
-// validation (a projection bug, never silently drawn).
-func (e *Engine) inferDiagram(ctx *cue.Context, project cue.Value) (cue.Value, []TraceEntry, []diag.Diagnostic) {
+// inferredViewName is the name of each derived view, shown in the frontend switcher.
+// The model view (registries as types, drawn as tables) is the default; the instances
+// view draws each concrete member as a node. Both are derived from the same detection.
+const (
+	viewModel     = "model"
+	viewInstances = "instances"
+)
+
+// inferredView is one derived diagram: its switcher name, the validated #Diagram value
+// ready to marshal, and the trace of which rule produced each element.
+type inferredView struct {
+	name    string
+	diagram cue.Value
+	trace   []TraceEntry
+}
+
+// inferViews detects the module's registries and references and projects them into the
+// two derived views (the type-level model and the instance-level graph), each validated
+// against the bundled schema. An empty result with nil diagnostics means the module has
+// nothing to infer (no registries), a valid "no view" outcome. Diagnostics are returned
+// for a bounds breach or a projection that fails schema validation (a projection bug,
+// never silently drawn).
+func (e *Engine) inferViews(ctx *cue.Context, project cue.Value) ([]inferredView, []diag.Diagnostic) {
 	registries := detectRegistries(project)
 	if len(registries) == 0 {
-		return cue.Value{}, nil, nil
+		return nil, nil
 	}
 
+	model, diags := e.projectModelView(ctx, registries)
+	if diags != nil {
+		return nil, diags
+	}
+	instances, diags := e.projectInstanceView(ctx, registries)
+	if diags != nil {
+		return nil, diags
+	}
+	// Model first: it is the default view, and the frontend highlights the first listed
+	// view, so this keeps the rendered canvas and the switcher tab in agreement.
+	return []inferredView{model, instances}, nil
+}
+
+// projectInstanceView draws each concrete member as a node and each declared reference
+// as an edge between member nodes: the populated graph.
+func (e *Engine) projectInstanceView(ctx *cue.Context, registries []registry) (inferredView, []diag.Diagnostic) {
 	nodes, nodeTrace := projectNodes(registries)
 	if len(nodes) > inferNodeMax {
-		return cue.Value{}, nil, boundDiag("nodes", len(nodes), inferNodeMax)
+		return inferredView{}, boundDiag("nodes", len(nodes), inferNodeMax)
 	}
 	edges, edgeTrace := projectEdges(ctx, registries)
 	if len(edges) > inferEdgeMax {
-		return cue.Value{}, nil, boundDiag("edges", len(edges), inferEdgeMax)
+		return inferredView{}, boundDiag("edges", len(edges), inferEdgeMax)
 	}
-
 	diagram, diags := e.buildDiagram(ctx, nodes, edges)
 	if diags != nil {
-		return cue.Value{}, nil, diags
+		return inferredView{}, diags
 	}
-	return diagram, append(nodeTrace, edgeTrace...), nil
+	return inferredView{name: viewInstances, diagram: diagram, trace: append(nodeTrace, edgeTrace...)}, nil
+}
+
+// projectModelView draws each registry as one table node whose columns are its schema
+// fields, and each reference field as an edge between the two type tables: the data
+// model, drawn once regardless of how many rows exist.
+func (e *Engine) projectModelView(ctx *cue.Context, registries []registry) (inferredView, []diag.Diagnostic) {
+	nodes, edges, trace := projectSchema(ctx, registries)
+	if len(nodes) > inferNodeMax {
+		return inferredView{}, boundDiag("nodes", len(nodes), inferNodeMax)
+	}
+	if len(edges) > inferEdgeMax {
+		return inferredView{}, boundDiag("edges", len(edges), inferEdgeMax)
+	}
+	diagram, diags := e.buildDiagram(ctx, nodes, edges)
+	if diags != nil {
+		return inferredView{}, diags
+	}
+	return inferredView{name: viewModel, diagram: diagram, trace: trace}, nil
 }
 
 // detectRegistries returns the top-level regular fields of project whose labels are
@@ -156,17 +204,20 @@ func edgeID(source, field, target string) string {
 	return fmt.Sprintf("%s--%s-->%s", source, field, target)
 }
 
-// projectedNode is one node before encoding: its id, label, kind (registry field), and
-// its remaining concrete scalar fields for the data card.
+// projectedNode is one node before encoding: its id, node type, label, its concrete
+// scalar fields for the data card (instance view), and its columns (model view). A
+// given node uses either data or columns, not both.
 type projectedNode struct {
-	id    string
-	label string
-	data  map[string]interface{}
+	id      string
+	typ     string
+	label   string
+	data    map[string]interface{}
+	columns []columnJSON
 }
 
-// projectNodes turns every registry member into a node and returns one trace entry per
-// node. The label is the first present name-like field, else the member key; remaining
-// concrete scalar fields (not the label source, not references) form the data card.
+// projectNodes turns every registry member into an entity node and returns one trace
+// entry per node. The label is the first present name-like field, else the member key;
+// remaining concrete scalar fields (not the label source) form the data card.
 func projectNodes(registries []registry) ([]projectedNode, []TraceEntry) {
 	var nodes []projectedNode
 	var trace []TraceEntry
@@ -177,6 +228,7 @@ func projectNodes(registries []registry) ([]projectedNode, []TraceEntry) {
 			label, labelField := memberLabel(member, key)
 			nodes = append(nodes, projectedNode{
 				id:    id,
+				typ:   "entity",
 				label: label,
 				data:  scalarData(member, labelField),
 			})
@@ -186,6 +238,103 @@ func projectNodes(registries []registry) ([]projectedNode, []TraceEntry) {
 		}
 	}
 	return nodes, trace
+}
+
+// projectSchema draws the type-level model: one table node per registry (columns are its
+// schema fields, references marked as foreign keys) and one edge per reference field
+// between the two type tables. Node ids are the registry field names, so the model has
+// one node per registry no matter how many members exist. Edges are sorted for
+// determinism, with one trace entry per element.
+func projectSchema(ctx *cue.Context, registries []registry) ([]projectedNode, []projectedEdge, []TraceEntry) {
+	var nodes []projectedNode
+	var edges []projectedEdge
+	var trace []TraceEntry
+	for _, reg := range registries {
+		refs := detectReferences(ctx, reg, registries)
+		nodes = append(nodes, projectedNode{
+			id: reg.field, typ: "table", label: reg.field, columns: schemaColumns(reg, refs),
+		})
+		trace = append(trace, TraceEntry{Element: reg.field, Kind: "node", Rule: "registry", Detail: reg.field})
+		for _, ref := range refs {
+			id := edgeID(reg.field, ref.field, ref.targetField)
+			edges = append(edges, projectedEdge{
+				id: id, source: reg.field, target: ref.targetField, label: ref.field, rule: ref.rule,
+			})
+			trace = append(trace, TraceEntry{
+				Element: id, Kind: "edge", Rule: ref.rule,
+				Detail: fmt.Sprintf("%s.%s -> %s", reg.field, ref.field, ref.targetField),
+			})
+		}
+	}
+	sortEdges(edges)
+	return nodes, edges, trace
+}
+
+// schemaColumns renders a registry's member schema as table columns: one per field,
+// with the field name and a type label. A reference field is marked a foreign key and
+// typed by its target registry; other fields carry their CUE kind. Columns are sorted by
+// name so the table is deterministic.
+func schemaColumns(reg registry, refs []reference) []columnJSON {
+	if !reg.schema.Exists() {
+		return nil
+	}
+	refByField := make(map[string]reference, len(refs))
+	for _, r := range refs {
+		refByField[r.field] = r
+	}
+	iter, err := reg.schema.Fields(cue.Optional(true))
+	if err != nil {
+		return nil
+	}
+	var cols []columnJSON
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsString() {
+			continue
+		}
+		name := sel.Unquoted()
+		if ref, ok := refByField[name]; ok {
+			cols = append(cols, columnJSON{Name: name, DBType: ref.targetField, Fk: true})
+			continue
+		}
+		cols = append(cols, columnJSON{Name: name, DBType: kindLabel(iter.Value())})
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].Name < cols[j].Name })
+	return cols
+}
+
+// kindLabel is a short, vocabulary-free type label for a schema field's column, derived
+// from its CUE kind. It names shape, never a domain type.
+func kindLabel(v cue.Value) string {
+	switch v.IncompleteKind() {
+	case cue.StringKind:
+		return "string"
+	case cue.IntKind:
+		return "int"
+	case cue.FloatKind, cue.NumberKind:
+		return "number"
+	case cue.BoolKind:
+		return "bool"
+	case cue.ListKind:
+		return "list"
+	case cue.StructKind:
+		return "struct"
+	default:
+		return "value"
+	}
+}
+
+// sortEdges orders edges by (source, field, target) so a projection is deterministic.
+func sortEdges(edges []projectedEdge) {
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].source != edges[j].source {
+			return edges[i].source < edges[j].source
+		}
+		if edges[i].label != edges[j].label {
+			return edges[i].label < edges[j].label
+		}
+		return edges[i].target < edges[j].target
+	})
 }
 
 // memberLabel returns the node label and the field it came from (empty when it fell
@@ -275,15 +424,7 @@ func projectEdges(ctx *cue.Context, registries []registry) ([]projectedEdge, []T
 			}
 		}
 	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].source != edges[j].source {
-			return edges[i].source < edges[j].source
-		}
-		if edges[i].label != edges[j].label {
-			return edges[i].label < edges[j].label
-		}
-		return edges[i].target < edges[j].target
-	})
+	sortEdges(edges)
 	trace := make([]TraceEntry, len(edges))
 	for i, e := range edges {
 		trace[i] = TraceEntry{
@@ -449,9 +590,19 @@ type diagramJSON struct {
 }
 
 type nodeJSON struct {
-	Type  string                 `json:"type"`
-	Label string                 `json:"label"`
-	Data  map[string]interface{} `json:"data,omitempty"`
+	Type    string                 `json:"type"`
+	Label   string                 `json:"label"`
+	Data    map[string]interface{} `json:"data,omitempty"`
+	Columns []columnJSON           `json:"columns,omitempty"`
+}
+
+// columnJSON is one row of a table node in the model view: a schema field's name and a
+// short type label, with fk set when the field is a reference.
+type columnJSON struct {
+	Name   string `json:"name"`
+	DBType string `json:"dbType"`
+	Pk     bool   `json:"pk,omitempty"`
+	Fk     bool   `json:"fk,omitempty"`
 }
 
 type edgeJSON struct {
@@ -474,7 +625,7 @@ func (e *Engine) buildDiagram(ctx *cue.Context, nodes []projectedNode, edges []p
 	}
 	out := diagramJSON{Nodes: make(map[string]nodeJSON, len(nodes)), Edges: make([]edgeJSON, 0, len(edges))}
 	for _, n := range nodes {
-		out.Nodes[n.id] = nodeJSON{Type: "entity", Label: n.label, Data: n.data}
+		out.Nodes[n.id] = nodeJSON{Type: n.typ, Label: n.label, Data: n.data, Columns: n.columns}
 	}
 	for _, edge := range edges {
 		out.Edges = append(out.Edges, edgeJSON{

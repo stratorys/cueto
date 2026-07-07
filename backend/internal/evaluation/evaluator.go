@@ -364,12 +364,6 @@ func (e *Engine) loadModule(src Source, query string) ([]*build.Instance, []diag
 	return load.Instances([]string{"./..."}, cfg), nil
 }
 
-// inferredViewName is the synthetic view name a derived diagram is listed under, so
-// the single-view frontend has an entry to render and echo back. It is not a
-// user-declared field and cannot collide with a discovered view, since inference runs
-// only when discovery found none.
-const inferredViewName = "inferred"
-
 // build overlays the client's editable files on the module and returns the root
 // project value, the view to render, the names of every discovered view, and the
 // inference trace (non-nil only when the view was derived, not declared). eval selects
@@ -408,16 +402,46 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string
 		return value, views[selectView(views, src.View)].value, viewNames(views), nil, nil, nil
 	}
 
-	// No declared view: derive one from the module's schemas and data. A module with
+	// No declared view: derive views from the module's schemas and data. A module with
 	// nothing to infer (no registries) stays a valid knowledge-only "no view" outcome.
-	diagram, trace, inferDiags := e.inferDiagram(ctx, value)
+	inferred, inferDiags := e.inferViews(ctx, value)
 	if inferDiags != nil {
 		return value, cue.Value{}, nil, nil, inferDiags, nil
 	}
-	if !diagram.Exists() {
+	if len(inferred) == 0 {
 		return value, cue.Value{}, nil, nil, nil, nil
 	}
-	return value, diagram, []string{inferredViewName}, trace, nil, nil
+	sel := selectInferred(inferred, src.View)
+	return value, inferred[sel].diagram, inferredNames(inferred), inferred[sel].trace, nil, nil
+}
+
+// inferredNames lists the derived view names for the switcher, in the order inferViews
+// returns them (instances, model).
+func inferredNames(views []inferredView) []string {
+	names := make([]string, len(views))
+	for i, v := range views {
+		names[i] = v.name
+	}
+	return names
+}
+
+// selectInferred picks which derived view to render: the one named want when it exists,
+// else the model view (the data model is the default lens), else the first. A stale
+// client selection falls back rather than failing the eval.
+func selectInferred(views []inferredView, want string) int {
+	if want != "" {
+		for i, v := range views {
+			if v.name == want {
+				return i
+			}
+		}
+	}
+	for i, v := range views {
+		if v.name == viewModel {
+			return i
+		}
+	}
+	return 0
 }
 
 // view is a discovered diagram-shaped field of the project value.

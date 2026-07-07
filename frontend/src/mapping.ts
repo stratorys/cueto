@@ -96,14 +96,14 @@ export function toFlowNodes(
           ? absolutePosition(node, byId)
           : { x: node.x, y: node.y };
     const parent = isFocusRoot ? undefined : node.parent;
-    // A derived (coordinate-free) node is locked: it is generated from data, not
-    // drawn, so it cannot be dragged. Hand-drawn nodes carry coords and drag.
-    const drawn = node.x !== undefined && node.y !== undefined;
+    // Both hand-drawn and derived nodes drag. A hand-drawn drag writes coordinates back
+    // to the model/text; a derived drag is ephemeral - it only nudges the auto-layout
+    // position for readability and is never written to the file (see onNodeDragStop).
     return {
       id: node.id,
       type: node.type,
       position,
-      draggable: drawn,
+      draggable: true,
       // Nesting: a child's position is relative to its parent, is clipped to the
       // parent's box, and grows the parent when dragged to its edge.
       parentNode: parent,

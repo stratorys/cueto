@@ -27,7 +27,7 @@ import {
   updateNodeData,
 } from "./flowStore";
 import { activeFileName, newNodeOwner } from "./useEditorFiles";
-import { rebuildGraph } from "./useGraphView";
+import { pinAutoPosition, rebuildGraph } from "./useGraphView";
 import { syncTextFromModel } from "./useCueSync";
 
 const { diagram, commit, addShape, addTable, addContainer, addTypedNode } = useDiagram();
@@ -326,6 +326,14 @@ function disarmTool() {
 onNodeDragStop(({ node }) => {
   const current = diagram.value.nodes.find((n) => n.id === node.id);
   if (!current) return;
+  // A derived (coordinate-free) node drags ephemerally: pin its new spot in the
+  // auto-layout view state and stop. Never commit - writing x/y would make it look
+  // hand-drawn and get written back to the user's file, breaking the view-only
+  // contract. Derived nodes have no parent, so the reported position is absolute.
+  if (current.x === undefined || current.y === undefined) {
+    pinAutoPosition(node.id, { x: node.position.x, y: node.position.y });
+    return;
+  }
   // Absolute top-left at the drop: parent's absolute position + reported (relative)
   // position. A top-level node's reported position is already absolute.
   const parentAbs = current.parent

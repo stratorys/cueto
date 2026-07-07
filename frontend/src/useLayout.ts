@@ -45,9 +45,15 @@ const ROOT_OPTIONS: Record<string, string> = {
   "elk.direction": "DOWN",
   "elk.edgeRouting": "ORTHOGONAL",
   "elk.hierarchyHandling": "INCLUDE_CHILDREN",
-  "elk.layered.spacing.nodeNodeBetweenLayers": "60",
-  "elk.spacing.nodeNode": "40",
-  "elk.spacing.edgeNode": "24",
+  // Generous spacing so derived views - especially the model view's tall table nodes -
+  // read clearly without manual rearranging: more room between layers and between
+  // siblings, and edges kept off node boxes.
+  "elk.layered.spacing.nodeNodeBetweenLayers": "90",
+  "elk.spacing.nodeNode": "70",
+  "elk.spacing.edgeNode": "30",
+  "elk.layered.spacing.edgeNodeBetweenLayers": "30",
+  // Straighter, more balanced placement for reference-heavy graphs.
+  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
 };
 
 // Container inset so children clear the header bar (top) and the frame edges.

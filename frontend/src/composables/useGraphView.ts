@@ -39,9 +39,25 @@ export const edgePoints = ref<EdgePoints>({});
 // coordinate-free. Empty for a normal hand-drawn diagram.
 export const autoPositions = ref<NodePositions>({});
 
+// Positions a user dragged a derived node to. Ephemeral like autoPositions (never
+// committed to the model or written to CUE), but sticky: a re-eval re-runs ELK for the
+// rest of the graph while these pinned nodes keep where the user put them, so manual
+// readability tweaks survive edits. Pruned to nodes that still exist.
+const pinnedPositions = ref<NodePositions>({});
+
+// pinAutoPosition records a derived node's dragged position. It updates the rendered
+// autoPositions immediately and remembers the pin so the next layoutAuto preserves it.
+// This is how a derived node moves without its coordinates ever reaching the file.
+export function pinAutoPosition(id: string, position: { x: number; y: number }) {
+  pinnedPositions.value = { ...pinnedPositions.value, [id]: position };
+  autoPositions.value = { ...autoPositions.value, [id]: position };
+  rebuildGraph(true);
+}
+
 // A diagram is "auto-layout mode" when any node has no coordinates - it was
 // derived from data rather than drawn. Such a diagram is laid out into
-// autoPositions and rendered read-only (no drag, no model->text write-back).
+// autoPositions; derived nodes render draggable but their drags stay ephemeral
+// (pinned in autoPositions, never written back to CUE).
 export const isAutoLayout = computed(() =>
   diagram.value.nodes.some((n) => n.x === undefined || n.y === undefined),
 );
@@ -171,6 +187,16 @@ export async function layoutAuto() {
   for (const [id, geo] of Object.entries(result.nodes)) {
     positions[id] = { x: Math.round(geo.x), y: Math.round(geo.y) };
   }
+  // A node the user dragged keeps its pinned spot; ELK places the rest. Pins for nodes
+  // that no longer exist (data changed) are dropped so they cannot resurrect.
+  const pins: NodePositions = {};
+  for (const id of derivedIds) {
+    if (pinnedPositions.value[id]) {
+      pins[id] = pinnedPositions.value[id];
+      positions[id] = pinnedPositions.value[id];
+    }
+  }
+  pinnedPositions.value = pins;
   autoPositions.value = positions;
   edgePoints.value = result.edges;
   rebuildGraph(true);

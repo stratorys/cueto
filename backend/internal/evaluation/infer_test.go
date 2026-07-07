@@ -21,8 +21,14 @@ import (
 // edge sets and the label/data of a node.
 type gotDiagram struct {
 	Nodes map[string]struct {
-		Label string                 `json:"label"`
-		Data  map[string]interface{} `json:"data"`
+		Type    string                 `json:"type"`
+		Label   string                 `json:"label"`
+		Data    map[string]interface{} `json:"data"`
+		Columns []struct {
+			Name   string `json:"name"`
+			DBType string `json:"dbType"`
+			Fk     bool   `json:"fk"`
+		} `json:"columns"`
 	} `json:"nodes"`
 	Edges []struct {
 		ID     string `json:"id"`
@@ -32,32 +38,41 @@ type gotDiagram struct {
 	} `json:"edges"`
 }
 
-// inferFrom compiles src into a project value and runs inference against the engine's
-// real diagram schema. It fails the test on a compile error or an inference diagnostic,
-// returning the decoded diagram and the trace.
+// inferFrom compiles src, runs inference against the engine's real diagram schema, and
+// returns the decoded instance view (members as nodes). It fails the test on a compile
+// error or an inference diagnostic.
 func inferFrom(t *testing.T, e *Engine, src string) (gotDiagram, []TraceEntry) {
+	t.Helper()
+	return inferView(t, e, src, viewInstances)
+}
+
+// inferView is inferFrom for a named derived view (instances or model).
+func inferView(t *testing.T, e *Engine, src, name string) (gotDiagram, []TraceEntry) {
 	t.Helper()
 	ctx := cuecontext.New()
 	v := ctx.CompileString(src)
 	if err := v.Err(); err != nil {
 		t.Fatalf("compile fixture: %v", err)
 	}
-	diagram, trace, diags := e.inferDiagram(ctx, v)
+	views, diags := e.inferViews(ctx, v)
 	if len(diags) != 0 {
 		t.Fatalf("inference diagnostics: %+v", diags)
 	}
-	if !diagram.Exists() {
-		return gotDiagram{}, trace
+	for _, view := range views {
+		if view.name != name {
+			continue
+		}
+		raw, err := view.diagram.MarshalJSON()
+		if err != nil {
+			t.Fatalf("marshal inferred %s: %v", name, err)
+		}
+		var got gotDiagram
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("decode inferred %s: %v", name, err)
+		}
+		return got, view.trace
 	}
-	raw, err := diagram.MarshalJSON()
-	if err != nil {
-		t.Fatalf("marshal inferred diagram: %v", err)
-	}
-	var got gotDiagram
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode inferred diagram: %v", err)
-	}
-	return got, trace
+	return gotDiagram{}, nil
 }
 
 func nodeIDs(g gotDiagram) []string {
@@ -251,9 +266,9 @@ func TestInferNoRegistryIsEmpty(t *testing.T) {
 	if err := v.Err(); err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	diagram, trace, diags := e.inferDiagram(ctx, v)
-	if diagram.Exists() || trace != nil || diags != nil {
-		t.Fatalf("want empty inference, got exists=%v trace=%v diags=%v", diagram.Exists(), trace, diags)
+	views, diags := e.inferViews(ctx, v)
+	if len(views) != 0 || diags != nil {
+		t.Fatalf("want empty inference, got views=%d diags=%v", len(views), diags)
 	}
 }
 
@@ -322,27 +337,76 @@ func TestInferFamilyMembrane(t *testing.T) {
 }
 
 // TestEvalInfersFamilyDiagram is the phase-4 done criterion end to end: a schema-and-
-// data module with no diagram field, run through Eval, renders the inferred diagram
-// under the synthetic "inferred" view, carries a trace, and skips inlay hints.
+// data module with no diagram field, run through Eval, offers both derived views,
+// defaults to the model view, and (when the instances view is selected) renders the six
+// people, with a trace and no inlay hints.
 func TestEvalInfersFamilyDiagram(t *testing.T) {
 	e := realEngine(t)
 	files := []domain.File{{Name: "data.cue", Content: "package main\n" + familyInferFixture}}
 
+	// Default (no View): the model view, one table node for the people registry.
 	out, views, hints, trace, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(diags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, diags)
 	}
-	if len(views) != 1 || views[0] != inferredViewName {
-		t.Fatalf("views = %v, want [%s]", views, inferredViewName)
+	if len(views) != 2 || views[0] != viewModel || views[1] != viewInstances {
+		t.Fatalf("views = %v, want [%s %s]", views, viewModel, viewInstances)
 	}
-	if nodes := decodeNodes(t, out); len(nodes) != 6 {
-		t.Fatalf("nodes = %d, want 6", len(nodes))
+	if nodes := decodeNodes(t, out); len(nodes) != 1 {
+		t.Fatalf("model nodes = %d, want 1 (the people table)", len(nodes))
 	}
 	if len(trace) == 0 {
 		t.Fatal("want trace entries for inferred elements")
 	}
 	if hints != nil {
 		t.Fatalf("inferred diagram carries no source, want no hints, got %d", len(hints))
+	}
+
+	// The instances view renders the six people.
+	out, _, _, _, diags, err = e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files, View: viewInstances})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("instances eval err=%v diags=%+v", err, diags)
+	}
+	if nodes := decodeNodes(t, out); len(nodes) != 6 {
+		t.Fatalf("instance nodes = %d, want 6", len(nodes))
+	}
+}
+
+// TestInferModelView checks the type-level projection: one table node per registry
+// regardless of member count, columns from the schema fields (references marked fk), and
+// one edge per reference field between the type tables.
+func TestInferModelView(t *testing.T) {
+	e := realEngine(t)
+	got, trace := inferView(t, e, familyInferFixture, viewModel)
+
+	if len(got.Nodes) != 1 {
+		t.Fatalf("model nodes = %d, want 1 (people), got %v", len(got.Nodes), nodeIDs(got))
+	}
+	people, ok := got.Nodes["people"]
+	if !ok {
+		t.Fatalf("missing people table in %v", nodeIDs(got))
+	}
+	if people.Type != "table" {
+		t.Fatalf("people node type = %q, want table", people.Type)
+	}
+	// mother and father are foreign-key columns typed by their target registry.
+	fk := map[string]string{}
+	for _, c := range people.Columns {
+		if c.Fk {
+			fk[c.Name] = c.DBType
+		}
+	}
+	if fk["mother"] != "people" || fk["father"] != "people" {
+		t.Fatalf("fk columns = %v, want mother/father -> people", fk)
+	}
+	// Two type-level edges (mother, father), both people -> people, one per row of data
+	// no matter how many people exist.
+	want := []string{"people--father-->people", "people--mother-->people"}
+	if ids := edgeIDs(got); !eq(ids, want) {
+		t.Fatalf("model edges = %v, want %v", ids, want)
+	}
+	if len(trace) != len(got.Nodes)+len(got.Edges) {
+		t.Fatalf("trace = %d, want %d", len(trace), len(got.Nodes)+len(got.Edges))
 	}
 }
 
