@@ -12,16 +12,10 @@ import (
 )
 
 func TestLoadWorkspaceDir(t *testing.T) {
-	t.Setenv("DATA_DIR", t.TempDir())
-
-	t.Run("unset is playground", func(t *testing.T) {
+	t.Run("unset errors", func(t *testing.T) {
 		t.Setenv("WORKSPACE_DIR", "")
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("load: %v", err)
-		}
-		if cfg.WorkspaceDir != "" {
-			t.Fatalf("WorkspaceDir = %q, want empty", cfg.WorkspaceDir)
+		if _, err := Load(); err == nil {
+			t.Fatal("want error for missing WORKSPACE_DIR, got nil")
 		}
 	})
 

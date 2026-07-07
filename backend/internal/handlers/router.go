@@ -21,39 +21,24 @@ import (
 
 // NewRouter wires middleware and routes. Handlers depend only on the small
 // per-concern service interfaces; every untrusted-input bound lives either in
-// middleware here or inside a service deadline. store is the playground persistence,
-// used only in playground mode; workspace mode is served by a git-backed store the
-// router constructs from cfg.WorkspaceDir. Persistence routes branch on the mode;
-// evaluation and authoring routes are mode-agnostic (Sources already root at the
-// right module dir).
-func NewRouter(eval evalService, store playgroundStore, auth authoringService, cfg config.Config) *gin.Engine {
+// middleware here or inside a service deadline. Sources root at the user's
+// workspace module (cfg.WorkspaceDir), and git is the only history: saves write
+// the real file and the history panel reads commits read-only.
+func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: this backend is reached directly, so client-supplied
 	// X-Forwarded-For headers must not be believed.
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), cors(), limitBody(cfg.MaxBodyBytes), limitConcurrency(cfg.MaxConcurrent))
 
-	// Sources root at the workspace when configured, else the schema dir (playground).
-	moduleDir := cfg.CueDir
-	mode := "playground"
-	var save saveService
-	var history historyService
-	if cfg.WorkspaceDir != "" {
-		moduleDir = cfg.WorkspaceDir
-		mode = "workspace"
-		ws := repo.New(cfg.WorkspaceDir, cfg.MaxOutputBytes)
-		save, history = ws, ws
-	}
-
+	ws := repo.New(cfg.WorkspaceDir, cfg.MaxOutputBytes)
 	h := &handlers{
 		eval:      eval,
-		store:     store,
-		save:      save,
-		history:   history,
+		save:      ws,
+		history:   ws,
 		authoring: auth,
-		moduleDir: moduleDir,
+		moduleDir: cfg.WorkspaceDir,
 		cueDir:    cfg.CueDir,
-		mode:      mode,
 	}
 	r.POST("/eval", h.Eval)
 	r.POST("/repl", h.EvalExpr)
@@ -64,22 +49,11 @@ func NewRouter(eval evalService, store playgroundStore, auth authoringService, c
 	r.POST("/rewrite", h.Rewrite)
 	r.GET("/config", h.Config)
 
-	if mode == "workspace" {
-		// Git is the only history: saves write the real file, and the panel reads
-		// commits read-only. No project registry, no version store.
-		r.POST("/workspace/save", h.WorkspaceSave)
-		r.GET("/workspace/history", h.WorkspaceHistory)
-		r.GET("/workspace/file", h.WorkspaceFile)
-	} else {
-		r.GET("/seed", h.Seed)
-		r.GET("/projects", h.ListProjects)
-		r.POST("/projects", h.CreateProject)
-		r.PATCH("/projects/:pid", h.RenameProject)
-		r.DELETE("/projects/:pid", h.DeleteProject)
-		r.POST("/projects/:pid/save", h.Save)
-		r.GET("/projects/:pid/versions", h.ListVersions)
-		r.GET("/projects/:pid/versions/:id", h.ReadVersion)
-	}
+	// Git is the only history: saves write the real file, and the panel reads
+	// commits read-only. No project registry, no version store.
+	r.POST("/workspace/save", h.WorkspaceSave)
+	r.GET("/workspace/history", h.WorkspaceHistory)
+	r.GET("/workspace/file", h.WorkspaceFile)
 	return r
 }
 

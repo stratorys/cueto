@@ -32,24 +32,9 @@ type evalService interface {
 	Vet(ctx context.Context, src evaluation.Source) ([]diag.Diagnostic, error)
 }
 
-// playgroundStore is the project + version persistence the playground depends on:
-// the content-addressed store and its project registry. It is wired only in
-// playground mode; the workspace router omits every route that reaches it.
-type playgroundStore interface {
-	SaveVersion(ctx context.Context, projectID, data string) (string, error)
-	ListVersions(ctx context.Context, projectID string) ([]domain.Version, error)
-	ReadVersion(ctx context.Context, projectID, id string) (string, error)
-	ReadSeed() (string, error)
-	ListProjects(ctx context.Context) ([]domain.Project, error)
-	CreateProject(ctx context.Context, name, seed string) (domain.Project, error)
-	RenameProject(ctx context.Context, id, name string) (domain.Project, error)
-	DeleteProject(ctx context.Context, id string) error
-}
-
-// saveService persists a validated buffer. It is the write seam shared across
-// modes; workspace mode writes the real file, playground mode is served by its own
-// store above. Splitting it out keeps workspace mode from having to implement the
-// project registry it has no concept of.
+// saveService persists a validated buffer to the real file in the workspace. It
+// is the write seam the transport depends on; the implementation writes only
+// after the evaluation service validates, and never mutates git state.
 type saveService interface {
 	Save(ctx context.Context, req domain.SaveRequest) (domain.SaveResult, error)
 }
@@ -71,18 +56,14 @@ type authoringService interface {
 
 // handlers hold the concern services, the module dir Sources are rooted at, and
 // the schema dir needed to scrub host paths from diagnostics built at this layer.
-// moduleDir is the workspace when one is configured, else the schema dir (the
-// playground); cueDir is always the schema dir. mode is "playground" or
-// "workspace". store is set in playground mode; save and history in workspace mode.
+// moduleDir is the user's workspace module root; cueDir is the schema dir.
 type handlers struct {
 	eval      evalService
-	store     playgroundStore
 	save      saveService
 	history   historyService
 	authoring authoringService
 	moduleDir string
 	cueDir    string
-	mode      string
 }
 
 // source wraps a client file set into an evaluation.Source rooted at the server's
@@ -117,13 +98,6 @@ type sourceRequest struct {
 	// editor files overlaid on the schema, so it can reference the live `diagram`.
 	// When empty, Source is a standalone snippet with no schema or diagram in scope.
 	Files []domain.File `json:"files"`
-}
-
-// projectRequest is the body for project create/rename. Seed ("blank" | "sample")
-// is only read on create.
-type projectRequest struct {
-	Name string `json:"name"`
-	Seed string `json:"seed"`
 }
 
 // bindJSON decodes the body, translating an over-limit body into 413 and any

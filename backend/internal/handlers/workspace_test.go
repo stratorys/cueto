@@ -75,15 +75,6 @@ func TestConfigReportsMode(t *testing.T) {
 	if body.Mode != "workspace" {
 		t.Fatalf("mode = %q, want workspace", body.Mode)
 	}
-
-	pgRec := getJSON(realRouter(t, testConfig(t)), "/config")
-	var pg struct {
-		Mode string `json:"mode"`
-	}
-	_ = json.Unmarshal(pgRec.Body.Bytes(), &pg)
-	if pg.Mode != "playground" {
-		t.Fatalf("playground mode = %q, want playground", pg.Mode)
-	}
 }
 
 // wsSave posts a workspace save and returns the recorder.
@@ -186,17 +177,5 @@ func TestWorkspaceHistoryAndFileAtCommit(t *testing.T) {
 	_ = json.Unmarshal(fileRec.Body.Bytes(), &file)
 	if file.Data != knowledgeOnly {
 		t.Fatalf("file at commit = %q, want the seeded content", file.Data)
-	}
-}
-
-func TestWorkspaceRoutesAbsentInPlayground(t *testing.T) {
-	router := realRouter(t, testConfig(t))
-	// Workspace endpoints are not registered in playground mode.
-	if rec := postJSON(router, "/workspace/save", []byte(`{}`)); rec.Code != http.StatusNotFound {
-		t.Fatalf("workspace save in playground status = %d, want 404", rec.Code)
-	}
-	// And the playground version routes remain.
-	if rec := getJSON(router, "/projects/default/versions"); rec.Code != http.StatusOK {
-		t.Fatalf("playground versions status = %d, want 200", rec.Code)
 	}
 }

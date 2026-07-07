@@ -25,7 +25,6 @@ import (
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/domain"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
-	"github.com/stratorys/cueto/backend/internal/workspace"
 )
 
 func TestMain(m *testing.M) {
@@ -33,8 +32,10 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-// testConfig points at the repo's real ../cue schema dir with generous bounds.
-// Individual tests tighten a single bound to exercise it.
+// testConfig points at the repo's real ../cue schema dir with generous bounds and
+// roots the workspace module there too, so eval overlays resolve the bundled
+// diagram package. Individual tests tighten a single bound or override
+// WorkspaceDir to exercise it.
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
 	abs, err := filepath.Abs("../../../cue")
@@ -43,7 +44,7 @@ func testConfig(t *testing.T) config.Config {
 	}
 	return config.Config{
 		CueDir:         abs,
-		DataDir:        t.TempDir(),
+		WorkspaceDir:   abs,
 		MaxBodyBytes:   1 << 20,
 		MaxOutputBytes: 4 << 20,
 		EvalTimeout:    2 * time.Second,
@@ -53,7 +54,7 @@ func testConfig(t *testing.T) config.Config {
 
 func realRouter(t *testing.T, cfg config.Config) *gin.Engine {
 	t.Helper()
-	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), workspace.New(cfg), authoring.New(), cfg)
+	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg)
 }
 
 func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRecorder {
@@ -496,7 +497,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	be := &blockingEval{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	cfg := testConfig(t)
 	cfg.MaxConcurrent = 1
-	router := NewRouter(be, workspace.New(cfg), authoring.New(), cfg)
+	router := NewRouter(be, authoring.New(), cfg)
 
 	// First request occupies the only slot and blocks inside the handler.
 	go func() {
@@ -752,201 +753,21 @@ func TestFormatError(t *testing.T) {
 	}
 }
 
-func TestSaveWritesVersion(t *testing.T) {
-	cfg := testConfig(t)
-	router := realRouter(t, cfg)
-	rec := postJSON(router, "/projects/default/save", evalBody(t, validData))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		OK      bool   `json:"ok"`
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !body.OK || body.Version == "" {
-		t.Fatalf("want ok:true with a version, got %q", rec.Body.String())
-	}
-	// The submitted text is stored verbatim as the version's single blob, under the
-	// project's version store.
-	blobsDir := filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "blobs")
-	blobs, err := os.ReadDir(blobsDir)
-	if err != nil {
-		t.Fatalf("read blobs: %v", err)
-	}
-	if len(blobs) != 1 {
-		t.Fatalf("want 1 blob, got %d", len(blobs))
-	}
-	saved, err := os.ReadFile(filepath.Join(blobsDir, blobs[0].Name()))
-	if err != nil {
-		t.Fatalf("read blob: %v", err)
-	}
-	if string(saved) != validData {
-		t.Fatalf("version content mismatch")
-	}
-	// The data root holds the registry and project dirs, never a stray data.cue.
-	if _, err := os.Stat(filepath.Join(cfg.DataDir, "data.cue")); !os.IsNotExist(err) {
-		t.Fatalf("data dir should not contain data.cue")
-	}
-}
-
-func TestSaveInvalidNotWritten(t *testing.T) {
-	cfg := testConfig(t)
-	router := realRouter(t, cfg)
-	data := "package main\n\nimport d \"github.com/stratorys/cueto/diagram\"\n\ndiagram: d.#Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
-	rec := postJSON(router, "/projects/default/save", evalBody(t, data))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-	// No manifest is written into the project's store for invalid data. The dir may
-	// be absent (nothing ever created it), which is also "no versions".
-	entries, err := os.ReadDir(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "manifests"))
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read project manifests dir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("invalid data must not be persisted, found %d manifests", len(entries))
-	}
-}
-
-func TestSaveIdempotent(t *testing.T) {
-	cfg := testConfig(t)
-	router := realRouter(t, cfg)
-	first := postJSON(router, "/projects/default/save", evalBody(t, validData))
-	second := postJSON(router, "/projects/default/save", evalBody(t, validData))
-	if first.Body.String() != second.Body.String() {
-		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
-	}
-	entries, _ := os.ReadDir(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "manifests"))
-	if len(entries) != 1 {
-		t.Fatalf("want 1 manifest, got %d", len(entries))
-	}
-}
-
-func TestListAndReadVersion(t *testing.T) {
-	cfg := testConfig(t)
-	router := realRouter(t, cfg)
-
-	saveRec := postJSON(router, "/projects/default/save", evalBody(t, validData))
-	if saveRec.Code != http.StatusOK {
-		t.Fatalf("save status = %d, body %q", saveRec.Code, saveRec.Body.String())
-	}
-	var saved struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(saveRec.Body.Bytes(), &saved); err != nil {
-		t.Fatalf("decode save: %v", err)
-	}
-
-	listRec := getJSON(router, "/projects/default/versions")
-	if listRec.Code != http.StatusOK {
-		t.Fatalf("list status = %d", listRec.Code)
-	}
-	var list struct {
-		Versions []domain.Version `json:"versions"`
-	}
-	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
-		t.Fatalf("decode list: %v", err)
-	}
-	if len(list.Versions) != 1 || list.Versions[0].Version != saved.Version {
-		t.Fatalf("versions = %+v, want the saved hash %q", list.Versions, saved.Version)
-	}
-	if list.Versions[0].SavedAt.IsZero() {
-		t.Fatalf("version is missing a savedAt timestamp: %+v", list.Versions[0])
-	}
-
-	readRec := getJSON(router, "/projects/default/versions/"+saved.Version)
-	if readRec.Code != http.StatusOK {
-		t.Fatalf("read status = %d, body %q", readRec.Code, readRec.Body.String())
-	}
-	var read struct {
-		Version string `json:"version"`
-		Data    string `json:"data"`
-	}
-	if err := json.Unmarshal(readRec.Body.Bytes(), &read); err != nil {
-		t.Fatalf("decode read: %v", err)
-	}
-	if read.Data != validData {
-		t.Fatalf("read data mismatch:\n got %q\nwant %q", read.Data, validData)
-	}
-}
-
-func TestReadVersionBadID(t *testing.T) {
-	router := realRouter(t, testConfig(t))
-	// Well-formed single-segment but non-hex ids reach the handler and are 400.
-	for _, id := range []string{"not-a-hash", strings.Repeat("g", 64), "abc"} {
-		rec := getJSON(router, "/projects/default/versions/"+id)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("id %q status = %d, want 400", id, rec.Code)
-		}
-	}
-	// An encoded path-traversal id is rejected by the router before the handler
-	// (404); either way it must never reach the filesystem or return 200.
-	rec := getJSON(router, "/versions/..%2f..%2fetc%2fpasswd")
-	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
-		t.Fatalf("traversal id status = %d, want 400 or 404", rec.Code)
-	}
-}
-
-func TestReadVersionNotFound(t *testing.T) {
-	router := realRouter(t, testConfig(t))
-	// Well-formed but absent hash -> 404.
-	rec := getJSON(router, "/projects/default/versions/"+strings.Repeat("a", 64))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rec.Code)
-	}
-}
-
-func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
-	cfg := testConfig(t)
-	router := realRouter(t, cfg)
-	postJSON(router, "/projects/default/save", evalBody(t, validData))
-	postJSON(router, "/projects/default/save", evalBody(t, validData)) // idempotent re-save
-
-	// The index records the save exactly once (the re-save reused the manifest).
-	index, err := os.ReadFile(filepath.Join(cfg.DataDir, workspace.DefaultProjectID, "versions", "index.jsonl"))
-	if err != nil {
-		t.Fatalf("read index: %v", err)
-	}
-	lines := 0
-	for _, line := range strings.Split(strings.TrimSpace(string(index)), "\n") {
-		if strings.TrimSpace(line) != "" {
-			lines++
-		}
-	}
-	if lines != 1 {
-		t.Fatalf("index has %d lines, want 1 (idempotent save must not duplicate)", lines)
-	}
-
-	// And the listing still shows a single version.
-	listRec := getJSON(router, "/projects/default/versions")
-	var list struct {
-		Versions []domain.Version `json:"versions"`
-	}
-	_ = json.Unmarshal(listRec.Body.Bytes(), &list)
-	if len(list.Versions) != 1 {
-		t.Fatalf("versions = %d, want 1", len(list.Versions))
-	}
-}
-
-func TestConfigRejectsDataDirInsideCueDir(t *testing.T) {
-	cueDir, err := filepath.Abs("../../../cue")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CUE_DIR", cueDir)
-	t.Setenv("DATA_DIR", filepath.Join(cueDir, "data"))
+func TestConfigRequiresWorkspaceDir(t *testing.T) {
+	t.Setenv("WORKSPACE_DIR", "")
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for DATA_DIR inside CUE_DIR, got nil")
+		t.Fatal("want error for missing WORKSPACE_DIR, got nil")
 	}
 }
 
-func TestConfigRequiresDataDir(t *testing.T) {
-	t.Setenv("DATA_DIR", "")
+func TestConfigRejectsWorkspaceDirNotADirectory(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	t.Setenv("WORKSPACE_DIR", file)
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for missing DATA_DIR, got nil")
+		t.Fatal("want error for WORKSPACE_DIR pointing at a file, got nil")
 	}
 }
 

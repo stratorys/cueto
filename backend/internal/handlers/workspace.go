@@ -17,11 +17,11 @@ import (
 	"github.com/stratorys/cueto/backend/internal/repo"
 )
 
-// Config reports the persistence mode ("playground" | "workspace") so the frontend
-// picks its data source: the versions API in playground mode, the git endpoints in
-// workspace mode.
+// Config reports the persistence mode so the frontend can key its behavior. There
+// is one mode now: git-backed workspace. The field is kept for a stable frontend
+// boot shape.
 func (h *handlers) Config(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"mode": h.mode})
+	c.JSON(http.StatusOK, gin.H{"mode": "workspace"})
 }
 
 // workspaceSaveRequest saves one editor buffer to a real file in the workspace.

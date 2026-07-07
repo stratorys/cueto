@@ -31,7 +31,6 @@ import (
 	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
 	"github.com/stratorys/cueto/backend/internal/handlers"
-	"github.com/stratorys/cueto/backend/internal/workspace"
 )
 
 func main() {
@@ -58,7 +57,7 @@ func main() {
 	// mid-response.
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handlers.NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), workspace.New(cfg), authoring.New(), cfg),
+		Handler:           handlers.NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,
@@ -72,11 +71,7 @@ func main() {
 			log.Fatalf("Serve: %v", err)
 		}
 	}()
-	if cfg.WorkspaceDir != "" {
-		log.Printf("Listening on :%s, schema dir %s, workspace %s", cfg.Port, cfg.CueDir, cfg.WorkspaceDir)
-	} else {
-		log.Printf("Listening on :%s, schema dir %s, playground mode", cfg.Port, cfg.CueDir)
-	}
+	log.Printf("Listening on :%s, schema dir %s, workspace %s", cfg.Port, cfg.CueDir, cfg.WorkspaceDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
