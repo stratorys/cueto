@@ -16,19 +16,23 @@ import { toFlowEdges, toFlowNodes } from "../mapping";
 import { layoutDiagram } from "../useLayout";
 import { useDiagram } from "../useDiagram";
 import { useHighlight } from "./useHighlight";
-import { fitView, findNode } from "./flowStore";
+import { fitView, findNode as findNodeRaw } from "./flowStore";
 import { syncTextFromModel } from "./useCueSync";
 
 const { diagram, commit, undo, redo } = useDiagram();
 
+// Vue Flow's node type is deep enough to trip TS's instantiation limit in this file;
+// expose findNode through a shallow signature (only the measured size is ever read),
+// so no call site instantiates the recursive type. Same idiom used elsewhere here.
+const findNode = findNodeRaw as unknown as (
+  id: string,
+) => { dimensions?: { width: number; height: number } } | undefined;
+
 export const GRID_COLOR = "#e2e8f0";
 
 // The measured on-screen size of a rendered node, or undefined if it has none yet.
-// Vue Flow's full node type is deep enough to trip TS's instantiation limit in this
-// file, so findNode is narrowed to just the size here, in one place.
 function measuredSize(id: string): { width: number; height: number } | undefined {
-  return (findNode(id) as { dimensions?: { width: number; height: number } } | undefined)
-    ?.dimensions;
+  return findNode(id)?.dimensions;
 }
 
 // Controlled view state: the arrays ARE the view; Vue Flow keeps its store in
@@ -53,20 +57,26 @@ export const autoPositions = ref<NodePositions>({});
 // readability tweaks survive edits. Pruned to nodes that still exist.
 const pinnedPositions = ref<NodePositions>({});
 
+// An ELK edge polyline is anchored to where ELK placed its endpoints. Once a node
+// moves outside ELK - a manual drag, or a pin overriding ELK's placement on re-layout -
+// the routes of edges touching it end at the wrong spot. Return the route map with
+// those dropped so the edge falls back to its live smooth-step path; routes between
+// untouched nodes keep their orthogonal routing.
+function routesClearedAround(routes: EdgePoints, movedIds: Set<string>): EdgePoints {
+  const kept: EdgePoints = { ...routes };
+  for (const edge of diagram.value.edges) {
+    if (movedIds.has(edge.source) || movedIds.has(edge.target)) delete kept[edge.id];
+  }
+  return kept;
+}
+
 // pinAutoPosition records a derived node's dragged position. It updates the rendered
 // autoPositions immediately and remembers the pin so the next layoutAuto preserves it.
 // This is how a derived node moves without its coordinates ever reaching the file.
 export function pinAutoPosition(id: string, position: { x: number; y: number }) {
   pinnedPositions.value = { ...pinnedPositions.value, [id]: position };
   autoPositions.value = { ...autoPositions.value, [id]: position };
-  // The moved node's edges still carry ELK polylines ending at its old spot; drop
-  // those points so they fall back to the live smooth-step path and reconnect to
-  // the new position. Edges not touching this node keep their orthogonal routing.
-  const next = { ...edgePoints.value };
-  for (const edge of diagram.value.edges) {
-    if (edge.source === id || edge.target === id) delete next[edge.id];
-  }
-  edgePoints.value = next;
+  edgePoints.value = routesClearedAround(edgePoints.value, new Set([id]));
   rebuildGraph(true);
 }
 
@@ -191,6 +201,9 @@ export async function layoutAuto() {
       (e) => derivedIds.has(e.source) && derivedIds.has(e.target),
     ),
   };
+  // Lay out only once the cards have real measured sizes; feeding ELK the fallback
+  // size packs the tall table nodes together (see whenMeasured).
+  await whenMeasured();
   const result = await layoutDiagram(subgraph, (node) => {
     if (node.width && node.height) return { width: node.width, height: node.height };
     const size = measuredSize(node.id);
@@ -214,39 +227,40 @@ export async function layoutAuto() {
   }
   pinnedPositions.value = pins;
   autoPositions.value = positions;
-  // ELK routed each edge to where it PLACED the node, but a pinned node was just
-  // moved back to its pin, so any edge touching a pin now ends at the wrong spot.
-  // Drop those routes so they fall back to the live smooth-step path; the rest keep
-  // ELK's orthogonal routing.
-  const routes: EdgePoints = { ...result.edges };
-  for (const edge of subgraph.edges) {
-    if (pins[edge.source] || pins[edge.target]) delete routes[edge.id];
-  }
-  edgePoints.value = routes;
+  // A pinned node was moved back to its pin after ELK routed its edges, so those routes
+  // are stale; drop them (kept routes are all between ELK-placed nodes).
+  edgePoints.value = routesClearedAround(result.edges, new Set(Object.keys(pins)));
   rebuildGraph(true);
-  fitDerived();
+  // Sizes were measured before layout, so the geometry is final: fit on the next frame,
+  // once Vue Flow has applied the new positions.
+  requestAnimationFrame(() => void fitView({ padding: 0.2 }));
 }
 
-// fitDerived fits the derived diagram into view with padding. It must run only after
-// the nodes have real measured dimensions: on a cold load the freshly created table
-// nodes are measured asynchronously, so fitting immediately fits an under-measured
-// graph and snaps to maxZoom (the reset-looking 200% on refresh). It waits, frame by
-// frame (bounded), until the nodes are measured, then fits - so an inferred diagram is
-// always fitted, cold load or not. On a re-eval the nodes are already measured, so it
-// fits on the first frame.
-const fitAttemptsMax = 30;
-function fitDerived(attempt = 0): void {
-  if (derivedNodesMeasured() || attempt >= fitAttemptsMax) {
-    requestAnimationFrame(() => void fitView({ padding: 0.2 }));
-    return;
-  }
-  requestAnimationFrame(() => fitDerived(attempt + 1));
+// whenMeasured resolves once every rendered node has a real measured size, or after a
+// bounded number of frames so a node that never reports one cannot hang the layout. Vue
+// Flow measures freshly rendered cards asynchronously on a cold load or refresh, so the
+// auto-layout waits before feeding ELK the sizes - otherwise the tall table nodes lay
+// out at their fallback height and pack together (the bug that "clicking auto-layout"
+// worked around, since by then the cards had measured). A re-eval keeps prior sizes, so
+// this resolves on the first frame.
+const measureAttemptsMax = 30;
+function whenMeasured(): Promise<void> {
+  return new Promise((resolve) => {
+    const tick = (attempt: number) => {
+      if (derivedNodesMeasured() || attempt >= measureAttemptsMax) return resolve();
+      requestAnimationFrame(() => tick(attempt + 1));
+    };
+    tick(0);
+  });
 }
 
 // derivedNodesMeasured reports whether every rendered node has a non-zero measured size
-// in the Vue Flow store, the condition for a correct fit.
+// in the Vue Flow store, the precondition for laying out and fitting the derived diagram.
 function derivedNodesMeasured(): boolean {
-  return nodes.value.every((n) => {
+  // Iterate through a shallow view of the ids; Vue Flow's Node type is deep enough
+  // to trip TS's instantiation limit in this file.
+  const rendered = nodes.value as unknown as { id: string }[];
+  return rendered.every((n) => {
     const size = measuredSize(n.id);
     return !!size && size.width > 0 && size.height > 0;
   });

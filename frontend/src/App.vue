@@ -104,7 +104,7 @@ onMounted(async () => {
       >
         <button
           type="button"
-          class="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
+          class="absolute top-3 left-0 z-10 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
           :title="editorCollapsed ? 'Expand editor' : 'Collapse editor'"
           @pointerdown.stop
           @click="toggleEditor"
@@ -122,7 +122,7 @@ onMounted(async () => {
       >
         <button
           type="button"
-          class="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
+          class="absolute top-3 right-0 z-10 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
           :title="inspectorCollapsed ? 'Expand inspector' : 'Collapse inspector'"
           @pointerdown.stop
           @click="toggleInspector"
@@ -145,7 +145,7 @@ onMounted(async () => {
     >
       <button
         type="button"
-        class="absolute top-1/2 left-3 z-10 -translate-y-1/2 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
+        class="absolute bottom-0 left-3 z-10 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs leading-none text-slate-500 shadow-sm hover:bg-amber-500 hover:text-white"
         :title="replCollapsed ? 'Expand REPL' : 'Collapse REPL'"
         @pointerdown.stop
         @click="toggleRepl"
