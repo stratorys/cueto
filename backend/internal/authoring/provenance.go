@@ -4,59 +4,15 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package authoring
 
 import (
-	"path/filepath"
-	"regexp"
-	"strings"
-
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+
+	"github.com/stratorys/cueto/backend/internal/domain"
 )
-
-// File is one client-supplied editable CUE file: a bare filename (guarded by
-// validEditableName) and its full source text. Multiple files unify into one
-// `package main`, so nodes may be authored across several files.
-type File struct {
-	Name    string `json:"name"`
-	Content string `json:"content"`
-}
-
-// Provenance attributes each diagram element to the editable file that authored
-// it, so a canvas edit can be written back into the right file. Nodes maps a
-// node id to its filename; Edges names the single file that owns the edge list
-// (edges are a CUE list and cannot be split across files by unification).
-type Provenance struct {
-	Nodes map[string]string `json:"nodes"`
-	Edges string            `json:"edges"`
-}
-
-// editableNamePattern is the strict shape of a client filename: bare word plus
-// a .cue suffix, no other dots, no separators.
-var editableNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+\.cue$`)
-
-// validEditableName reports whether name is a safe client-supplied CUE filename.
-// It must be a bare base name (no path separators or traversal), match the strict
-// pattern, and not be the reserved schema.cue. The schema check is
-// case-insensitive because macOS/APFS is case-insensitive by default. The schema
-// now lives in the diagram/ subpackage rather than a root schema.cue, so this
-// reservation is vestigial; it is kept until the legacy layout is retired
-// (Phase 3). This guard is what lets the N-file overlay accept client filenames
-// without a client escaping the module root.
-func validEditableName(name string) bool {
-	if name != filepath.Base(name) {
-		return false
-	}
-	if !editableNamePattern.MatchString(name) {
-		return false
-	}
-	if strings.EqualFold(name, "schema.cue") {
-		return false
-	}
-	return true
-}
 
 // provenanceFrom derives element->file attribution by parsing each file's source
 // AST. It deliberately does NOT use the unified cue.Value: in cue v0.17
@@ -65,8 +21,8 @@ func validEditableName(name string) bool {
 // to the first file that declares it under diagram.nodes; the edge list to the
 // first file that declares diagram.edges. A file that fails to parse contributes
 // nothing here (eval surfaces its syntax error separately).
-func provenanceFrom(files []File) Provenance {
-	prov := Provenance{Nodes: map[string]string{}}
+func provenanceFrom(files []domain.File) domain.Provenance {
+	prov := domain.Provenance{Nodes: map[string]string{}}
 	for _, f := range files {
 		parsed, err := parser.ParseFile(f.Name, f.Content)
 		if err != nil {

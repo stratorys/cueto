@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Package handlers is the HTTP transport: it wires routes and middleware onto
-// the cueeval.Evaluator seam and keeps every untrusted-input bound either in
-// middleware here or inside the evaluator's deadline.
+// the per-concern services (evaluation, workspace, authoring) and keeps every
+// untrusted-input bound either in middleware here or inside a service deadline.
 package handlers
 
 import (
@@ -15,21 +15,20 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/stratorys/cueto/backend/internal/config"
-	"github.com/stratorys/cueto/backend/internal/cueeval"
 	"github.com/stratorys/cueto/backend/internal/diag"
 )
 
-// NewRouter wires middleware and routes. Handlers depend only on the
-// cueeval.Evaluator interface; every untrusted-input bound lives either in
-// middleware here or inside the evaluator's deadline.
-func NewRouter(eval cueeval.Evaluator, cfg config.Config) *gin.Engine {
+// NewRouter wires middleware and routes. Handlers depend only on the small
+// per-concern service interfaces; every untrusted-input bound lives either in
+// middleware here or inside a service deadline.
+func NewRouter(eval evalService, ws workspaceService, auth authoringService, cfg config.Config) *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: this backend is reached directly, so client-supplied
 	// X-Forwarded-For headers must not be believed.
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), cors(), limitBody(cfg.MaxBodyBytes), limitConcurrency(cfg.MaxConcurrent))
 
-	h := &handlers{eval: eval, cueDir: cfg.CueDir}
+	h := &handlers{eval: eval, ws: ws, authoring: auth, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
 	r.POST("/repl", h.EvalExpr)
 	r.POST("/repl/keys", h.ReplKeys)

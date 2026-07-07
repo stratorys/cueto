@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package authoring
 
 import (
 	"strings"
@@ -179,8 +179,7 @@ func TestRewriteSyntaxErrorDiagnostics(t *testing.T) {
 }
 
 func TestRewriteRejectsSchemaName(t *testing.T) {
-	e := &cueEvaluator{}
-	_, diags, err := e.Rewrite(RewriteOp{Name: "schema.cue", Content: "package diagram\n"})
+	_, diags, err := Service{}.Rewrite(RewriteOp{Name: "schema.cue", Content: "package diagram\n"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

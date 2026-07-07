@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package evaluation
 
 import "testing"
 
@@ -56,7 +56,7 @@ func TestBuildCueMetaEnumeratesPackages(t *testing.T) {
 }
 
 func TestIntrospectMemoizes(t *testing.T) {
-	e := &cueEvaluator{}
+	e := &Engine{}
 	first := e.Introspect()
 	second := e.Introspect()
 	if len(first.Packages) == 0 {

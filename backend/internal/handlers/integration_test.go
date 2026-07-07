@@ -20,10 +20,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/stratorys/cueto/backend/internal/authoring"
 	"github.com/stratorys/cueto/backend/internal/config"
-	"github.com/stratorys/cueto/backend/internal/cueeval"
 	"github.com/stratorys/cueto/backend/internal/diag"
-	"github.com/stratorys/cueto/backend/internal/store"
+	"github.com/stratorys/cueto/backend/internal/domain"
+	"github.com/stratorys/cueto/backend/internal/evaluation"
+	"github.com/stratorys/cueto/backend/internal/workspace"
 )
 
 func TestMain(m *testing.M) {
@@ -51,7 +53,7 @@ func testConfig(t *testing.T) config.Config {
 
 func realRouter(t *testing.T, cfg config.Config) *gin.Engine {
 	t.Helper()
-	return NewRouter(cueeval.New(cfg), cfg)
+	return NewRouter(evaluation.New(cfg), workspace.New(cfg), authoring.New(), cfg)
 }
 
 func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRecorder {
@@ -121,7 +123,7 @@ func TestEvalHappyPath(t *testing.T) {
 				ID string `json:"id"`
 			} `json:"edges"`
 		} `json:"diagram"`
-		Hints []cueeval.Hint `json:"hints"`
+		Hints []evaluation.Hint `json:"hints"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -282,78 +284,45 @@ diagram: d.#Diagram & {
 	}
 }
 
-// blockingEval holds the concurrency slot until released, so the cap is testable
-// deterministically without a real long evaluation.
+// blockingEval is an evalService fake that holds the concurrency slot until
+// released, so the cap is testable deterministically without a real long
+// evaluation. Only /eval is exercised, so the other concern services can be real.
 type blockingEval struct {
 	entered chan struct{}
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, files []cueeval.File) (json.RawMessage, []cueeval.Hint, cueeval.Provenance, []diag.Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, files []domain.File) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
-	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, cueeval.Provenance{}, nil, nil
+	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, nil, nil
 }
 
 func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error) {
 	return json.RawMessage(`null`), nil, nil
 }
 
-func (b *blockingEval) EvalQuery(ctx context.Context, files []cueeval.File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
+func (b *blockingEval) EvalQuery(ctx context.Context, files []domain.File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
 	return json.RawMessage(`null`), nil, nil
 }
 
-func (b *blockingEval) Keys(ctx context.Context, files []cueeval.File) ([]string, []diag.Diagnostic, error) {
+func (b *blockingEval) Keys(ctx context.Context, files []domain.File) ([]string, []diag.Diagnostic, error) {
 	return nil, nil, nil
 }
 
-func (b *blockingEval) Introspect() cueeval.CueMeta {
-	return cueeval.CueMeta{}
+func (b *blockingEval) Introspect() evaluation.CueMeta {
+	return evaluation.CueMeta{}
 }
 
-func (b *blockingEval) Vet(ctx context.Context, files []cueeval.File) ([]diag.Diagnostic, error) {
+func (b *blockingEval) Vet(ctx context.Context, files []domain.File) ([]diag.Diagnostic, error) {
 	return nil, nil
-}
-
-func (b *blockingEval) Save(ctx context.Context, projectID, data string) (string, []diag.Diagnostic, error) {
-	return "v", nil, nil
-}
-
-func (b *blockingEval) ListVersions(ctx context.Context, projectID string) ([]store.VersionMeta, error) {
-	return nil, nil
-}
-
-func (b *blockingEval) ReadVersion(ctx context.Context, projectID, id string) (string, error) {
-	return "", nil
-}
-
-func (b *blockingEval) ReadSeed(ctx context.Context) (string, error) { return "", nil }
-
-func (b *blockingEval) ListProjects(ctx context.Context) ([]store.ProjectMeta, error) {
-	return nil, nil
-}
-
-func (b *blockingEval) CreateProject(ctx context.Context, name, seed string) (store.ProjectMeta, error) {
-	return store.ProjectMeta{}, nil
-}
-
-func (b *blockingEval) RenameProject(ctx context.Context, id, name string) (store.ProjectMeta, error) {
-	return store.ProjectMeta{}, nil
-}
-
-func (b *blockingEval) DeleteProject(ctx context.Context, id string) error { return nil }
-
-func (b *blockingEval) Format(source string) (string, error) { return source, nil }
-
-func (b *blockingEval) Rewrite(op cueeval.RewriteOp) (string, []diag.Diagnostic, error) {
-	return op.Content, nil, nil
 }
 
 func TestConcurrencyLimit(t *testing.T) {
 	be := &blockingEval{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	cfg := testConfig(t)
 	cfg.MaxConcurrent = 1
-	router := NewRouter(be, cfg)
+	router := NewRouter(be, workspace.New(cfg), authoring.New(), cfg)
 
 	// First request occupies the only slot and blocks inside the handler.
 	go func() {
@@ -411,7 +380,7 @@ func TestReplQueryAgainstEditorData(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{
 		Source: `diagram.nodes.a.label`,
-		Files:  []cueeval.File{{Name: "data.cue", Content: validData}},
+		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
 	rec := postJSON(router, "/repl", body)
 	if rec.Code != http.StatusOK {
@@ -433,7 +402,7 @@ func TestReplQueryComprehension(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{
 		Source: `[for e in diagram.edges {e.id}]`,
-		Files:  []cueeval.File{{Name: "data.cue", Content: validData}},
+		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
 	rec := postJSON(router, "/repl", body)
 	if rec.Code != http.StatusOK {
@@ -480,7 +449,7 @@ func TestReplQueryIncompleteExpr(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{
 		Source: `diagram.nodes.missing.label`,
-		Files:  []cueeval.File{{Name: "data.cue", Content: validData}},
+		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
 	rec := postJSON(router, "/repl", body)
 	if rec.Code != http.StatusBadRequest {
@@ -497,7 +466,7 @@ func TestReplQueryUsesStdlibPackage(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{
 		Source: `strings.ToUpper(diagram.nodes.a.label)`,
-		Files:  []cueeval.File{{Name: "data.cue", Content: validData}},
+		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
 	rec := postJSON(router, "/repl", body)
 	if rec.Code != http.StatusOK {
@@ -520,7 +489,7 @@ func TestReplQueryFieldNamedLikePackage(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{
 		Source: `len(diagram.nodes)`,
-		Files:  []cueeval.File{{Name: "data.cue", Content: validData}},
+		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
 	rec := postJSON(router, "/repl", body)
 	if rec.Code != http.StatusOK {
@@ -534,7 +503,7 @@ func TestCueMetaLists(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
-	var meta cueeval.CueMeta
+	var meta evaluation.CueMeta
 	if err := json.Unmarshal(rec.Body.Bytes(), &meta); err != nil {
 		t.Fatalf("decode: %v (body %q)", err, rec.Body.String())
 	}
@@ -627,7 +596,7 @@ func TestSaveWritesVersion(t *testing.T) {
 		t.Fatalf("want ok:true with a version, got %q", rec.Body.String())
 	}
 	// The saved version file holds exactly the submitted text, under the project dir.
-	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, store.DefaultProjectID, body.Version+".cue"))
+	saved, err := os.ReadFile(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID, body.Version+".cue"))
 	if err != nil {
 		t.Fatalf("read version: %v", err)
 	}
@@ -650,7 +619,7 @@ func TestSaveInvalidNotWritten(t *testing.T) {
 	}
 	// No version file is written into the project's store for invalid data. The dir
 	// may be absent (nothing ever created it), which is also "no versions".
-	entries, err := os.ReadDir(filepath.Join(cfg.VersionsDir, store.DefaultProjectID))
+	entries, err := os.ReadDir(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID))
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("read project versions dir: %v", err)
 	}
@@ -669,7 +638,7 @@ func TestSaveIdempotent(t *testing.T) {
 	if first.Body.String() != second.Body.String() {
 		t.Fatalf("same content produced different versions: %q vs %q", first.Body.String(), second.Body.String())
 	}
-	entries, _ := os.ReadDir(filepath.Join(cfg.VersionsDir, store.DefaultProjectID))
+	entries, _ := os.ReadDir(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID))
 	cueFiles := 0
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".cue") {
@@ -701,7 +670,7 @@ func TestListAndReadVersion(t *testing.T) {
 		t.Fatalf("list status = %d", listRec.Code)
 	}
 	var list struct {
-		Versions []store.VersionMeta `json:"versions"`
+		Versions []domain.Version `json:"versions"`
 	}
 	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode list: %v", err)
@@ -762,7 +731,7 @@ func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	postJSON(router, "/projects/default/save", evalBody(t, validData)) // idempotent re-save
 
 	// The index records the save exactly once (the re-save reused the file).
-	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, store.DefaultProjectID, "index.jsonl"))
+	index, err := os.ReadFile(filepath.Join(cfg.VersionsDir, workspace.DefaultProjectID, "index.jsonl"))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
@@ -779,7 +748,7 @@ func TestVersionIndexNoDuplicateOnIdempotentSave(t *testing.T) {
 	// And the listing still shows a single version.
 	listRec := getJSON(router, "/projects/default/versions")
 	var list struct {
-		Versions []store.VersionMeta `json:"versions"`
+		Versions []domain.Version `json:"versions"`
 	}
 	_ = json.Unmarshal(listRec.Body.Bytes(), &list)
 	if len(list.Versions) != 1 {
@@ -806,7 +775,7 @@ func TestConfigRequiresVersionsDir(t *testing.T) {
 	}
 }
 
-func filesBody(t *testing.T, files ...cueeval.File) []byte {
+func filesBody(t *testing.T, files ...domain.File) []byte {
 	t.Helper()
 	b, err := json.Marshal(dataRequest{Files: files})
 	if err != nil {
@@ -819,14 +788,14 @@ func TestEvalMultiFileUnifiesWithProvenance(t *testing.T) {
 	// data.cue (shadowing the disk seed) holds node a and the edge list; extra.cue
 	// contributes node b via path form. They unify into one diagram, and each node
 	// is attributed to its authoring file.
-	primary := cueeval.File{Name: "data.cue", Content: `package main
+	primary := domain.File{Name: "data.cue", Content: `package main
 import d "github.com/stratorys/cueto/diagram"
 diagram: d.#Diagram & {
 	nodes: {a: {type: "process", x: 1, y: 1, label: "a"}}
 	edges: [{id: "e1", source: "a", target: "b", kind: "arrow"}]
 }
 `}
-	extra := cueeval.File{Name: "extra.cue", Content: `package main
+	extra := domain.File{Name: "extra.cue", Content: `package main
 diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 `}
 	router := realRouter(t, testConfig(t))
@@ -838,7 +807,7 @@ diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 		Diagram struct {
 			Nodes map[string]any `json:"nodes"`
 		} `json:"diagram"`
-		Provenance cueeval.Provenance `json:"provenance"`
+		Provenance domain.Provenance `json:"provenance"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -857,7 +826,7 @@ diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 func TestEvalRejectsSchemaFilename(t *testing.T) {
 	// A client must never be able to supply schema.cue and shadow the hand-owned one.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", filesBody(t, cueeval.File{Name: "schema.cue", Content: "package diagram\n"}))
+	rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: "schema.cue", Content: "package diagram\n"}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -870,7 +839,7 @@ func TestEvalRejectsSchemaFilename(t *testing.T) {
 func TestEvalRejectsTraversalFilename(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	for _, name := range []string{"../evil.cue", "sub/dir.cue", "Schema.cue"} {
-		rec := postJSON(router, "/eval", filesBody(t, cueeval.File{Name: name, Content: "package diagram\n"}))
+		rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: name, Content: "package diagram\n"}))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("name %q status = %d, want 400", name, rec.Code)
 		}

@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package evaluation
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/diag"
+	"github.com/stratorys/cueto/backend/internal/domain"
 )
 
 func TestRecoverToResultCatchesPanic(t *testing.T) {
@@ -39,9 +40,9 @@ func TestRecoverToResultPassesThrough(t *testing.T) {
 	}
 }
 
-// realEvaluator builds an Evaluator against the repo's real cue/ package so tests
-// that exercise the schema import resolve github.com/stratorys/cueto/diagram.
-func realEvaluator(t *testing.T) Evaluator {
+// realEngine builds an Engine against the repo's real cue/ package so tests that
+// exercise the schema import resolve github.com/stratorys/cueto/diagram.
+func realEngine(t *testing.T) *Engine {
 	t.Helper()
 	abs, err := filepath.Abs("../../../cue")
 	if err != nil {
@@ -98,8 +99,8 @@ diagram: d.#Diagram & {
 `
 
 func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
-	e := realEvaluator(t)
-	files := []File{{Name: "data.cue", Content: familyMembrane}}
+	e := realEngine(t)
+	files := []domain.File{{Name: "data.cue", Content: familyMembrane}}
 
 	diags, err := e.Vet(context.Background(), files)
 	if err != nil {
@@ -109,7 +110,7 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 		t.Fatalf("want clean vet, got %+v", diags)
 	}
 
-	out, _, _, evalDiags, err := e.Eval(context.Background(), files)
+	out, _, evalDiags, err := e.Eval(context.Background(), files)
 	if err != nil || len(evalDiags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, evalDiags)
 	}
@@ -126,13 +127,13 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 }
 
 func TestMembraneFamilyTreeDanglingReferenceFails(t *testing.T) {
-	e := realEvaluator(t)
+	e := realEngine(t)
 	// Point Marty's father at a person key that does not exist. The #PersonKey
 	// disjunction rejects it, so vet must fail at people.marty.father.
 	dangling := strings.Replace(familyMembrane,
 		`marty:    {name: "Marty McFly", mother: "lorraine", father: "george", year: 1968}`,
 		`marty:    {name: "Marty McFly", mother: "lorraine", father: "ghost", year: 1968}`, 1)
-	files := []File{{Name: "data.cue", Content: dangling}}
+	files := []domain.File{{Name: "data.cue", Content: dangling}}
 
 	diags, err := e.Vet(context.Background(), files)
 	if err != nil {

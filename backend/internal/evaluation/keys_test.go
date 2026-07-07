@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package evaluation
 
 import (
 	"strings"

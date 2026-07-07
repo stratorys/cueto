@@ -12,25 +12,34 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/stratorys/cueto/backend/internal/cueeval"
 	"github.com/stratorys/cueto/backend/internal/diag"
-	"github.com/stratorys/cueto/backend/internal/store"
+	"github.com/stratorys/cueto/backend/internal/domain"
+	"github.com/stratorys/cueto/backend/internal/workspace"
 )
 
 // Save validates the data and, when valid, stores it as a new immutable version.
-// It answers 200 with {ok:true, version:"<hash>"} or 400 with diagnostics.
+// It answers 200 with {ok:true, version:"<hash>"} or 400 with diagnostics. The
+// two concerns are composed here: the evaluation service validates, and only on a
+// clean result does the workspace service persist, so an invalid diagram is never
+// written.
 func (h *handlers) Save(c *gin.Context) {
 	var req dataRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	version, diags, err := h.eval.Save(c.Request.Context(), c.Param("pid"), req.Data)
+	files := []domain.File{{Name: "data.cue", Content: req.Data}}
+	diags, err := h.eval.Vet(c.Request.Context(), files)
 	if err != nil {
-		writeProjectError(c, err)
+		writeOpError(c, err)
 		return
 	}
 	if len(diags) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
+		return
+	}
+	version, err := h.ws.SaveVersion(c.Request.Context(), c.Param("pid"), req.Data)
+	if err != nil {
+		writeProjectError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "version": version})
@@ -38,7 +47,7 @@ func (h *handlers) Save(c *gin.Context) {
 
 // ListVersions returns a project's saved versions newest-first as {versions:[...]}.
 func (h *handlers) ListVersions(c *gin.Context) {
-	versions, err := h.eval.ListVersions(c.Request.Context(), c.Param("pid"))
+	versions, err := h.ws.ListVersions(c.Request.Context(), c.Param("pid"))
 	if err != nil {
 		writeProjectError(c, err)
 		return
@@ -50,14 +59,14 @@ func (h *handlers) ListVersions(c *gin.Context) {
 // id is 400; an unknown (but well-formed) id is 404.
 func (h *handlers) ReadVersion(c *gin.Context) {
 	id := c.Param("id")
-	data, err := h.eval.ReadVersion(c.Request.Context(), c.Param("pid"), id)
+	data, err := h.ws.ReadVersion(c.Request.Context(), c.Param("pid"), id)
 	if err != nil {
 		switch {
-		case errors.Is(err, store.ErrInvalidVersionID):
+		case errors.Is(err, workspace.ErrInvalidVersionID):
 			c.JSON(http.StatusBadRequest, gin.H{
 				"diagnostics": []diag.Diagnostic{{Message: "invalid version id", Kind: diag.KindInternal}},
 			})
-		case errors.Is(err, store.ErrVersionNotFound):
+		case errors.Is(err, workspace.ErrVersionNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
 				"diagnostics": []diag.Diagnostic{{Message: "version not found", Kind: diag.KindInternal}},
 			})
@@ -72,9 +81,9 @@ func (h *handlers) ReadVersion(c *gin.Context) {
 // Seed returns the on-disk seed data.cue as {data}, the mount-time fallback when
 // no saved version exists. A missing seed file is 404.
 func (h *handlers) Seed(c *gin.Context) {
-	data, err := h.eval.ReadSeed(c.Request.Context())
+	data, err := h.ws.ReadSeed()
 	if err != nil {
-		if errors.Is(err, cueeval.ErrSeedNotFound) {
+		if errors.Is(err, workspace.ErrSeedNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"diagnostics": []diag.Diagnostic{{Message: "seed data.cue not found", Kind: diag.KindInternal}},
 			})

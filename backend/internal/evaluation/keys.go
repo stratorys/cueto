@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package evaluation
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"cuelang.org/go/cue"
 
 	"github.com/stratorys/cueto/backend/internal/diag"
+	"github.com/stratorys/cueto/backend/internal/domain"
 )
 
 // A CUE bare identifier. Non-identifier keys are addressed with quoted/index
@@ -27,16 +28,16 @@ const (
 	keyCountMax = 5000
 )
 
-// Keys implements Evaluator. It builds the editable file set overlaid on the
-// schema and returns the dotted, identifier-only field paths of every top-level
-// data field (people, people.george, diagram, diagram.nodes, ...), so the REPL
-// autocompletes the whole data, not just the diagram. Definitions, hidden fields,
-// and non-identifier keys are skipped (completion inserts bare dotted references);
-// lists carry their own path but are not descended. It reads the value's
-// structure, not a concrete result, so an incomplete field still contributes its
-// path. Diagnostics from an invalid/incomplete diagram are surfaced the same way a
-// query would; the overlay is thrown away, so nothing is persisted.
-func (e *cueEvaluator) Keys(ctx context.Context, files []File) ([]string, []diag.Diagnostic, error) {
+// Keys builds the editable file set overlaid on the schema and returns the dotted,
+// identifier-only field paths of every top-level data field (people, people.george,
+// diagram, diagram.nodes, ...), so the REPL autocompletes the whole data, not just
+// the diagram. Definitions, hidden fields, and non-identifier keys are skipped
+// (completion inserts bare dotted references); lists carry their own path but are
+// not descended. It reads the value's structure, not a concrete result, so an
+// incomplete field still contributes its path. Diagnostics from an invalid/incomplete
+// diagram are surfaced the same way a query would; the overlay is thrown away, so
+// nothing is persisted.
+func (e *Engine) Keys(ctx context.Context, files []domain.File) ([]string, []diag.Diagnostic, error) {
 	root, _, diags, err := e.evaluate(ctx, files, "")
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err

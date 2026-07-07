@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package store
+package workspace
 
 import (
 	"bufio"
@@ -20,28 +20,36 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-// VersionMeta identifies one saved version and when it was first saved. SavedAt
-// comes from the append-only index when present, else the file mtime.
-type VersionMeta struct {
-	Version string    `json:"version"`
-	SavedAt time.Time `json:"savedAt"`
-}
+	"github.com/stratorys/cueto/backend/internal/domain"
+)
 
 // versionIDPattern is the exact shape of a content-hash id (sha256 hex). Reads
 // are rejected unless the id matches, so a version id from the URL can never
-// escape the versions dir via path traversal.
+// escape the data dir via path traversal.
 var versionIDPattern = regexp.MustCompile("^[a-f0-9]{64}$")
 
-// WriteVersion stores data as an immutable, content-addressed version under dir
+// SaveVersion persists data as a new immutable version of a project and returns
+// its id. It resolves (and validates) the project first, so a bad project id or a
+// missing project surfaces before anything is written. Validating the data
+// against the schema is the caller's concern: the transport runs the evaluation
+// service before calling SaveVersion, so an invalid diagram is never persisted.
+func (w *Workspace) SaveVersion(_ context.Context, projectID, data string) (string, error) {
+	dir, err := w.ResolveProjectDir(projectID)
+	if err != nil {
+		return "", err
+	}
+	return w.writeVersion(dir, []byte(data))
+}
+
+// writeVersion stores data as an immutable, content-addressed version under dir
 // and returns its id (the sha256 hex of the content). Writes go only into the
-// versions dir - never the CUE package dir - so the seed data.cue is untouched
-// and version files never join the default `package main`. Identical content
-// is idempotent: an existing version is reused, not rewritten.
-func (s *Store) WriteVersion(dir string, data []byte) (string, error) {
-	if s.versionsDir == "" {
-		return "", ErrNoVersionsDir
+// data dir - never the CUE package dir - so the seed data.cue is untouched and
+// version files never join the default `package main`. Identical content is
+// idempotent: an existing version is reused, not rewritten.
+func (w *Workspace) writeVersion(dir string, data []byte) (string, error) {
+	if w.dataDir == "" {
+		return "", ErrNoDataDir
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -71,23 +79,23 @@ func (s *Store) WriteVersion(dir string, data []byte) (string, error) {
 	// branch reaches here (idempotent re-saves returned above), so a version is
 	// indexed exactly once. The index is derived metadata: a failure to append is
 	// not fatal to the save, since the version file itself is the source of truth.
-	_ = s.appendIndex(dir, id)
+	_ = w.appendIndex(dir, id)
 	return id, nil
 }
 
 // indexPath is a project's append-only log of save events (one JSON object per line).
-func (s *Store) indexPath(dir string) string {
+func (w *Workspace) indexPath(dir string) string {
 	return filepath.Join(dir, "index.jsonl")
 }
 
 // appendIndex records one save event. Content hashes carry no order or time, so
 // this log is what lets ListVersions present true save order and timestamps.
-func (s *Store) appendIndex(dir, id string) error {
-	line, err := json.Marshal(VersionMeta{Version: id, SavedAt: time.Now().UTC()})
+func (w *Workspace) appendIndex(dir, id string) error {
+	line, err := json.Marshal(domain.Version{Version: id, SavedAt: time.Now().UTC()})
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.indexPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(w.indexPath(dir), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -101,9 +109,9 @@ func (s *Store) appendIndex(dir, id string) error {
 // readIndex reads a project's save-order log into a map of id -> first-save time. A
 // missing index is not an error (older versions predate it); such versions fall
 // back to their file mtime in ListVersions.
-func (s *Store) readIndex(dir string) map[string]time.Time {
+func (w *Workspace) readIndex(dir string) map[string]time.Time {
 	times := map[string]time.Time{}
-	f, err := os.Open(s.indexPath(dir))
+	f, err := os.Open(w.indexPath(dir))
 	if err != nil {
 		return times
 	}
@@ -113,7 +121,7 @@ func (s *Store) readIndex(dir string) map[string]time.Time {
 		if len(bytes.TrimSpace(scanner.Bytes())) == 0 {
 			continue
 		}
-		var meta VersionMeta
+		var meta domain.Version
 		if err := json.Unmarshal(scanner.Bytes(), &meta); err != nil {
 			continue
 		}
@@ -127,20 +135,20 @@ func (s *Store) readIndex(dir string) map[string]time.Time {
 
 // ListVersions enumerates a project's version files and stamps each with its
 // indexed save time (or mtime when it predates the index), newest first.
-func (s *Store) ListVersions(_ context.Context, projectID string) ([]VersionMeta, error) {
-	dir, err := s.ResolveProjectDir(projectID)
+func (w *Workspace) ListVersions(_ context.Context, projectID string) ([]domain.Version, error) {
+	dir, err := w.ResolveProjectDir(projectID)
 	if err != nil {
 		return nil, err
 	}
-	times := s.readIndex(dir)
+	times := w.readIndex(dir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return []VersionMeta{}, nil
+			return []domain.Version{}, nil
 		}
 		return nil, err
 	}
-	out := make([]VersionMeta, 0, len(entries))
+	out := make([]domain.Version, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".cue") {
@@ -153,7 +161,7 @@ func (s *Store) ListVersions(_ context.Context, projectID string) ([]VersionMeta
 				saved = info.ModTime()
 			}
 		}
-		out = append(out, VersionMeta{Version: id, SavedAt: saved})
+		out = append(out, domain.Version{Version: id, SavedAt: saved})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SavedAt.After(out[j].SavedAt) })
 	return out, nil
@@ -161,9 +169,9 @@ func (s *Store) ListVersions(_ context.Context, projectID string) ([]VersionMeta
 
 // ReadVersion returns the stored data.cue text of one of a project's versions by
 // its content hash. The id is regex-validated before any path is built, so it can
-// never traverse out of the versions dir.
-func (s *Store) ReadVersion(_ context.Context, projectID, id string) (string, error) {
-	dir, err := s.ResolveProjectDir(projectID)
+// never traverse out of the data dir.
+func (w *Workspace) ReadVersion(_ context.Context, projectID, id string) (string, error) {
+	dir, err := w.ResolveProjectDir(projectID)
 	if err != nil {
 		return "", err
 	}

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stratorys/cueto/backend/internal/cueeval"
+	"github.com/stratorys/cueto/backend/internal/evaluation"
 )
 
 // evalHints runs /eval and returns the hints from a successful response.
-func evalHints(t *testing.T, data string) []cueeval.Hint {
+func evalHints(t *testing.T, data string) []evaluation.Hint {
 	t.Helper()
 	router := realRouter(t, testConfig(t))
 	rec := postJSON(router, "/eval", evalBody(t, data))
@@ -24,7 +24,7 @@ func evalHints(t *testing.T, data string) []cueeval.Hint {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
 	var out struct {
-		Hints []cueeval.Hint `json:"hints"`
+		Hints []evaluation.Hint `json:"hints"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -44,14 +44,14 @@ func TestHintsTypeAndOptional(t *testing.T) {
 			t.Fatalf("hint without a source line: %+v", h)
 		}
 		switch h.Kind {
-		case cueeval.HintType:
+		case evaluation.HintType:
 			haveType = true
 			// The type field's declared constraint must surface as the enum, not a
 			// collapsed concrete value.
 			if strings.Contains(h.Label, "process") && !strings.Contains(h.Label, "|") {
 				t.Fatalf("type hint = %q, want the enum disjunction", h.Label)
 			}
-		case cueeval.HintOptional:
+		case evaluation.HintOptional:
 			// validData sets no optional node fields, so at least one struct must
 			// offer width? (edge structs list their own optionals instead).
 			if strings.Contains(h.Label, "width?") {
@@ -97,7 +97,7 @@ diagram: d.#Diagram & {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	var out struct {
-		Hints []cueeval.Hint `json:"hints"`
+		Hints []evaluation.Hint `json:"hints"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	if len(out.Hints) != 0 {

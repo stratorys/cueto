@@ -11,17 +11,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/stratorys/cueto/backend/internal/cueeval"
+	"github.com/stratorys/cueto/backend/internal/authoring"
 )
 
 // Rewrite splices canvas edits into one editable file and returns the new text
 // as {content}. A syntax error (in the file or a supplied body) is 400.
 func (h *handlers) Rewrite(c *gin.Context) {
-	var op cueeval.RewriteOp
+	var op authoring.RewriteOp
 	if !bindJSON(c, &op) {
 		return
 	}
-	content, diags, err := h.eval.Rewrite(op)
+	content, diags, err := h.authoring.Rewrite(op)
 	if err != nil {
 		writeOpError(c, err)
 		return

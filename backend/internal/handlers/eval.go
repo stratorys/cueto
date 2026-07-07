@@ -16,12 +16,15 @@ import (
 )
 
 // Eval returns the concrete diagram JSON, or 400 with structured diagnostics.
+// Provenance is derived by the authoring concern from the same file set, so the
+// response still carries the node/edge->file attribution the canvas needs.
 func (h *handlers) Eval(c *gin.Context) {
 	var req dataRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	out, hints, prov, diags, err := h.eval.Eval(c.Request.Context(), req.files())
+	files := req.files()
+	out, hints, diags, err := h.eval.Eval(c.Request.Context(), files)
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -30,6 +33,7 @@ func (h *handlers) Eval(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
 		return
 	}
+	prov := h.authoring.ProvenanceFor(files)
 	c.JSON(http.StatusOK, gin.H{"diagram": json.RawMessage(out), "hints": hints, "provenance": prov})
 }
 
@@ -110,7 +114,7 @@ func (h *handlers) Format(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	formatted, err := h.eval.Format(req.Source)
+	formatted, err := h.authoring.Format(req.Source)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diag.From(err, h.cueDir, diag.KindParse)})
 		return

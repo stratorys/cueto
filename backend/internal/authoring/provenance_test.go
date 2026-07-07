@@ -4,42 +4,16 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package authoring
 
-import "testing"
+import (
+	"testing"
 
-func TestValidEditableName(t *testing.T) {
-	ok := []string{"data.cue", "nodes.cue", "my_file-2.cue", "A.cue"}
-	for _, name := range ok {
-		if !validEditableName(name) {
-			t.Errorf("validEditableName(%q) = false, want true", name)
-		}
-	}
-	bad := []string{
-		"schema.cue",     // reserved
-		"Schema.cue",     // reserved, case-insensitive (APFS)
-		"SCHEMA.CUE",     // reserved, case-insensitive
-		"../schema.cue",  // traversal
-		"a/b.cue",        // separator
-		"a\\b.cue",       // backslash separator
-		"data.txt",       // wrong suffix
-		"data.cue.bak",   // extra dot
-		".cue",           // no stem
-		"data",           // no suffix
-		"",               // empty
-		".",              // dot
-		"..",             // parent
-		"/etc/data.cue",  // absolute
-	}
-	for _, name := range bad {
-		if validEditableName(name) {
-			t.Errorf("validEditableName(%q) = true, want false", name)
-		}
-	}
-}
+	"github.com/stratorys/cueto/backend/internal/domain"
+)
 
 func TestProvenanceFromAllShapes(t *testing.T) {
-	files := []File{
+	files := []domain.File{
 		// Embedded #Diagram & {…} with a nodes struct and the edge list.
 		{Name: "a.cue", Content: `package diagram
 diagram: #Diagram & {
@@ -80,7 +54,7 @@ diagram: {
 
 func TestProvenanceFirstDeclarationWins(t *testing.T) {
 	// A node id declared in two files is attributed to the first file in order.
-	files := []File{
+	files := []domain.File{
 		{Name: "first.cue", Content: "package diagram\ndiagram: nodes: shared: {x: 1}\n"},
 		{Name: "second.cue", Content: "package diagram\ndiagram: nodes: shared: {y: 2}\n"},
 	}
@@ -91,7 +65,7 @@ func TestProvenanceFirstDeclarationWins(t *testing.T) {
 }
 
 func TestProvenanceSkipsUnparseable(t *testing.T) {
-	files := []File{
+	files := []domain.File{
 		{Name: "broken.cue", Content: "package diagram\ndiagram: nodes: {"},
 		{Name: "ok.cue", Content: "package diagram\ndiagram: nodes: e: {x: 1}\n"},
 	}

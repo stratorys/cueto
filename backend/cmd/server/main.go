@@ -27,9 +27,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"github.com/stratorys/cueto/backend/internal/authoring"
 	"github.com/stratorys/cueto/backend/internal/config"
-	"github.com/stratorys/cueto/backend/internal/cueeval"
+	"github.com/stratorys/cueto/backend/internal/evaluation"
 	"github.com/stratorys/cueto/backend/internal/handlers"
+	"github.com/stratorys/cueto/backend/internal/workspace"
 )
 
 func main() {
@@ -56,7 +58,7 @@ func main() {
 	// mid-response.
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handlers.NewRouter(cueeval.New(cfg), cfg),
+		Handler:           handlers.NewRouter(evaluation.New(cfg), workspace.New(cfg), authoring.New(), cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,

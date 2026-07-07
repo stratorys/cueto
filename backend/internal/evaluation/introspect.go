@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package evaluation
 
 import (
 	"fmt"
@@ -106,9 +106,10 @@ func replImports(expr string) string {
 	return b.String()
 }
 
-// Introspect implements Evaluator. The reference is static per CUE version, so it
-// is built once (buildCueMeta walks each package) and memoized.
-func (e *cueEvaluator) Introspect() CueMeta {
+// Introspect returns the CUE builtin functions and importable standard-library
+// packages that a REPL query can reference. The reference is static per CUE
+// version, so it is built once (buildCueMeta walks each package) and memoized.
+func (e *Engine) Introspect() CueMeta {
 	e.metaOnce.Do(func() { e.meta = buildCueMeta() })
 	return e.meta
 }

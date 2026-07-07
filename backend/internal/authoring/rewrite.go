@@ -4,11 +4,9 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package cueeval
+package authoring
 
 import (
-	"fmt"
-
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
@@ -16,15 +14,6 @@ import (
 
 	"github.com/stratorys/cueto/backend/internal/diag"
 )
-
-// Rewrite implements Evaluator. The filename is guarded the same way as an
-// overlay file, so a rewrite can never target schema.cue or escape the CUE dir.
-func (e *cueEvaluator) Rewrite(op RewriteOp) (string, []diag.Diagnostic, error) {
-	if !validEditableName(op.Name) {
-		return "", []diag.Diagnostic{{Message: fmt.Sprintf("invalid file name %q", op.Name), Kind: diag.KindParse}}, nil
-	}
-	return rewriteFile(op)
-}
 
 // RewriteOp describes an in-place edit of one editable file's diagram content.
 // Node and edge bodies are CUE source text (the frontend emits them), so keys

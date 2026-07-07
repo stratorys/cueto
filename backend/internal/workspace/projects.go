@@ -4,7 +4,7 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-package store
+package workspace
 
 import (
 	"context"
@@ -16,17 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-// ProjectMeta identifies one project and its display name. The id is a stable
-// filesystem-safe slug (also the version-store subdirectory name); the name is
-// the mutable label shown in the UI.
-type ProjectMeta struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-}
+	"github.com/stratorys/cueto/backend/internal/domain"
+)
 
 // DefaultProjectID is the auto-created project that adopts any legacy flat
 // version store on first run.
@@ -34,58 +26,58 @@ const DefaultProjectID = "default"
 
 // projectIDPattern is the exact shape of a project id: a bare lowercase slug that
 // cannot contain a path separator or dot, so it can never traverse out of the
-// versions dir when joined into a path. Mirrors versionIDPattern's discipline.
+// data dir when joined into a path. Mirrors versionIDPattern's discipline.
 var projectIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
-// projectDir is the per-project version store: versionsDir/<id>/.
-func (s *Store) projectDir(id string) string {
-	return filepath.Join(s.versionsDir, id)
+// projectDir is the per-project version store: dataDir/<id>/.
+func (w *Workspace) projectDir(id string) string {
+	return filepath.Join(w.dataDir, id)
 }
 
-// registryPath is the project registry (projects.json), stored at the versions
+// registryPath is the project registry (projects.json), stored at the data
 // root alongside the per-project subdirectories.
-func (s *Store) registryPath() string {
-	return filepath.Join(s.versionsDir, "projects.json")
+func (w *Workspace) registryPath() string {
+	return filepath.Join(w.dataDir, "projects.json")
 }
 
 // ResolveProjectDir validates the id, bootstraps the registry if needed, and
 // confirms the project exists, returning its version-store directory. It takes the
 // registry lock; version ops call it before touching the filesystem.
-func (s *Store) ResolveProjectDir(id string) (string, error) {
-	if s.versionsDir == "" {
-		return "", ErrNoVersionsDir
+func (w *Workspace) ResolveProjectDir(id string) (string, error) {
+	if w.dataDir == "" {
+		return "", ErrNoDataDir
 	}
 	if !projectIDPattern.MatchString(id) {
 		return "", ErrInvalidProjectID
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureBootstrapLocked(); err != nil {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureBootstrapLocked(); err != nil {
 		return "", err
 	}
-	list, err := s.readRegistryLocked()
+	list, err := w.readRegistryLocked()
 	if err != nil {
 		return "", err
 	}
 	for _, p := range list {
 		if p.ID == id {
-			return s.projectDir(id), nil
+			return w.projectDir(id), nil
 		}
 	}
 	return "", ErrProjectNotFound
 }
 
 // readRegistryLocked reads projects.json. A missing file yields an empty list (the
-// caller bootstraps). Must be called with s.mu held.
-func (s *Store) readRegistryLocked() ([]ProjectMeta, error) {
-	data, err := os.ReadFile(s.registryPath())
+// caller bootstraps). Must be called with w.mu held.
+func (w *Workspace) readRegistryLocked() ([]domain.Project, error) {
+	data, err := os.ReadFile(w.registryPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []ProjectMeta{}, nil
+			return []domain.Project{}, nil
 		}
 		return nil, err
 	}
-	var list []ProjectMeta
+	var list []domain.Project
 	if err := json.Unmarshal(data, &list); err != nil {
 		return nil, err
 	}
@@ -93,38 +85,38 @@ func (s *Store) readRegistryLocked() ([]ProjectMeta, error) {
 }
 
 // writeRegistryLocked persists the registry atomically (write-temp-then-rename), so
-// a crash mid-write never leaves a truncated projects.json. Must hold s.mu.
-func (s *Store) writeRegistryLocked(list []ProjectMeta) error {
-	if err := os.MkdirAll(s.versionsDir, 0o755); err != nil {
+// a crash mid-write never leaves a truncated projects.json. Must hold w.mu.
+func (w *Workspace) writeRegistryLocked(list []domain.Project) error {
+	if err := os.MkdirAll(w.dataDir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := s.registryPath() + ".tmp"
+	tmp := w.registryPath() + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.registryPath())
+	return os.Rename(tmp, w.registryPath())
 }
 
 // ensureBootstrapLocked creates the registry on first use. When a legacy flat
 // version store exists (loose <hash>.cue files and an index.jsonl directly under
-// versionsDir, from before projects), it migrates them into the "default" project
-// so no saved history is lost. A no-op once projects.json exists. Must hold s.mu.
-func (s *Store) ensureBootstrapLocked() error {
-	if _, err := os.Stat(s.registryPath()); err == nil {
+// dataDir, from before projects), it migrates them into the "default" project
+// so no saved history is lost. A no-op once projects.json exists. Must hold w.mu.
+func (w *Workspace) ensureBootstrapLocked() error {
+	if _, err := os.Stat(w.registryPath()); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 
 	now := time.Now().UTC()
-	if err := s.migrateLegacyStoreLocked(); err != nil {
+	if err := w.migrateLegacyStoreLocked(); err != nil {
 		return err
 	}
-	return s.writeRegistryLocked([]ProjectMeta{{
+	return w.writeRegistryLocked([]domain.Project{{
 		ID:        DefaultProjectID,
 		Name:      "Default",
 		CreatedAt: now,
@@ -133,18 +125,18 @@ func (s *Store) ensureBootstrapLocked() error {
 }
 
 // migrateLegacyStoreLocked moves any loose version files and index.jsonl at the
-// versions root into versionsDir/default/. Safe when there is nothing to move. A
-// fresh store with nothing to migrate leaves the default project empty (a blank
+// data root into dataDir/default/. Safe when there is nothing to move. A fresh
+// store with nothing to migrate leaves the default project empty (a blank
 // canvas); users get the committed sample via "New from sample".
-func (s *Store) migrateLegacyStoreLocked() error {
-	entries, err := os.ReadDir(s.versionsDir)
+func (w *Workspace) migrateLegacyStoreLocked() error {
+	entries, err := os.ReadDir(w.dataDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	dest := s.projectDir(DefaultProjectID)
+	dest := w.projectDir(DefaultProjectID)
 	moved := false
 	for _, entry := range entries {
 		name := entry.Name()
@@ -159,7 +151,7 @@ func (s *Store) migrateLegacyStoreLocked() error {
 			}
 			moved = true
 		}
-		if err := os.Rename(filepath.Join(s.versionsDir, name), filepath.Join(dest, name)); err != nil {
+		if err := os.Rename(filepath.Join(w.dataDir, name), filepath.Join(dest, name)); err != nil {
 			return err
 		}
 	}
@@ -169,16 +161,16 @@ func (s *Store) migrateLegacyStoreLocked() error {
 // ListProjects returns the registered projects, newest-updated first. The first
 // call bootstraps the registry, migrating any legacy flat version store into a
 // "default" project.
-func (s *Store) ListProjects(_ context.Context) ([]ProjectMeta, error) {
-	if s.versionsDir == "" {
-		return nil, ErrNoVersionsDir
+func (w *Workspace) ListProjects(_ context.Context) ([]domain.Project, error) {
+	if w.dataDir == "" {
+		return nil, ErrNoDataDir
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureBootstrapLocked(); err != nil {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureBootstrapLocked(); err != nil {
 		return nil, err
 	}
-	list, err := s.readRegistryLocked()
+	list, err := w.readRegistryLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -186,21 +178,34 @@ func (s *Store) ListProjects(_ context.Context) ([]ProjectMeta, error) {
 	return list, nil
 }
 
-// Create registers a new project. The id is a uniquified slug of the name; when
-// seedData is non-empty it is written as the project's first version (the caller
-// supplies the seed text), otherwise the project starts empty.
-func (s *Store) Create(name string, seedData []byte) (ProjectMeta, error) {
-	if s.versionsDir == "" {
-		return ProjectMeta{}, ErrNoVersionsDir
+// CreateProject registers a new project seeded either "blank" or "sample" (a copy
+// of the seed data.cue as its first version), returning its metadata. Reading the
+// seed is best-effort: a missing seed yields a blank project rather than failing.
+func (w *Workspace) CreateProject(_ context.Context, name, seed string) (domain.Project, error) {
+	var seedData []byte
+	if seed == "sample" {
+		if data, err := w.ReadSeed(); err == nil {
+			seedData = []byte(data)
+		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureBootstrapLocked(); err != nil {
-		return ProjectMeta{}, err
+	return w.create(name, seedData)
+}
+
+// create registers a new project. The id is a uniquified slug of the name; when
+// seedData is non-empty it is written as the project's first version, otherwise
+// the project starts empty.
+func (w *Workspace) create(name string, seedData []byte) (domain.Project, error) {
+	if w.dataDir == "" {
+		return domain.Project{}, ErrNoDataDir
 	}
-	list, err := s.readRegistryLocked()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureBootstrapLocked(); err != nil {
+		return domain.Project{}, err
+	}
+	list, err := w.readRegistryLocked()
 	if err != nil {
-		return ProjectMeta{}, err
+		return domain.Project{}, err
 	}
 
 	display := strings.TrimSpace(name)
@@ -213,36 +218,36 @@ func (s *Store) Create(name string, seedData []byte) (ProjectMeta, error) {
 	}
 	id := uniqueProjectID(slugifyProject(display), taken)
 
-	if err := os.MkdirAll(s.projectDir(id), 0o755); err != nil {
-		return ProjectMeta{}, err
+	if err := os.MkdirAll(w.projectDir(id), 0o755); err != nil {
+		return domain.Project{}, err
 	}
 	if len(seedData) > 0 {
-		if _, werr := s.WriteVersion(s.projectDir(id), seedData); werr != nil {
-			return ProjectMeta{}, werr
+		if _, werr := w.writeVersion(w.projectDir(id), seedData); werr != nil {
+			return domain.Project{}, werr
 		}
 	}
 
 	now := time.Now().UTC()
-	meta := ProjectMeta{ID: id, Name: display, CreatedAt: now, UpdatedAt: now}
-	if err := s.writeRegistryLocked(append(list, meta)); err != nil {
-		return ProjectMeta{}, err
+	meta := domain.Project{ID: id, Name: display, CreatedAt: now, UpdatedAt: now}
+	if err := w.writeRegistryLocked(append(list, meta)); err != nil {
+		return domain.Project{}, err
 	}
 	return meta, nil
 }
 
 // RenameProject changes a project's display name.
-func (s *Store) RenameProject(_ context.Context, id, name string) (ProjectMeta, error) {
-	if s.versionsDir == "" {
-		return ProjectMeta{}, ErrNoVersionsDir
+func (w *Workspace) RenameProject(_ context.Context, id, name string) (domain.Project, error) {
+	if w.dataDir == "" {
+		return domain.Project{}, ErrNoDataDir
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureBootstrapLocked(); err != nil {
-		return ProjectMeta{}, err
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureBootstrapLocked(); err != nil {
+		return domain.Project{}, err
 	}
-	list, err := s.readRegistryLocked()
+	list, err := w.readRegistryLocked()
 	if err != nil {
-		return ProjectMeta{}, err
+		return domain.Project{}, err
 	}
 	display := strings.TrimSpace(name)
 	if display == "" {
@@ -252,34 +257,34 @@ func (s *Store) RenameProject(_ context.Context, id, name string) (ProjectMeta, 
 		if list[i].ID == id {
 			list[i].Name = display
 			list[i].UpdatedAt = time.Now().UTC()
-			if err := s.writeRegistryLocked(list); err != nil {
-				return ProjectMeta{}, err
+			if err := w.writeRegistryLocked(list); err != nil {
+				return domain.Project{}, err
 			}
 			return list[i], nil
 		}
 	}
-	return ProjectMeta{}, ErrProjectNotFound
+	return domain.Project{}, ErrProjectNotFound
 }
 
 // DeleteProject removes a project and its version store. The last remaining
 // project cannot be deleted, so the app always has somewhere to land.
-func (s *Store) DeleteProject(_ context.Context, id string) error {
-	if s.versionsDir == "" {
-		return ErrNoVersionsDir
+func (w *Workspace) DeleteProject(_ context.Context, id string) error {
+	if w.dataDir == "" {
+		return ErrNoDataDir
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.ensureBootstrapLocked(); err != nil {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureBootstrapLocked(); err != nil {
 		return err
 	}
-	list, err := s.readRegistryLocked()
+	list, err := w.readRegistryLocked()
 	if err != nil {
 		return err
 	}
 	if len(list) <= 1 {
 		return ErrLastProject
 	}
-	next := make([]ProjectMeta, 0, len(list))
+	next := make([]domain.Project, 0, len(list))
 	found := false
 	for _, p := range list {
 		if p.ID == id {
@@ -291,10 +296,10 @@ func (s *Store) DeleteProject(_ context.Context, id string) error {
 	if !found {
 		return ErrProjectNotFound
 	}
-	if err := s.writeRegistryLocked(next); err != nil {
+	if err := w.writeRegistryLocked(next); err != nil {
 		return err
 	}
-	return os.RemoveAll(s.projectDir(id))
+	return os.RemoveAll(w.projectDir(id))
 }
 
 // slugifyProject reduces a display name to a bare id charset (lowercase, digits,
