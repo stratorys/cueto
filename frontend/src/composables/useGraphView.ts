@@ -23,6 +23,14 @@ const { diagram, commit, undo, redo } = useDiagram();
 
 export const GRID_COLOR = "#e2e8f0";
 
+// The measured on-screen size of a rendered node, or undefined if it has none yet.
+// Vue Flow's full node type is deep enough to trip TS's instantiation limit in this
+// file, so findNode is narrowed to just the size here, in one place.
+function measuredSize(id: string): { width: number; height: number } | undefined {
+  return (findNode(id) as { dimensions?: { width: number; height: number } } | undefined)
+    ?.dimensions;
+}
+
 // Controlled view state: the arrays ARE the view; Vue Flow keeps its store in
 // sync both ways.
 export const nodes = ref(toFlowNodes(diagram.value));
@@ -51,6 +59,14 @@ const pinnedPositions = ref<NodePositions>({});
 export function pinAutoPosition(id: string, position: { x: number; y: number }) {
   pinnedPositions.value = { ...pinnedPositions.value, [id]: position };
   autoPositions.value = { ...autoPositions.value, [id]: position };
+  // The moved node's edges still carry ELK polylines ending at its old spot; drop
+  // those points so they fall back to the live smooth-step path and reconnect to
+  // the new position. Edges not touching this node keep their orthogonal routing.
+  const next = { ...edgePoints.value };
+  for (const edge of diagram.value.edges) {
+    if (edge.source === id || edge.target === id) delete next[edge.id];
+  }
+  edgePoints.value = next;
   rebuildGraph(true);
 }
 
@@ -134,10 +150,10 @@ async function layout() {
   if (isAutoLayout.value) return layoutAuto();
   const result = await layoutDiagram(diagram.value, (node) => {
     if (node.width && node.height) return { width: node.width, height: node.height };
-    const found = findNode(node.id);
+    const size = measuredSize(node.id);
     return {
-      width: found?.dimensions?.width || 160,
-      height: found?.dimensions?.height || 80,
+      width: size?.width || 160,
+      height: size?.height || 80,
     };
   });
   commit((draft) => {
@@ -177,10 +193,10 @@ export async function layoutAuto() {
   };
   const result = await layoutDiagram(subgraph, (node) => {
     if (node.width && node.height) return { width: node.width, height: node.height };
-    const found = findNode(node.id);
+    const size = measuredSize(node.id);
     return {
-      width: found?.dimensions?.width || 160,
-      height: found?.dimensions?.height || 80,
+      width: size?.width || 160,
+      height: size?.height || 80,
     };
   });
   const positions: NodePositions = {};
@@ -198,12 +214,42 @@ export async function layoutAuto() {
   }
   pinnedPositions.value = pins;
   autoPositions.value = positions;
-  edgePoints.value = result.edges;
+  // ELK routed each edge to where it PLACED the node, but a pinned node was just
+  // moved back to its pin, so any edge touching a pin now ends at the wrong spot.
+  // Drop those routes so they fall back to the live smooth-step path; the rest keep
+  // ELK's orthogonal routing.
+  const routes: EdgePoints = { ...result.edges };
+  for (const edge of subgraph.edges) {
+    if (pins[edge.source] || pins[edge.target]) delete routes[edge.id];
+  }
+  edgePoints.value = routes;
   rebuildGraph(true);
-  // Fit with padding so the outer nodes are not flush against (or clipped by) the
-  // viewport edge. A second frame lets Vue Flow apply the new node dimensions
-  // (taller with a data card) before the fit measures the graph bounds.
-  nextTick(() => requestAnimationFrame(() => fitView({ padding: 0.2 })));
+  fitDerived();
+}
+
+// fitDerived fits the derived diagram into view with padding. It must run only after
+// the nodes have real measured dimensions: on a cold load the freshly created table
+// nodes are measured asynchronously, so fitting immediately fits an under-measured
+// graph and snaps to maxZoom (the reset-looking 200% on refresh). It waits, frame by
+// frame (bounded), until the nodes are measured, then fits - so an inferred diagram is
+// always fitted, cold load or not. On a re-eval the nodes are already measured, so it
+// fits on the first frame.
+const fitAttemptsMax = 30;
+function fitDerived(attempt = 0): void {
+  if (derivedNodesMeasured() || attempt >= fitAttemptsMax) {
+    requestAnimationFrame(() => void fitView({ padding: 0.2 }));
+    return;
+  }
+  requestAnimationFrame(() => fitDerived(attempt + 1));
+}
+
+// derivedNodesMeasured reports whether every rendered node has a non-zero measured size
+// in the Vue Flow store, the condition for a correct fit.
+function derivedNodesMeasured(): boolean {
+  return nodes.value.every((n) => {
+    const size = measuredSize(n.id);
+    return !!size && size.width > 0 && size.height > 0;
+  });
 }
 
 // Drill into a container (or back to the top level with null), rebuild the view,
