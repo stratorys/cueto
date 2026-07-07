@@ -407,11 +407,12 @@ func TestInferModelView(t *testing.T) {
 	if ids := edgeIDs(got); !eq(ids, want) {
 		t.Fatalf("model edges = %v, want %v", ids, want)
 	}
-	// Model edges dock to the table nodes' header handles, so the canvas can attach
-	// them to the entity rather than a single column.
+	// A model edge leaves from its foreign-key column and docks to the referenced
+	// table's header, so the canvas attaches it to the exact FK field.
 	for _, edge := range got.Edges {
-		if edge.SourceHandle != "table-source" || edge.TargetHandle != "table-target" {
-			t.Fatalf("edge %s handles = (%q,%q), want (table-source,table-target)", edge.ID, edge.SourceHandle, edge.TargetHandle)
+		wantSource := edge.Label + "-source"
+		if edge.SourceHandle != wantSource || edge.TargetHandle != "table-target" {
+			t.Fatalf("edge %s handles = (%q,%q), want (%q,table-target)", edge.ID, edge.SourceHandle, edge.TargetHandle, wantSource)
 		}
 	}
 	if len(trace) != len(got.Nodes)+len(got.Edges) {

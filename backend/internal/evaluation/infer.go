@@ -258,7 +258,7 @@ func projectSchema(ctx *cue.Context, registries []registry) ([]projectedNode, []
 		for _, ref := range refs {
 			id := edgeID(reg.field, ref.field, ref.targetField)
 			edges = append(edges, projectedEdge{
-				id: id, source: reg.field, sourceHandle: tableSourceHandle,
+				id: id, source: reg.field, sourceHandle: columnSourceHandle(ref.field),
 				target: ref.targetField, targetHandle: tableTargetHandle,
 				label: ref.field, rule: ref.rule,
 			})
@@ -438,8 +438,9 @@ func projectEdges(ctx *cue.Context, registries []registry) ([]projectedEdge, []T
 }
 
 // projectedEdge is one edge before encoding. Handles are set only for the model view,
-// where edges dock to table nodes' header handles; the instance view leaves them empty
-// and its entity nodes use default handles. rule records which detector produced it.
+// where the source docks to the referencing table's foreign-key column and the target to
+// the referenced table's header; the instance view leaves them empty and its entity nodes
+// use default handles. rule records which detector produced it.
 type projectedEdge struct {
 	id           string
 	source       string
@@ -451,12 +452,19 @@ type projectedEdge struct {
 }
 
 // tableSourceHandle and tableTargetHandle are the node-level handle ids TableNode
-// exposes at its header, so a model-view edge (a reference to a whole table) docks to
-// the entity rather than to a single column.
+// exposes at its header, so a model-view edge docks its target to the referenced entity
+// rather than to a single column.
 const (
 	tableSourceHandle = "table-source"
 	tableTargetHandle = "table-target"
 )
+
+// columnSourceHandle is the id of the per-column source handle TableNode exposes on the
+// right of each field row (mirrors `${col.name}-source` there), so a model-view edge
+// leaves from the exact foreign-key field rather than the table header.
+func columnSourceHandle(field string) string {
+	return field + "-source"
+}
 
 // reference is a member-schema field detected as a relation to a registry: the field
 // name, the target registry field, whether the field is a list of references, and the
