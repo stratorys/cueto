@@ -22,6 +22,7 @@ import (
 type Config struct {
 	CueDir         string
 	DataDir        string // owns the project registry and per-project versions (outside CueDir)
+	WorkspaceDir   string // when set, Sources root here (the user's module); empty = playground
 	Port           string
 	MaxBodyBytes   int64         // request body cap, bytes
 	MaxOutputBytes int           // evaluated JSON cap, bytes
@@ -52,9 +53,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("DATA_DIR (%s) must be outside CUE_DIR (%s)", dataDir, cueDir)
 	}
 
+	// WorkspaceDir is optional. When set it must be an existing directory (the user's
+	// module root); a missing or non-directory path fails fast rather than surfacing
+	// as a per-request evaluation error.
+	workspaceDir := ""
+	if raw := envString("WORKSPACE_DIR", ""); raw != "" {
+		workspaceDir, err = filepath.Abs(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		info, statErr := os.Stat(workspaceDir)
+		if statErr != nil || !info.IsDir() {
+			return Config{}, fmt.Errorf("WORKSPACE_DIR (%s) is not a directory", workspaceDir)
+		}
+	}
+
 	return Config{
 		CueDir:         cueDir,
 		DataDir:        dataDir,
+		WorkspaceDir:   workspaceDir,
 		Port:           envString("PORT", "8091"),
 		MaxBodyBytes:   envInt64("MAX_BODY_BYTES", 1<<20),        // 1 MiB
 		MaxOutputBytes: int(envInt64("MAX_OUTPUT_BYTES", 4<<20)), // 4 MiB

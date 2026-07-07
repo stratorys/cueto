@@ -182,6 +182,10 @@ cd backend
 go run ./cmd/server
 ```
 
+By default the server runs in playground mode against `CUE_DIR`. Set `WORKSPACE_DIR`
+to a directory with its own `cue.mod` to evaluate a user's module instead; the
+diagram schema still comes from `CUE_DIR`.
+
 Frontend (in a second shell):
 
 ```

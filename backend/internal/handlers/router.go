@@ -28,7 +28,12 @@ func NewRouter(eval evalService, ws workspaceService, auth authoringService, cfg
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), cors(), limitBody(cfg.MaxBodyBytes), limitConcurrency(cfg.MaxConcurrent))
 
-	h := &handlers{eval: eval, ws: ws, authoring: auth, cueDir: cfg.CueDir}
+	// Sources root at the workspace when configured, else the schema dir (playground).
+	moduleDir := cfg.CueDir
+	if cfg.WorkspaceDir != "" {
+		moduleDir = cfg.WorkspaceDir
+	}
+	h := &handlers{eval: eval, ws: ws, authoring: auth, moduleDir: moduleDir, cueDir: cfg.CueDir}
 	r.POST("/eval", h.Eval)
 	r.POST("/repl", h.EvalExpr)
 	r.POST("/repl/keys", h.ReplKeys)

@@ -51,20 +51,23 @@ type authoringService interface {
 	ProvenanceFor(files []domain.File) domain.Provenance
 }
 
-// handlers hold the concern services and the schema dir needed to scrub host
-// paths from any diagnostics built at this layer.
+// handlers hold the concern services, the module dir Sources are rooted at, and
+// the schema dir needed to scrub host paths from diagnostics built at this layer.
+// moduleDir is the workspace when one is configured, else the schema dir (the
+// playground); cueDir is always the schema dir.
 type handlers struct {
 	eval      evalService
 	ws        workspaceService
 	authoring authoringService
+	moduleDir string
 	cueDir    string
 }
 
 // source wraps a client file set into an evaluation.Source rooted at the server's
 // module dir. It is the single place the transport picks the module root, so
-// workspace mode later changes only this method rather than every call site.
+// workspace mode changes only this method's input rather than every call site.
 func (h *handlers) source(files []domain.File) evaluation.Source {
-	return evaluation.Source{Dir: h.cueDir, Overlay: files}
+	return evaluation.Source{Dir: h.moduleDir, Overlay: files}
 }
 
 type dataRequest struct {

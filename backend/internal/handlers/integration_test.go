@@ -93,6 +93,105 @@ func decodeDiags(t *testing.T, rec *httptest.ResponseRecorder) []diag.Diagnostic
 	return r.Diagnostics
 }
 
+// tempWorkspace writes a scratch module (its own cue.mod for example.com/m plus the
+// given files) under a temp dir and returns a router with WORKSPACE_DIR pointed at
+// it. The schema still comes from the repo CUE_DIR; only the Source root moves.
+func tempWorkspace(t *testing.T, files map[string]string) *gin.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("cue.mod/module.cue", "module: \"example.com/m\"\nlanguage: version: \"v0.17.0\"\n")
+	for rel, content := range files {
+		write(rel, content)
+	}
+	cfg := testConfig(t)
+	cfg.WorkspaceDir = dir
+	return realRouter(t, cfg)
+}
+
+// workspaceImportRoot derives its diagram from an on-disk subpackage. The import
+// and the workspace cue.mod resolve only when Sources are rooted at the workspace,
+// so a successful eval proves WORKSPACE_DIR moved the module root off CUE_DIR.
+const workspaceImportRoot = `package main
+
+import "example.com/m/sub"
+
+diagram: {nodes: sub.nodes, edges: []}
+`
+
+const workspaceSub = "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n"
+
+func TestWorkspaceEval(t *testing.T) {
+	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	rec := postJSON(router, "/eval", evalBody(t, workspaceImportRoot))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Diagram struct {
+			Nodes map[string]any `json:"nodes"`
+		} `json:"diagram"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := body.Diagram.Nodes["a"]; !ok {
+		t.Fatalf("nodes = %v, want the subpackage node a", body.Diagram.Nodes)
+	}
+}
+
+func TestWorkspaceVet(t *testing.T) {
+	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	rec := postJSON(router, "/vet", evalBody(t, workspaceImportRoot))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body struct {
+		Ok bool `json:"ok"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ok {
+		t.Fatalf("vet not ok: %s", rec.Body.String())
+	}
+}
+
+func TestWorkspaceKeys(t *testing.T) {
+	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	body, err := json.Marshal(sourceRequest{Files: []domain.File{{Name: "data.cue", Content: workspaceImportRoot}}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	rec := postJSON(router, "/repl/keys", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Keys []string `json:"keys"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var hasDiagram bool
+	for _, k := range out.Keys {
+		if k == "diagram" {
+			hasDiagram = true
+		}
+	}
+	if !hasDiagram {
+		t.Fatalf("keys = %v, want to include diagram", out.Keys)
+	}
+}
+
 const validData = `package main
 
 import d "github.com/stratorys/cueto/diagram"
