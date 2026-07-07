@@ -99,11 +99,16 @@ export function toFlowNodes(
     // Both hand-drawn and derived nodes drag. A hand-drawn drag writes coordinates back
     // to the model/text; a derived drag is ephemeral - it only nudges the auto-layout
     // position for readability and is never written to the file (see onNodeDragStop).
+    // A derived node is not selectable: selection exposes the color/delete affordances,
+    // which would write style back to the file and break the view-only contract. It can
+    // still be dragged.
+    const derived = node.x === undefined || node.y === undefined;
     return {
       id: node.id,
       type: node.type,
       position,
       draggable: true,
+      selectable: !derived,
       // Nesting: a child's position is relative to its parent, is clipped to the
       // parent's box, and grows the parent when dragged to its edge.
       parentNode: parent,

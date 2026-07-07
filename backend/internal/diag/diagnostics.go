@@ -32,6 +32,11 @@ const (
 	KindSchema     = "schema"
 	KindIncomplete = "incomplete"
 	KindInternal   = "internal"
+	// KindReference is a Layer-2 graph-check failure: a claim about the world
+	// outside CUE that the compiler cannot decide (a referenced file that does not
+	// exist, a cue:// address that does not resolve). Distinct from KindSchema,
+	// which is a pure-CUE contract violation `cue vet` already catches.
+	KindReference = "reference"
 )
 
 // From converts a CUE error tree into structured diagnostics. It

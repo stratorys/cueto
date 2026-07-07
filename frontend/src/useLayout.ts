@@ -113,6 +113,10 @@ export async function layoutDiagram(
   const edgesByContainer = new Map<string, ElkExtendedEdge[]>();
   for (const edge of diagram.edges) {
     if (!byId.has(edge.source) || !byId.has(edge.target)) continue;
+    // A self-loop (a self-referential relation, e.g. a person's parent) confuses ELK's
+    // layered router, which places it far from the node. Skip it here: the edge still
+    // renders, drawn as a self-arch by the edge component from its handle coordinates.
+    if (edge.source === edge.target) continue;
     const elkEdge: ElkExtendedEdge = {
       id: edge.id,
       sources: [edge.source],

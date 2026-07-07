@@ -258,7 +258,9 @@ func projectSchema(ctx *cue.Context, registries []registry) ([]projectedNode, []
 		for _, ref := range refs {
 			id := edgeID(reg.field, ref.field, ref.targetField)
 			edges = append(edges, projectedEdge{
-				id: id, source: reg.field, target: ref.targetField, label: ref.field, rule: ref.rule,
+				id: id, source: reg.field, sourceHandle: tableSourceHandle,
+				target: ref.targetField, targetHandle: tableTargetHandle,
+				label: ref.field, rule: ref.rule,
 			})
 			trace = append(trace, TraceEntry{
 				Element: id, Kind: "edge", Rule: ref.rule,
@@ -435,15 +437,26 @@ func projectEdges(ctx *cue.Context, registries []registry) ([]projectedEdge, []T
 	return edges, trace
 }
 
-// projectedEdge is one edge before encoding. rule records which detector produced it
-// (key-set idiom or explicit attribute), for the trace.
+// projectedEdge is one edge before encoding. Handles are set only for the model view,
+// where edges dock to table nodes' header handles; the instance view leaves them empty
+// and its entity nodes use default handles. rule records which detector produced it.
 type projectedEdge struct {
-	id     string
-	source string
-	target string
-	label  string
-	rule   string
+	id           string
+	source       string
+	sourceHandle string
+	target       string
+	targetHandle string
+	label        string
+	rule         string
 }
+
+// tableSourceHandle and tableTargetHandle are the node-level handle ids TableNode
+// exposes at its header, so a model-view edge (a reference to a whole table) docks to
+// the entity rather than to a single column.
+const (
+	tableSourceHandle = "table-source"
+	tableTargetHandle = "table-target"
+)
 
 // reference is a member-schema field detected as a relation to a registry: the field
 // name, the target registry field, whether the field is a list of references, and the
@@ -606,11 +619,13 @@ type columnJSON struct {
 }
 
 type edgeJSON struct {
-	ID     string `json:"id"`
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
-	Label  string `json:"label"`
+	ID           string `json:"id"`
+	Source       string `json:"source"`
+	SourceHandle string `json:"sourceHandle,omitempty"`
+	Target       string `json:"target"`
+	TargetHandle string `json:"targetHandle,omitempty"`
+	Kind         string `json:"kind"`
+	Label        string `json:"label"`
 }
 
 // buildDiagram encodes the projected nodes and edges, unifies them with the bundled
@@ -629,7 +644,8 @@ func (e *Engine) buildDiagram(ctx *cue.Context, nodes []projectedNode, edges []p
 	}
 	for _, edge := range edges {
 		out.Edges = append(out.Edges, edgeJSON{
-			ID: edge.id, Source: edge.source, Target: edge.target, Kind: "relation", Label: edge.label,
+			ID: edge.id, Source: edge.source, SourceHandle: edge.sourceHandle,
+			Target: edge.target, TargetHandle: edge.targetHandle, Kind: "relation", Label: edge.label,
 		})
 	}
 	encoded := ctx.Encode(out)

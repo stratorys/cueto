@@ -169,9 +169,19 @@ flowchart LR
 3. On `/eval`, the backend loads the module fresh from disk, overlays the request's editable files, and unifies them against the schema. It discovers every top-level field that is diagram-shaped (unifies with `#Diagram` and carries `nodes`) - a module may expose zero, one, or many such **views** - and returns the selected view's concrete diagram as JSON plus the list of discovered view names, or structured diagnostics on failure. A view must be concrete to render, so `/eval` gates it; non-view knowledge fields need only be valid. A module with zero views is a well-formed "no view" result, not an error. All under size, output, deadline, and concurrency bounds.
 4. Canvas edits are spliced back into CUE text via `/rewrite`, and `/format` normalizes it with `cue fmt`, so the code and the picture never disagree.
 5. `/repl` evaluates any CUE expression against the live model in the editor; `/cue/meta` exposes stdlib introspection that powers autocompletion and auto-import.
-6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` so an invalid committed diagram fails CI.
+6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` plus `cueto vet` and `cueto check` (see [Command line](#command-line-ci)) so an invalid committed diagram - or a broken file/URI reference - fails CI.
 7. Persistence depends on the mode, reported by `/config`. In **playground** mode diagrams are grouped into projects (`/projects`); `/projects/:pid/save` writes the validated instance as an immutable, content-addressed version, and `/projects/:pid/versions` lists and reads them.
 8. In **workspace** mode git is the history and cueto is not a version store. `/workspace/save` validates the buffer and writes the real file on disk under a path guard, refusing a save when the file changed on disk since it was loaded and never staging, committing, or otherwise mutating git state. `/workspace/history` and `/workspace/file` read the git log and file blobs read-only to feed the history panel.
+
+## Command line (CI)
+
+`cueto` is the CI and terminal face of the same engine the server runs, so the editor, CI, and (later) an agent can never disagree about whether a module is valid. From `backend/`, run it with `go run ./cmd/cueto` or build a binary with `go build ./cmd/cueto`. Every subcommand reads the module as committed on disk (no editor overlay) and exits nonzero on any diagnostic, so it drops straight into a CI step.
+
+- `cueto vet -C <dir>` - **Layer 1**, pure-CUE validity of the whole module (dangling typed references, schema and closedness violations). This is the referential-integrity gate: constrain an owner to the key set of a people registry, and the module only compiles while that person exists.
+- `cueto check -C <dir>` - **Layer 2**, the world-facing claims the compiler cannot decide. A field marked `@file()` must name a file that exists inside the module; a field marked `@uri()` must name a URI that resolves (`cue://` addresses resolve against the composed value, relative and `file://` against disk; `http(s)` is validated syntactically only - cueto never reaches the network).
+- `cueto graph -C <dir> [-view <name>]` - print the discovered or inferred diagram as JSON, plus the inference trace.
+
+`@file` and `@uri` are ordinary CUE attributes read by shape, exactly like the `@ref()` inference hint: they carry no cueto vocabulary and need no import, so a user's module stays `cue vet`-clean with nothing from cueto present. The two layers compose - CI runs `cueto vet` then `cueto check` - so a change that removes a person, breaks an owner reference, or points a readme at a missing file is rejected at the door.
 
 ## Run locally
 

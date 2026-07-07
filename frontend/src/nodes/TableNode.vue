@@ -88,9 +88,13 @@ function onResizeEnd(event: {
       :style="cardStyle"
     >
       <div
-        class="shrink-0 border-b border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-700"
+        class="relative shrink-0 border-b border-slate-200 bg-slate-100 px-2.5 py-1.5 text-center font-semibold text-slate-700"
         @dblclick.stop="startEdit"
       >
+        <!-- Node-level handles at the header, for entity-level edges (a reference to the
+             whole table, e.g. the inferred model view) that dock to no single column. -->
+        <Handle id="table-target" type="target" :position="Position.Left" />
+        <Handle id="table-source" type="source" :position="Position.Right" />
         <input
           v-if="editing"
           ref="input"

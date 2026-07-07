@@ -67,6 +67,14 @@ const route = computed(() => {
     const b = points[mid + 1] ?? a;
     return { d, labelX: (a.x + b.x) / 2, labelY: (a.y + b.y) / 2 };
   }
+  // Self-loop (source === target, e.g. a self-referential relation): ELK gives no
+  // route, so draw a compact arch from the source handle up and back to the target
+  // handle, with the label at its apex.
+  if (props.source === props.target) {
+    const top = Math.min(props.sourceY, props.targetY) - 56;
+    const d = `M ${props.sourceX} ${props.sourceY} C ${props.sourceX + 52} ${top}, ${props.targetX - 52} ${top}, ${props.targetX} ${props.targetY}`;
+    return { d, labelX: (props.sourceX + props.targetX) / 2, labelY: top + 8 };
+  }
   const [d, labelX, labelY] = getSmoothStepPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,

@@ -112,7 +112,7 @@ onMounted(async () => {
           {{ editorCollapsed ? "›" : "‹" }}
         </button>
       </div>
-      <div class="relative h-full flex-1 bg-slate-50">
+      <div class="relative h-full flex-1 overflow-hidden bg-slate-50">
         <DiagramCanvas />
       </div>
       <div

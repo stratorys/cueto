@@ -31,10 +31,12 @@ type gotDiagram struct {
 		} `json:"columns"`
 	} `json:"nodes"`
 	Edges []struct {
-		ID     string `json:"id"`
-		Source string `json:"source"`
-		Target string `json:"target"`
-		Label  string `json:"label"`
+		ID           string `json:"id"`
+		Source       string `json:"source"`
+		SourceHandle string `json:"sourceHandle"`
+		Target       string `json:"target"`
+		TargetHandle string `json:"targetHandle"`
+		Label        string `json:"label"`
 	} `json:"edges"`
 }
 
@@ -404,6 +406,13 @@ func TestInferModelView(t *testing.T) {
 	want := []string{"people--father-->people", "people--mother-->people"}
 	if ids := edgeIDs(got); !eq(ids, want) {
 		t.Fatalf("model edges = %v, want %v", ids, want)
+	}
+	// Model edges dock to the table nodes' header handles, so the canvas can attach
+	// them to the entity rather than a single column.
+	for _, edge := range got.Edges {
+		if edge.SourceHandle != "table-source" || edge.TargetHandle != "table-target" {
+			t.Fatalf("edge %s handles = (%q,%q), want (table-source,table-target)", edge.ID, edge.SourceHandle, edge.TargetHandle)
+		}
 	}
 	if len(trace) != len(got.Nodes)+len(got.Edges) {
 		t.Fatalf("trace = %d, want %d", len(trace), len(got.Nodes)+len(got.Edges))
