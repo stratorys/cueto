@@ -18,7 +18,7 @@ import (
 
 // ListProjects returns the registered projects as {projects:[...]}.
 func (h *handlers) ListProjects(c *gin.Context) {
-	projects, err := h.ws.ListProjects(c.Request.Context())
+	projects, err := h.store.ListProjects(c.Request.Context())
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -32,7 +32,7 @@ func (h *handlers) CreateProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	meta, err := h.ws.CreateProject(c.Request.Context(), req.Name, req.Seed)
+	meta, err := h.store.CreateProject(c.Request.Context(), req.Name, req.Seed)
 	if err != nil {
 		writeProjectError(c, err)
 		return
@@ -46,7 +46,7 @@ func (h *handlers) RenameProject(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	meta, err := h.ws.RenameProject(c.Request.Context(), c.Param("pid"), req.Name)
+	meta, err := h.store.RenameProject(c.Request.Context(), c.Param("pid"), req.Name)
 	if err != nil {
 		writeProjectError(c, err)
 		return
@@ -56,7 +56,7 @@ func (h *handlers) RenameProject(c *gin.Context) {
 
 // DeleteProject removes a project. Refusing to delete the last one is 409.
 func (h *handlers) DeleteProject(c *gin.Context) {
-	if err := h.ws.DeleteProject(c.Request.Context(), c.Param("pid")); err != nil {
+	if err := h.store.DeleteProject(c.Request.Context(), c.Param("pid")); err != nil {
 		writeProjectError(c, err)
 		return
 	}

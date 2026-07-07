@@ -11,18 +11,34 @@ SPDX-License-Identifier: MPL-2.0
 // (added / removed / changed nodes, added / removed / rewired edges) rather than
 // a text diff. Clicking a change highlights that element on the canvas.
 import { computed, onMounted, ref, watch } from "vue";
-import type { VersionMeta } from "../api";
-import { evalCue, fromEval, listVersions, readVersion } from "../api";
+import {
+  evalCue,
+  fromEval,
+  listVersions,
+  listWorkspaceHistory,
+  readVersion,
+  readWorkspaceFile,
+} from "../api";
 import type { Diagram } from "../model";
 import type { DiagramDiff } from "../analysis/diff";
 import { diffDiagrams, isEmptyDiff } from "../analysis/diff";
 import { useHighlight } from "../composables/useHighlight";
+import { isWorkspace } from "../composables/useMode";
 import { useProjects } from "../composables/useProjects";
+import { activeFileName } from "../composables/useEditorFiles";
 
 const { setHighlight } = useHighlight();
 const { currentProjectId } = useProjects();
 
-const versions = ref<VersionMeta[]>([]);
+// One point in history, common to both modes: a version/commit id, an optional
+// human label (the commit subject in workspace mode), and when it was recorded.
+interface HistoryItem {
+  version: string;
+  label: string;
+  when: string;
+}
+
+const versions = ref<HistoryItem[]>([]);
 const baseId = ref("");
 const compareId = ref("");
 const diff = ref<DiagramDiff | null>(null);
@@ -30,27 +46,41 @@ const error = ref<string | null>(null);
 const loading = ref(false);
 
 const shortHash = (id: string) => id.slice(0, 7);
-function versionLabel(v: VersionMeta): string {
-  const when = v.savedAt ? new Date(v.savedAt).toLocaleString() : "unknown time";
-  return `${shortHash(v.version)} - ${when}`;
+function versionLabel(v: HistoryItem): string {
+  const when = v.when ? new Date(v.when).toLocaleString() : "unknown time";
+  const head = v.label ? `${shortHash(v.version)} ${v.label}` : shortHash(v.version);
+  return `${head} - ${when}`;
 }
 
-// Load the current project's saved versions, defaulting the diff selectors to its
-// two newest saves. Re-run whenever the open project changes.
+// Load the history, defaulting the diff selectors to the two newest points. In
+// workspace mode this is the git log of the active file; in playground mode the
+// current project's saved versions. Re-run when the project, the file, or the mode
+// changes (the mode resolves after this panel first mounts).
 async function refreshVersions() {
   versions.value = [];
   baseId.value = "";
   compareId.value = "";
   diff.value = null;
   error.value = null;
-  if (!currentProjectId.value) return;
-  const result = await listVersions(currentProjectId.value);
-  if (!result.ok) {
-    error.value = result.error;
-    return;
+
+  if (isWorkspace.value) {
+    const result = await listWorkspaceHistory(activeFileName.value);
+    if (!result.ok) {
+      error.value = result.error;
+      return;
+    }
+    versions.value = result.entries.map((e) => ({ version: e.version, label: e.label, when: e.at }));
+  } else {
+    if (!currentProjectId.value) return;
+    const result = await listVersions(currentProjectId.value);
+    if (!result.ok) {
+      error.value = result.error;
+      return;
+    }
+    versions.value = result.versions.map((v) => ({ version: v.version, label: "", when: v.savedAt }));
   }
-  versions.value = result.versions;
-  // Default to comparing the two newest saves (list is newest-first).
+
+  // Default to comparing the two newest points (list is newest-first).
   if (versions.value.length >= 2) {
     compareId.value = versions.value[0].version;
     baseId.value = versions.value[1].version;
@@ -58,17 +88,20 @@ async function refreshVersions() {
 }
 
 onMounted(refreshVersions);
-watch(currentProjectId, refreshVersions);
+watch([currentProjectId, isWorkspace, activeFileName], refreshVersions);
 
-// Load a version's stored data.cue and evaluate it into a concrete Diagram,
-// reusing the same eval pipeline the canvas uses (no second parser).
+// Read a version's stored text and evaluate it into a concrete Diagram, reusing the
+// canvas eval pipeline (no second parser). The text comes from the version store in
+// playground mode, or the file at that commit in workspace mode.
 async function loadDiagram(id: string): Promise<Diagram | null> {
-  const version = await readVersion(currentProjectId.value, id);
-  if (!version.ok) {
-    error.value = version.error;
+  const read = isWorkspace.value
+    ? await readWorkspaceFile(activeFileName.value, id)
+    : await readVersion(currentProjectId.value, id);
+  if (!read.ok) {
+    error.value = read.error;
     return null;
   }
-  const evaluated = await evalCue(version.data);
+  const evaluated = await evalCue(read.data);
   if (!evaluated.ok) {
     error.value = evaluated.error;
     return null;
@@ -95,7 +128,9 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
 <template>
   <div class="flex flex-col gap-4 p-4 text-sm">
     <p v-if="versions.length < 2" class="text-slate-400">
-      Save at least two versions (Cmd+S) to compare them.
+      {{ isWorkspace
+        ? "Need at least two commits touching this file to compare them."
+        : "Save at least two versions (Cmd+S) to compare them." }}
     </p>
 
     <template v-else>

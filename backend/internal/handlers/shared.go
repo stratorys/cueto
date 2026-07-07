@@ -32,8 +32,10 @@ type evalService interface {
 	Vet(ctx context.Context, src evaluation.Source) ([]diag.Diagnostic, error)
 }
 
-// workspaceService is the project + version persistence the transport depends on.
-type workspaceService interface {
+// playgroundStore is the project + version persistence the playground depends on:
+// the content-addressed store and its project registry. It is wired only in
+// playground mode; the workspace router omits every route that reaches it.
+type playgroundStore interface {
 	SaveVersion(ctx context.Context, projectID, data string) (string, error)
 	ListVersions(ctx context.Context, projectID string) ([]domain.Version, error)
 	ReadVersion(ctx context.Context, projectID, id string) (string, error)
@@ -42,6 +44,22 @@ type workspaceService interface {
 	CreateProject(ctx context.Context, name, seed string) (domain.Project, error)
 	RenameProject(ctx context.Context, id, name string) (domain.Project, error)
 	DeleteProject(ctx context.Context, id string) error
+}
+
+// saveService persists a validated buffer. It is the write seam shared across
+// modes; workspace mode writes the real file, playground mode is served by its own
+// store above. Splitting it out keeps workspace mode from having to implement the
+// project registry it has no concept of.
+type saveService interface {
+	Save(ctx context.Context, req domain.SaveRequest) (domain.SaveResult, error)
+}
+
+// historyService reads a file's history. In workspace mode scope is a relative file
+// path and entries are git commits; the implementation is read-only and never
+// mutates git. FileAt with an empty version reads the current working-tree file.
+type historyService interface {
+	History(ctx context.Context, scope string) ([]domain.HistoryEntry, error)
+	FileAt(ctx context.Context, scope, version string) (string, error)
 }
 
 // authoringService is the canvas write-back the transport depends on.
@@ -54,13 +72,17 @@ type authoringService interface {
 // handlers hold the concern services, the module dir Sources are rooted at, and
 // the schema dir needed to scrub host paths from diagnostics built at this layer.
 // moduleDir is the workspace when one is configured, else the schema dir (the
-// playground); cueDir is always the schema dir.
+// playground); cueDir is always the schema dir. mode is "playground" or
+// "workspace". store is set in playground mode; save and history in workspace mode.
 type handlers struct {
 	eval      evalService
-	ws        workspaceService
+	store     playgroundStore
+	save      saveService
+	history   historyService
 	authoring authoringService
 	moduleDir string
 	cueDir    string
+	mode      string
 }
 
 // source wraps a client file set into an evaluation.Source rooted at the server's

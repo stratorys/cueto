@@ -21,11 +21,14 @@ import {
   fromEval,
   listVersions,
   readVersion,
+  readWorkspaceFile,
   rewriteFile,
   saveCue,
+  saveWorkspaceFile,
 } from "../api";
 import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody, toCue } from "../mapping";
 import { useDiagram } from "../useDiagram";
+import { isWorkspace } from "./useMode";
 import { currentProjectId } from "./useProjects";
 import {
   activeFileName,
@@ -93,6 +96,12 @@ export type SaveState =
   | { status: "saved"; version: string }
   | { status: "error" };
 export const saveState = ref<SaveState>({ status: "idle" });
+
+// Workspace-mode optimistic-concurrency token for the active file: the content
+// hash the backend returned when the buffer was loaded (or last saved). It rides
+// back into a save so a concurrent on-disk change is refused rather than clobbered.
+// Empty means "creating a new file". Unused in playground mode.
+export const workspaceBaseVersion = ref<string>("");
 
 // A graph edit invalidates the CUE text. The canvas is already updated from the
 // model (instant); the file text follows via a debounced, per-file /rewrite so a
@@ -267,14 +276,40 @@ export async function loadProjectDiagram(projectId: string) {
   resetHistory();
 }
 
-// Persist the current CUE as an immutable version. The backend re-validates, so
-// invalid text surfaces the same diagnostics as a live eval rather than saving.
+// Load the workspace file into the canvas: its current working-tree text, or a
+// blank diagram when the file does not exist yet. Keeps the returned content token
+// as the save baseline. Mirrors loadProjectDiagram's pipeline (runEval then clear
+// history) so the two modes reach the canvas the same way.
+export async function loadWorkspaceFile(path = "data.cue") {
+  const result = await readWorkspaceFile(path);
+  let text: string;
+  if (result.ok) {
+    text = result.data;
+    workspaceBaseVersion.value = result.version;
+  } else {
+    // A missing file (or unreachable backend) opens a blank buffer to create it.
+    text = toCue({ nodes: [], edges: [] });
+    workspaceBaseVersion.value = "";
+  }
+  files.value = [{ name: path, text }];
+  activeFileName.value = path;
+  snapshotSaved();
+  await runEval();
+  resetHistory();
+}
+
+// Persist the current CUE. In workspace mode this writes the real file on disk (git
+// is the history); in playground mode it stores an immutable version. Either way the
+// backend re-validates, so invalid text surfaces diagnostics rather than saving, and
+// a workspace conflict (the file changed on disk) is refused, not overwritten.
 async function save() {
   saveState.value = { status: "saving" };
-  // Versions remain single-file: persist the primary data.cue into the current
-  // project's store.
+  // Single-file save: persist the primary data.cue.
   const primary = files.value.find((f) => f.name === primaryFile());
-  const result = await saveCue(currentProjectId.value, primary?.text ?? "");
+  const text = primary?.text ?? "";
+  const result = isWorkspace.value
+    ? await saveWorkspaceFile(primary?.name ?? "data.cue", text, workspaceBaseVersion.value)
+    : await saveCue(currentProjectId.value, text);
   if (!result.ok) {
     evalError.value = result.error;
     diagnostics.value = result.diagnostics;
@@ -282,6 +317,8 @@ async function save() {
     saveState.value = { status: "error" };
     return;
   }
+  // In workspace mode the returned token becomes the base for the next save.
+  if (isWorkspace.value) workspaceBaseVersion.value = result.version;
   saveState.value = { status: "saved", version: result.version };
   snapshotSaved();
 }

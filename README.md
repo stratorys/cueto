@@ -12,7 +12,7 @@ Diagrams drift from the domains they describe and carry no checkable meaning: th
 ## What it demonstrates
 
 - **Architecture pattern** - a hand-owned schema package (`cue/diagram/`) that is never machine-written, with a concrete instance (`data.cue`) overlaid per request; the canvas only ever round-trips the data, the schema stays authoritative.
-- **Workflow design** - the same model is edited two ways (visual canvas and CUE code) kept in sync through a source map, then evaluated, validated, formatted, and saved as immutable versions.
+- **Workflow design** - the same model is edited two ways (visual canvas and CUE code) kept in sync through a source map, then evaluated, validated, formatted, and saved - as immutable content-addressed versions in playground mode, or written to real files on disk with git as the history when pointed at a user's module.
 - **Knowledge model** - the schema separates rendering fields (`type`, `shape`, colors) from a free-form `data` payload, so the nodes you draw carry domain facts you can query.
 - **Queryability** - a REPL pane with CUE stdlib introspection and autocompletion evaluates any expression against the live model in the editor.
 - **Observability** - evaluation returns structured diagnostics with source positions and host paths scrubbed, plus provenance and hints, rather than opaque errors.
@@ -141,9 +141,10 @@ flowchart LR
   end
 
   subgraph be["backend/ (Go + gin)"]
-    api["/eval /repl /vet /format\n/rewrite /projects /versions"]
+    api["/eval /repl /vet /format /rewrite\nplayground: /projects /versions\nworkspace: /workspace/save /history /file"]
     eval["CUE evaluator (bounded, in-process)"]
-    versions[("data/ (registry + per-project immutable versions)")]
+    versions[("data/ (playground: registry + immutable versions)")]
+    workspace[("user checkout (workspace: real files, git = history)")]
   end
 
   subgraph cue["cue/ (source of truth)"]
@@ -158,6 +159,7 @@ flowchart LR
   eval --> schema
   eval --> data
   eval --> versions
+  api --> workspace
 ```
 
 ## How it works
@@ -168,7 +170,8 @@ flowchart LR
 4. Canvas edits are spliced back into CUE text via `/rewrite`, and `/format` normalizes it with `cue fmt`, so the code and the picture never disagree.
 5. `/repl` evaluates any CUE expression against the live model in the editor; `/cue/meta` exposes stdlib introspection that powers autocompletion and auto-import.
 6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` so an invalid committed diagram fails CI.
-7. Diagrams are grouped into projects (`/projects`); `/projects/:pid/save` writes the validated instance as an immutable, content-addressed version, and `/projects/:pid/versions` lists and reads them.
+7. Persistence depends on the mode, reported by `/config`. In **playground** mode diagrams are grouped into projects (`/projects`); `/projects/:pid/save` writes the validated instance as an immutable, content-addressed version, and `/projects/:pid/versions` lists and reads them.
+8. In **workspace** mode git is the history and cueto is not a version store. `/workspace/save` validates the buffer and writes the real file on disk under a path guard, refusing a save when the file changed on disk since it was loaded and never staging, committing, or otherwise mutating git state. `/workspace/history` and `/workspace/file` read the git log and file blobs read-only to feed the history panel.
 
 ## Run locally
 

@@ -37,7 +37,7 @@ func (h *handlers) Save(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
 		return
 	}
-	version, err := h.ws.SaveVersion(c.Request.Context(), c.Param("pid"), req.Data)
+	version, err := h.store.SaveVersion(c.Request.Context(), c.Param("pid"), req.Data)
 	if err != nil {
 		writeProjectError(c, err)
 		return
@@ -47,7 +47,7 @@ func (h *handlers) Save(c *gin.Context) {
 
 // ListVersions returns a project's saved versions newest-first as {versions:[...]}.
 func (h *handlers) ListVersions(c *gin.Context) {
-	versions, err := h.ws.ListVersions(c.Request.Context(), c.Param("pid"))
+	versions, err := h.store.ListVersions(c.Request.Context(), c.Param("pid"))
 	if err != nil {
 		writeProjectError(c, err)
 		return
@@ -59,7 +59,7 @@ func (h *handlers) ListVersions(c *gin.Context) {
 // id is 400; an unknown (but well-formed) id is 404.
 func (h *handlers) ReadVersion(c *gin.Context) {
 	id := c.Param("id")
-	data, err := h.ws.ReadVersion(c.Request.Context(), c.Param("pid"), id)
+	data, err := h.store.ReadVersion(c.Request.Context(), c.Param("pid"), id)
 	if err != nil {
 		switch {
 		case errors.Is(err, workspace.ErrInvalidVersionID):
@@ -81,7 +81,7 @@ func (h *handlers) ReadVersion(c *gin.Context) {
 // Seed returns the on-disk seed data.cue as {data}, the mount-time fallback when
 // no saved version exists. A missing seed file is 404.
 func (h *handlers) Seed(c *gin.Context) {
-	data, err := h.ws.ReadSeed()
+	data, err := h.store.ReadSeed()
 	if err != nil {
 		if errors.Is(err, workspace.ErrSeedNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{

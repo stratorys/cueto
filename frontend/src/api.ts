@@ -108,6 +108,36 @@ export interface FormatOk {
   formatted: string;
 }
 
+// Which persistence mode the backend runs in: "playground" (the content-addressed
+// version store) or "workspace" (real files on disk, git as history).
+export type Mode = "playground" | "workspace";
+
+export interface ConfigOk {
+  ok: true;
+  mode: Mode;
+}
+
+// One point in a file's git history: the commit hash, its subject line, and when
+// it was authored (ISO 8601). The workspace-mode analogue of VersionMeta.
+export interface CommitMeta {
+  version: string;
+  label: string;
+  at: string;
+}
+
+export interface HistoryOk {
+  ok: true;
+  entries: CommitMeta[];
+}
+
+// A workspace file read: its text plus the content token used for optimistic
+// concurrency on the next save.
+export interface WorkspaceFileOk {
+  ok: true;
+  data: string;
+  version: string;
+}
+
 // One saved version: its content-hash id and when it was first saved (ISO 8601).
 export interface VersionMeta {
   version: string;
@@ -425,6 +455,53 @@ export function readSeed(): Promise<VersionDataOk | EvalErr> {
   return get("/seed", async (response) => {
     const body = await readJson<{ data?: string }>(response);
     return { data: body.data ?? "" };
+  });
+}
+
+// getConfig reports the backend's persistence mode, so the frontend chooses its
+// data source: the versions API in playground mode, the git endpoints in workspace
+// mode. An unreachable backend falls back to playground (the default UI).
+export function getConfig(): Promise<ConfigOk | EvalErr> {
+  return get("/config", async (response) => {
+    const body = await readJson<{ mode?: Mode }>(response);
+    return { mode: body.mode === "workspace" ? "workspace" : "playground" };
+  });
+}
+
+// saveWorkspaceFile writes a validated buffer to the real file at path in the
+// workspace, returning the new content token. baseVersion is the token the client
+// loaded; a concurrent on-disk change comes back as an error result (HTTP 409) with
+// a "changed on disk" diagnostic, and nothing is written.
+export function saveWorkspaceFile(
+  path: string,
+  data: string,
+  baseVersion: string,
+): Promise<SaveOk | EvalErr> {
+  return post("/workspace/save", { path, data, baseVersion }, async (response) => {
+    const body = await readJson<{ version?: string }>(response);
+    return { version: body.version ?? "" };
+  });
+}
+
+// listWorkspaceHistory returns the git commits that touched path, newest first. A
+// workspace that is not a git repository comes back with an empty list.
+export function listWorkspaceHistory(path: string): Promise<HistoryOk | EvalErr> {
+  return get(`/workspace/history?path=${encodeURIComponent(path)}`, async (response) => {
+    const body = await readJson<{ entries?: CommitMeta[] }>(response);
+    return { entries: body.entries ?? [] };
+  });
+}
+
+// readWorkspaceFile returns the content of path plus its content token. With no
+// commit it reads the current working-tree file (and the token is the save base);
+// with a commit (a full git hash) it reads the blob at that commit.
+export function readWorkspaceFile(path: string, commit = ""): Promise<WorkspaceFileOk | EvalErr> {
+  const query = commit
+    ? `?path=${encodeURIComponent(path)}&commit=${encodeURIComponent(commit)}`
+    : `?path=${encodeURIComponent(path)}`;
+  return get(`/workspace/file${query}`, async (response) => {
+    const body = await readJson<{ data?: string; version?: string }>(response);
+    return { data: body.data ?? "", version: body.version ?? "" };
   });
 }
 

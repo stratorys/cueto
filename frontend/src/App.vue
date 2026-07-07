@@ -16,6 +16,8 @@ import AppModal from "./components/AppModal.vue";
 import { usePaneResize } from "./composables/usePaneResize";
 import { useDiagramCanvas } from "./composables/useDiagramCanvas";
 import { useProjects } from "./composables/useProjects";
+import { initMode } from "./composables/useMode";
+import { loadWorkspaceFile } from "./composables/useCueSync";
 
 const {
   paneWidth,
@@ -57,9 +59,14 @@ const {
 
 const { init: initProjects } = useProjects();
 
-// Resolve the current project (URL / localStorage / first project) and load its
-// diagram once the app mounts, replacing the seed sample.
-onMounted(() => void initProjects());
+// Resolve the persistence mode, then bootstrap the matching data source: in
+// workspace mode load the working-tree file (git is the history, there are no
+// projects); in playground mode resolve the current project and load its version.
+onMounted(async () => {
+  const mode = await initMode();
+  if (mode === "workspace") await loadWorkspaceFile();
+  else await initProjects();
+});
 </script>
 
 <template>
