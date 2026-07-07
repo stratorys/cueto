@@ -148,8 +148,6 @@ const iconButton =
 <template>
   <div class="flex h-full flex-col overflow-hidden bg-slate-900 text-slate-200">
     <div class="flex items-stretch overflow-x-auto border-b border-slate-800">
-      <!-- Projects are a playground concept; workspace mode edits the user's own
-           module, so the switcher is hidden there. -->
       <ProjectSwitcher />
       <button
         v-for="file in files"

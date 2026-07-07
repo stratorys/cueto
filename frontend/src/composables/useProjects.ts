@@ -12,7 +12,7 @@
 // project's files.
 
 import { computed, ref } from "vue";
-import type { ProjectMeta } from "../api";
+import type { EvalErr, ProjectMeta, ProjectOk } from "../api";
 import { createProject as apiCreate, listProjects, setProject } from "../api";
 import { loadProject } from "./useCueSync";
 
@@ -23,6 +23,17 @@ const STORAGE_KEY = "cueto.currentProject";
 // use*() call (same pattern as useEditorFiles).
 export const projects = ref<ProjectMeta[]>([]);
 export const currentProjectId = ref("");
+
+// Whether the initial bootstrap has finished. Gates the shell vs. the onboarding
+// view: while false the app renders nothing (no first-paint flash); once true,
+// an empty currentProjectId means "no project open" -> show onboarding.
+export const ready = ref(false);
+
+// Whether the onboarding hub is showing over an open project. Distinct from "no
+// project open": a user with a project open can return home (goHome) to browse
+// projects, read the explainer, or create one, then go back (leaveHome). Opening
+// any project clears it.
+export const atHome = ref(false);
 
 export const currentProject = computed(
   () => projects.value.find((p) => p.id === currentProjectId.value) ?? null,
@@ -50,24 +61,38 @@ async function refresh(): Promise<void> {
 }
 
 // Point the api layer and navigation state at a project, then load its files.
+// Opening a project always leaves the home hub.
 async function open(id: string): Promise<void> {
   currentProjectId.value = id;
+  atHome.value = false;
   setProject(id);
   persistCurrent();
   await loadProject();
 }
 
-// Bootstrap on app mount: load the list, pick the current project (URL/localStorage
-// -> else the first), then load it. With no projects yet, nothing is opened (the UI
-// shows an empty state prompting a first project).
+// Show the onboarding hub over the current project (a Home button), and return
+// from it. leaveHome is a no-op when no project is open (onboarding stays up
+// because currentProjectId is empty).
+function goHome(): void {
+  atHome.value = true;
+}
+function leaveHome(): void {
+  atHome.value = false;
+}
+
+// Bootstrap on app mount: load the list, then open the previously chosen project
+// (URL/localStorage) if it still exists. With no saved pick - or one that no longer
+// resolves - nothing is opened and the onboarding view takes over, listing the
+// projects to load or offering to create one. `ready` flips once the pick (if any)
+// has loaded, so the shell is never shown before its project is in.
 async function init(): Promise<void> {
   await refresh();
   const preferred = preferredProjectId();
   const known = (id: string | null): id is string =>
     !!id && projects.value.some((p) => p.id === id);
-  const target = known(preferred) ? preferred : (projects.value[0]?.id ?? "");
-  if (!target) return;
-  await open(target);
+  const target = known(preferred) ? preferred : "";
+  if (target) await open(target);
+  ready.value = true;
 }
 
 // Open a different project: switch the current id and reload the canvas from it.
@@ -77,12 +102,14 @@ async function switchProject(id: string): Promise<void> {
 }
 
 // Create a project (git init + scaffold + initial commit on the backend), then open
-// it. A name collision surfaces as a failed result and is ignored here.
-async function create(name: string): Promise<void> {
+// it. The result is returned so the caller can surface a failure (an invalid name
+// is 400, a slug collision is 409) inline rather than swallowing it.
+async function create(name: string): Promise<ProjectOk | EvalErr> {
   const result = await apiCreate(name);
-  if (!result.ok) return;
+  if (!result.ok) return result;
   await refresh();
   await open(result.project.id);
+  return result;
 }
 
 export function useProjects() {
@@ -90,6 +117,10 @@ export function useProjects() {
     projects,
     currentProjectId,
     currentProject,
+    ready,
+    atHome,
+    goHome,
+    leaveHome,
     init,
     switchProject,
     createProject: create,

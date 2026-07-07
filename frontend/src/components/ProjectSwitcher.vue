@@ -14,11 +14,10 @@ SPDX-License-Identifier: MPL-2.0
 // to <body> and fixed-positioned from the trigger's rect so the tab bar's horizontal
 // overflow can't clip it.
 import { ref } from "vue";
-import { Check, ChevronDown, FolderGit2, FolderPlus } from "lucide-vue-next";
+import { Check, ChevronDown, FolderGit2, House } from "lucide-vue-next";
 import { useProjects } from "../composables/useProjects";
-import { promptDialog } from "../composables/useModal";
 
-const { projects, currentProjectId, currentProject, switchProject, createProject } = useProjects();
+const { projects, currentProjectId, currentProject, switchProject, goHome } = useProjects();
 
 const open = ref(false);
 const trigger = ref<HTMLElement | null>(null);
@@ -37,15 +36,11 @@ function pick(id: string) {
   void switchProject(id);
 }
 
-async function create() {
+// Open the onboarding hub: browse every project, read how the app works, and create
+// one with the inline validated form (which replaced the old prompt modal).
+function home() {
   open.value = false;
-  const name = await promptDialog({
-    title: "New project",
-    message: "cueto will git-init a new module for it.",
-    placeholder: "Project name",
-    confirmLabel: "Create",
-  });
-  if (name) void createProject(name);
+  goHome();
 }
 
 const row =
@@ -86,9 +81,9 @@ const row =
 
           <div class="my-1 border-t border-slate-800"></div>
 
-          <button :class="row" @click="create()">
-            <FolderPlus class="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            New project
+          <button :class="row" @click="home()">
+            <House class="h-3.5 w-3.5 shrink-0 text-slate-500" />
+            Home / new project
           </button>
         </div>
       </div>

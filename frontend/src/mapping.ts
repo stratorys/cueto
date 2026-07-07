@@ -150,28 +150,41 @@ export function toFlowEdges(
   edgePoints: EdgePoints = {},
 ): Edge[] {
   const visible = visibleIds(diagram, focus);
+  // Ordinal of each self-referential edge among its node's self-loops. ELK does not
+  // route self-loops, so the edge component draws them as arcs from the node's own
+  // handles; several on one node (e.g. father and mother on a person table) would draw
+  // the same arc. The ordinal lets it fan them out to distinct radii so each relation
+  // is visible and separately labelled.
+  const selfLoopOrdinal: Record<string, number> = {};
   return diagram.edges
     .filter((edge) => !visible || (visible.has(edge.source) && visible.has(edge.target)))
-    .map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-      // `type` selects the ELK-polyline edge component (orthogonal to the visual
-      // `kind`, which ElkEdge reads from data to pick its marker/dash).
-      type: "elk",
-      // Endpoints are draggable: reconnect to another handle, or drop in empty
-      // space to turn the relation back into a floating line (see useDiagramCanvas).
-      updatable: true,
-      style: { stroke: "#64748b" },
-      data: {
-        points: edgePoints[edge.id],
-        kind: edge.kind,
-        label: edge.label,
-        card: edge.card,
-      },
-    }));
+    .map((edge) => {
+      const selfIndex =
+        edge.source === edge.target
+          ? (selfLoopOrdinal[edge.source] = (selfLoopOrdinal[edge.source] ?? -1) + 1)
+          : 0;
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        // `type` selects the ELK-polyline edge component (orthogonal to the visual
+        // `kind`, which ElkEdge reads from data to pick its marker/dash).
+        type: "elk",
+        // Endpoints are draggable: reconnect to another handle, or drop in empty
+        // space to turn the relation back into a floating line (see useDiagramCanvas).
+        updatable: true,
+        style: { stroke: "#64748b" },
+        data: {
+          points: edgePoints[edge.id],
+          kind: edge.kind,
+          label: edge.label,
+          card: edge.card,
+          selfIndex,
+        },
+      };
+    });
 }
 
 // --- model -> CUE text ------------------------------------------------------

@@ -32,6 +32,7 @@ const props = defineProps<
     kind?: DiagramEdge["kind"];
     label?: string;
     card?: string;
+    selfIndex?: number;
   }>
 >();
 
@@ -69,10 +70,14 @@ const route = computed(() => {
   }
   // Self-loop (source === target, e.g. a self-referential relation): ELK gives no
   // route, so draw a compact arch from the source handle up and back to the target
-  // handle, with the label at its apex.
+  // handle, with the label at its apex. Multiple self-loops on one node fan out by
+  // `selfIndex` - each successive arch reaches wider and higher - so they never stack
+  // and their labels sit at different heights.
   if (props.source === props.target) {
-    const top = Math.min(props.sourceY, props.targetY) - 56;
-    const d = `M ${props.sourceX} ${props.sourceY} C ${props.sourceX + 52} ${top}, ${props.targetX - 52} ${top}, ${props.targetX} ${props.targetY}`;
+    const fan = (props.data?.selfIndex ?? 0) * 34;
+    const top = Math.min(props.sourceY, props.targetY) - 56 - fan;
+    const spread = 52 + fan;
+    const d = `M ${props.sourceX} ${props.sourceY} C ${props.sourceX + spread} ${top}, ${props.targetX - spread} ${top}, ${props.targetX} ${props.targetY}`;
     return { d, labelX: (props.sourceX + props.targetX) / 2, labelY: top + 8 };
   }
   const [d, labelX, labelY] = getSmoothStepPath({
