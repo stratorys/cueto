@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/load"
 
@@ -251,13 +252,15 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 	return fn()
 }
 
-// build overlays the client's editable files on the default project (package
-// main) and returns the `diagram` value. The schema lives in the diagram/
-// subpackage, imported by the project, and is never an overlay target: every
-// client filename passes domain.ValidEditableName (a safe relative path that
-// reserves the diagram/ and cue.mod dirs), and the overlay key is server-built
-// via filepath.Join, so the schema can never be supplied, replaced, or escaped
-// by a client.
+// build overlays the client's editable files on the module and returns the root
+// project's `diagram` value. The loader loads the whole module (the recursive
+// pattern), so packages the root imports and sibling packages in subdirectories
+// both resolve; eval then selects the root project instance rather than trusting
+// slice order. The schema lives in the diagram/ subpackage, imported by the
+// project, and is never an overlay target: every client filename passes
+// domain.ValidEditableName (a safe relative path that reserves the diagram/ and
+// cue.mod dirs), and the overlay key is server-built via filepath.Join, so the
+// schema can never be supplied, replaced, or escaped by a client.
 func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
 	for _, f := range src.Overlay {
@@ -278,15 +281,15 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.D
 	}
 	cfg := &load.Config{Dir: src.Dir, Overlay: overlay}
 
-	instances := load.Instances([]string{"."}, cfg)
-	if len(instances) == 0 {
+	root := rootInstance(load.Instances([]string{"./..."}, cfg), src.Dir)
+	if root == nil {
 		return cue.Value{}, cue.Value{}, nil, errors.New("no CUE instance loaded")
 	}
-	if err := instances[0].Err; err != nil {
+	if err := root.Err; err != nil {
 		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindParse), nil
 	}
 
-	value := cuecontext.New().BuildInstance(instances[0])
+	value := cuecontext.New().BuildInstance(root)
 	if err := value.Err(); err != nil {
 		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindSchema), nil
 	}
@@ -304,6 +307,24 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.D
 		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil
 	}
 	return value, diagram, nil, nil
+}
+
+// rootInstance returns the module-root package: the loaded instance whose
+// directory is the source dir itself. Loading the whole module with "./..." also
+// returns subpackages (the diagram schema, user sub-packages), so eval must select
+// the project explicitly rather than trust slice order. A nil result means the
+// module has no package at its root.
+func rootInstance(instances []*build.Instance, dir string) *build.Instance {
+	want, err := filepath.Abs(dir)
+	if err != nil {
+		return nil
+	}
+	for _, inst := range instances {
+		if filepath.Clean(inst.Dir) == want {
+			return inst
+		}
+	}
+	return nil
 }
 
 // replPath is the overlay path of the backend-authored REPL query binding, rooted

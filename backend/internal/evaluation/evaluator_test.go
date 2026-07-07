@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,5 +145,92 @@ func TestMembraneFamilyTreeDanglingReferenceFails(t *testing.T) {
 	}
 	if !anchored {
 		t.Fatalf("want a diagnostic anchored at people.marty.father with a source line, got %+v", diags)
+	}
+}
+
+// tempModule writes a throwaway CUE module (its own cue.mod plus the given files,
+// keyed by module-relative path) and returns an Engine pointed at it. The fixtures'
+// diagram field is a plain concrete struct, so no schema import is needed; hints
+// degrade to a no-op because the temp module has no diagram package.
+func tempModule(t *testing.T, files map[string]string) *Engine {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("cue.mod/module.cue", "module: \"example.com/m\"\nlanguage: version: \"v0.17.0\"\n")
+	for rel, content := range files {
+		write(rel, content)
+	}
+	return New(dir, 5*time.Second, 4<<20)
+}
+
+func decodeNodes(t *testing.T, out json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	var got struct {
+		Nodes map[string]json.RawMessage `json:"nodes"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode diagram: %v", err)
+	}
+	return got.Nodes
+}
+
+const subModuleRoot = `package main
+
+import "example.com/m/sub"
+
+diagram: {nodes: sub.nodes}
+`
+
+// Recursive load resolves an on-disk subpackage the root imports.
+func TestBuildLoadsSubpackageFromDisk(t *testing.T) {
+	e := tempModule(t, map[string]string{
+		"data.cue":    subModuleRoot,
+		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
+	})
+	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("eval err=%v diags=%+v", err, diags)
+	}
+	if nodes := decodeNodes(t, out); len(nodes) != 1 || nodes["a"] == nil {
+		t.Fatalf("nodes = %v, want exactly {a}", nodes)
+	}
+}
+
+// A subdirectory overlay key lands in the right instance and unifies with the disk file.
+func TestBuildSubdirOverlayLandsInSubpackage(t *testing.T) {
+	e := tempModule(t, map[string]string{
+		"data.cue":    subModuleRoot,
+		"sub/sub.cue": "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n",
+	})
+	overlay := []domain.File{{Name: "sub/extra.cue", Content: "package sub\n\nnodes: {b: {type: \"entity\", label: \"B\"}}\n"}}
+	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: overlay})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("eval err=%v diags=%+v", err, diags)
+	}
+	if nodes := decodeNodes(t, out); len(nodes) != 2 {
+		t.Fatalf("nodes = %v, want a and b", nodes)
+	}
+}
+
+// A broken sibling package the root does not import must not fail eval.
+func TestBuildIgnoresBrokenSiblingPackage(t *testing.T) {
+	e := tempModule(t, map[string]string{
+		"data.cue":          "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: \"A\"}}}\n",
+		"broken/broken.cue": "package broken\n\nthis is not valid cue !!!\n",
+	})
+	out, _, diags, err := e.Eval(context.Background(), Source{Dir: e.cueDir})
+	if err != nil || len(diags) != 0 {
+		t.Fatalf("eval err=%v diags=%+v", err, diags)
+	}
+	if len(out) == 0 {
+		t.Fatal("want diagram JSON, got empty")
 	}
 }
