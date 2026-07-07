@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { Diagram, DiagramEdge, DiagramNode } from "./model";
-import { edgesBody, facingHandle, nodeBody, toCue, toFlowEdges } from "./mapping";
+import { edgesBody, facingHandle, nodeBody, resolveDockSide, toCue, toFlowEdges } from "./mapping";
 
 // Optional metadata is authored via the inspector and only reaches CUE through
 // these pure serializers, so lock in that the fields round-trip (and that absent
@@ -110,7 +110,9 @@ describe("facingHandle (nearest-dot docking)", () => {
     // b sits far left of a, so a's source dot flips left and b's target dot flips right.
     const diagram: Diagram = {
       nodes: [node({ id: "a" }), node({ id: "b" })],
-      edges: [edge({ source: "a", target: "b", sourceHandle: "fk-source", targetHandle: "id-target" })],
+      edges: [
+        edge({ source: "a", target: "b", sourceHandle: "fk-source", targetHandle: "id-target" }),
+      ],
     };
     const boxes = {
       a: { x: 0, y: 0, w: 100, h: 40 },
@@ -119,6 +121,35 @@ describe("facingHandle (nearest-dot docking)", () => {
     const [flow] = toFlowEdges(diagram, null, {}, {}, boxes);
     expect(flow.sourceHandle).toBe("fk-source-l");
     expect(flow.targetHandle).toBe("id-target-r");
+  });
+
+  it("lets a dock-side override win over the geometric pick", () => {
+    // Same geometry as above (b far left, so the source would flip to fk-source-l), but
+    // the user dragged the source endpoint to the right dot: the override must stick.
+    const diagram: Diagram = {
+      nodes: [node({ id: "a" }), node({ id: "b" })],
+      edges: [
+        edge({ source: "a", target: "b", sourceHandle: "fk-source", targetHandle: "id-target" }),
+      ],
+    };
+    const boxes = {
+      a: { x: 0, y: 0, w: 100, h: 40 },
+      b: { x: -400, y: 0, w: 100, h: 40 },
+    };
+    const [flow] = toFlowEdges(diagram, null, {}, {}, boxes, { e1: { sourceHandle: "fk-source" } });
+    expect(flow.sourceHandle).toBe("fk-source");
+    // The un-overridden target end still docks by geometry.
+    expect(flow.targetHandle).toBe("id-target-r");
+  });
+
+  it("resolveDockSide maps a base handle to the dot on each side", () => {
+    // Source dots default right (base) / left is -l; target dots default left (base) /
+    // right is -r; an already-sided handle is normalized before re-siding.
+    expect(resolveDockSide("fk-source", "source", "left")).toBe("fk-source-l");
+    expect(resolveDockSide("fk-source", "source", "right")).toBe("fk-source");
+    expect(resolveDockSide("id-target", "target", "right")).toBe("id-target-r");
+    expect(resolveDockSide("id-target", "target", "left")).toBe("id-target");
+    expect(resolveDockSide("fk-source-l", "source", "right")).toBe("fk-source");
   });
 });
 

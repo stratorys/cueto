@@ -183,6 +183,37 @@ export function facingHandle(
   return handle;
 }
 
+// A user-chosen dock side per edge id, one or both ends. Ephemeral view state (never
+// written to CUE, the edge analog of pinnedPositions): when present it overrides the
+// geometric facingHandle pick so a relation stays on the side the user dragged it to,
+// until the next node move recomputes docking from geometry.
+export type DockSides = Record<string, { sourceHandle?: string; targetHandle?: string }>;
+
+// Drop a mirror-dot suffix so a handle can be re-sided: `col-source-l` -> `col-source`.
+function stripDockSuffix(handle: string): string {
+  return handle.endsWith("-l") || handle.endsWith("-r") ? handle.slice(0, -2) : handle;
+}
+
+// The mirror dot on `side` for a source/target handle, following facingHandle's
+// convention: a source dot defaults to the right (base) with `-l` on the left; a target
+// dot defaults to the left (base) with `-r` on the right. Any existing suffix is stripped
+// first so re-docking an already-sided handle normalizes correctly.
+export function resolveDockSide(
+  handle: string,
+  end: "source" | "target",
+  side: "left" | "right",
+): string {
+  const base = stripDockSuffix(handle);
+  if (end === "source") return side === "left" ? `${base}-l` : base;
+  return side === "left" ? base : `${base}-r`;
+}
+
+// True when `next` re-anchors the same handle to its other dot (same base, e.g.
+// `col-source` -> `col-source-l`), as opposed to moving to a different column/table.
+export function isSameDockAnchor(next: string, prev: string): boolean {
+  return stripDockSuffix(next) === stripDockSuffix(prev);
+}
+
 // The source/target handles for an edge, re-docked to the sides that face each other.
 // Falls back to the stored handles when either box is missing (positions not laid out
 // yet) or the edge is a self-loop. Keyed off node centers only - not the dragged bend -
@@ -191,15 +222,19 @@ export function facingHandle(
 function dockedHandles(
   edge: DiagramEdge,
   boxes: NodeBoxes,
+  override?: { sourceHandle?: string; targetHandle?: string },
 ): { sourceHandle?: string; targetHandle?: string } {
   const self = boxes[edge.source];
   const other = boxes[edge.target];
   if (!self || !other || edge.source === edge.target) {
-    return { sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle };
+    return {
+      sourceHandle: override?.sourceHandle ?? edge.sourceHandle,
+      targetHandle: override?.targetHandle ?? edge.targetHandle,
+    };
   }
   return {
-    sourceHandle: facingHandle(edge.sourceHandle, self, boxCenter(other)),
-    targetHandle: facingHandle(edge.targetHandle, other, boxCenter(self)),
+    sourceHandle: override?.sourceHandle ?? facingHandle(edge.sourceHandle, self, boxCenter(other)),
+    targetHandle: override?.targetHandle ?? facingHandle(edge.targetHandle, other, boxCenter(self)),
   };
 }
 
@@ -217,6 +252,7 @@ export function toFlowEdges(
   edgePoints: EdgePoints = {},
   pinnedWaypoints: EdgeWaypoints = {},
   boxes: NodeBoxes = {},
+  dockSides: DockSides = {},
 ): Edge[] {
   const visible = visibleIds(diagram, focus);
   // Ordinal of each self-referential edge among its node's self-loops. ELK does not
@@ -232,7 +268,7 @@ export function toFlowEdges(
         edge.source === edge.target
           ? (selfLoopOrdinal[edge.source] = (selfLoopOrdinal[edge.source] ?? -1) + 1)
           : 0;
-      const docked = dockedHandles(edge, boxes);
+      const docked = dockedHandles(edge, boxes, dockSides[edge.id]);
       return {
         id: edge.id,
         source: edge.source,

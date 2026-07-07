@@ -11,7 +11,7 @@
 
 import { computed, nextTick, ref, watch } from "vue";
 import type { Diagram, EdgeWaypoint } from "../model";
-import type { EdgePoints, EdgeWaypoints, NodeBoxes, NodePositions } from "../mapping";
+import type { DockSides, EdgePoints, EdgeWaypoints, NodeBoxes, NodePositions } from "../mapping";
 import { toFlowEdges, toFlowNodes } from "../mapping";
 import { layoutDiagram } from "../useLayout";
 import { useDiagram } from "../useDiagram";
@@ -93,7 +93,83 @@ export function pinEdgeWaypoints(id: string, waypoints: EdgeWaypoint[]) {
   if (waypoints.length) next[id] = waypoints;
   else delete next[id];
   pinnedWaypoints.value = next;
+  // A waypoint is stored relative to the source->target line (waypoints.ts), so if docking
+  // later flips a dot the reference line moves and the bend jumps into empty space. Freeze
+  // the edge's currently-rendered dots the moment it is hand-routed so the line stays put;
+  // release the freeze when the route is cleared so geometric docking resumes.
+  if (waypoints.length) freezeDockSidesFromView(id);
+  else clearDockOverride(id);
   rebuildGraph(true);
+}
+
+// The side each relation was dragged to dock to. Ephemeral like pinnedWaypoints (never
+// written to CUE), consulted by toFlowEdges ahead of the geometric facingHandle pick, and
+// pruned to edges that still exist. Cleared for an edge when a node it touches moves
+// (clearDockSidesAround), so a node drag re-flips docking by geometry.
+const pinnedDockSides = ref<DockSides>({});
+
+// pinDockSide records the dot a user dragged a relation endpoint onto and re-renders.
+// One end is merged in at a time so re-docking the source never wipes a prior target
+// choice; an empty entry drops the pin so the edge falls back to geometric docking.
+// Re-docking moves the endpoint, so a hand-placed waypoint on this edge is now relative
+// to the old line and would bend the edge through a stale point; drop it so the re-docked
+// edge redraws as a clean line from the new dot.
+export function pinDockSide(id: string, sides: { sourceHandle?: string; targetHandle?: string }) {
+  const merged = { ...pinnedDockSides.value[id], ...sides };
+  const next = { ...pinnedDockSides.value };
+  if (merged.sourceHandle || merged.targetHandle) next[id] = merged;
+  else delete next[id];
+  pinnedDockSides.value = next;
+  if (pinnedWaypoints.value[id]) {
+    const keptWaypoints = { ...pinnedWaypoints.value };
+    delete keptWaypoints[id];
+    pinnedWaypoints.value = keptWaypoints;
+  }
+  rebuildGraph(true);
+}
+
+// Freeze an edge's currently-rendered dots so docking stops flipping them. Reads the
+// live view (which carries the facingHandle-resolved handles) so the frozen sides match
+// exactly what the just-committed waypoint was captured against - no one-off jump.
+function freezeDockSidesFromView(id: string) {
+  // Read through a shallow shape: Vue Flow's Edge type is deep enough to trip TS's
+  // instantiation limit, same idiom as findNode above.
+  const view = (
+    edges.value as unknown as Array<{
+      id: string;
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
+    }>
+  ).find((e) => e.id === id);
+  if (!view) return;
+  pinnedDockSides.value = {
+    ...pinnedDockSides.value,
+    [id]: { sourceHandle: view.sourceHandle ?? undefined, targetHandle: view.targetHandle ?? undefined },
+  };
+}
+
+// Release an edge's dock freeze/override so geometric docking resumes.
+function clearDockOverride(id: string) {
+  if (!pinnedDockSides.value[id]) return;
+  const next = { ...pinnedDockSides.value };
+  delete next[id];
+  pinnedDockSides.value = next;
+}
+
+// Drop the dock override for every edge touching a moved node, so its docking is
+// recomputed from the new geometry. A hand-routed edge keeps its freeze though: its
+// waypoint is relative to the docked line, so re-flipping a dot would jump the bend.
+// Only mutates the ref; the caller rebuilds.
+export function clearDockSidesAround(movedIds: Set<string>) {
+  const next: DockSides = {};
+  for (const edge of diagram.value.edges) {
+    const sides = pinnedDockSides.value[edge.id];
+    if (!sides) continue;
+    const handRouted = !!pinnedWaypoints.value[edge.id] || !!edge.points;
+    if (!handRouted && (movedIds.has(edge.source) || movedIds.has(edge.target))) continue;
+    next[edge.id] = sides;
+  }
+  pinnedDockSides.value = next;
 }
 
 // An ELK edge polyline is anchored to where ELK placed its endpoints. Once a node
@@ -116,6 +192,7 @@ export function pinAutoPosition(id: string, position: { x: number; y: number }) 
   pinnedPositions.value = { ...pinnedPositions.value, [id]: position };
   autoPositions.value = { ...autoPositions.value, [id]: position };
   edgePoints.value = routesClearedAround(edgePoints.value, new Set([id]));
+  clearDockSidesAround(new Set([id]));
   rebuildGraph(true);
 }
 
@@ -168,6 +245,7 @@ export function rebuildGraph(keepEdgePoints = false) {
     edgePoints.value,
     pinnedWaypoints.value,
     nodeBoxes(),
+    pinnedDockSides.value,
   );
   applyHighlightClasses();
 }
@@ -273,6 +351,12 @@ export async function layoutAuto() {
     if (liveEdgeIds.has(id)) keptWaypoints[id] = route;
   }
   pinnedWaypoints.value = keptWaypoints;
+  // Same for the dock overrides: a removed relation must not keep a stale side.
+  const keptDockSides: DockSides = {};
+  for (const [id, sides] of Object.entries(pinnedDockSides.value)) {
+    if (liveEdgeIds.has(id)) keptDockSides[id] = sides;
+  }
+  pinnedDockSides.value = keptDockSides;
   // A pinned node was moved back to its pin after ELK routed its edges, so those routes
   // are stale; drop them (kept routes are all between ELK-placed nodes).
   edgePoints.value = routesClearedAround(result.edges, new Set(Object.keys(pins)));

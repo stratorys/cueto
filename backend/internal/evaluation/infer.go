@@ -9,8 +9,10 @@ package evaluation
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/ast"
 
 	"github.com/stratorys/cueto/backend/internal/diag"
 )
@@ -74,10 +76,14 @@ func registryLegend(registries []registry, kind string, perReg func(registry) in
 
 // registry is a detected open-label struct: its field name, its member schema (the
 // pattern constraint, reached via the AnyString selector), and its concrete members
-// keyed by label. keys is the sorted member key set.
+// keyed by label. keys is the sorted member key set. defName is the definition the
+// member schema names (`#Person` behind `people`), read from the schema source, empty
+// when the pattern is an inline struct; it lets orphan-definition detection skip a
+// definition a registry already hosts.
 type registry struct {
 	field   string
 	schema  cue.Value
+	defName string
 	members map[string]cue.Value
 	keys    []string
 }
@@ -111,8 +117,14 @@ func (e *Engine) inferViews(ctx *cue.Context, project cue.Value) ([]inferredView
 	if len(registries) == 0 {
 		return nil, nil
 	}
+	regNames := make(map[string]bool, len(registries))
+	for _, reg := range registries {
+		regNames[reg.field] = true
+	}
+	keySets := keySetDefs(project, regNames)
+	orphans := detectOrphanDefinitions(project, registries)
 
-	model, diags := e.projectModelView(ctx, registries)
+	model, diags := e.projectModelView(ctx, registries, orphans, keySets, regNames)
 	if diags != nil {
 		return nil, diags
 	}
@@ -146,9 +158,16 @@ func (e *Engine) projectInstanceView(ctx *cue.Context, registries []registry) (i
 
 // projectModelView draws each registry as one table node whose columns are its schema
 // fields, and each reference field as an edge between the two type tables: the data
-// model, drawn once regardless of how many rows exist.
-func (e *Engine) projectModelView(ctx *cue.Context, registries []registry) (inferredView, []diag.Diagnostic) {
+// model, drawn once regardless of how many rows exist. Orphan struct definitions (a
+// definition with no registry container, like #Trip) are drawn as additional tables from
+// the schema alone, so a pure schema entity still appears.
+func (e *Engine) projectModelView(ctx *cue.Context, registries []registry, orphans []entity, keySets map[string]string, regNames map[string]bool) (inferredView, []diag.Diagnostic) {
 	nodes, edges, trace := projectSchema(ctx, registries)
+	onodes, oedges, otrace, olegend := projectOrphanSchema(registries, orphans, keySets, regNames)
+	nodes = append(nodes, onodes...)
+	edges = append(edges, oedges...)
+	trace = append(trace, otrace...)
+	sortEdges(edges)
 	if len(nodes) > inferNodeMax {
 		return inferredView{}, boundDiag("nodes", len(nodes), inferNodeMax)
 	}
@@ -160,6 +179,7 @@ func (e *Engine) projectModelView(ctx *cue.Context, registries []registry) (infe
 		return inferredView{}, diags
 	}
 	legend := registryLegend(registries, "table", func(registry) int { return 1 })
+	legend = append(legend, olegend...)
 	return inferredView{name: viewModel, diagram: diagram, trace: trace, legend: legend}, nil
 }
 
@@ -195,6 +215,9 @@ func detectRegistries(project cue.Value) []registry {
 			field:   sel.Unquoted(),
 			schema:  schema,
 			members: map[string]cue.Value{},
+		}
+		if ids := defIdents(schema.Source()); len(ids) > 0 {
+			reg.defName = ids[0]
 		}
 		collectMembers(fv, &reg)
 		out = append(out, reg)
@@ -298,6 +321,198 @@ func projectSchema(ctx *cue.Context, registries []registry) ([]projectedNode, []
 	}
 	sortEdges(edges)
 	return nodes, edges, trace
+}
+
+// entity is a struct-shaped top-level definition drawn as a model-view table when no
+// registry hosts it: the label (definition name without '#') and its struct schema. This
+// lets a pure schema definition like #Trip appear even though it has no data container.
+type entity struct {
+	name   string
+	schema cue.Value
+}
+
+// detectOrphanDefinitions returns the top-level struct definitions that no registry hosts
+// as its member schema. A registry-hosted definition (#Person behind people) is left to
+// the registry so it is not drawn twice; a homeless definition (#Trip) becomes its own
+// table. An or([...]) key-set definition is skipped: its kind is string, not struct.
+// Detection is schema-level - no member data is read.
+func detectOrphanDefinitions(project cue.Value, registries []registry) []entity {
+	hosted := make(map[string]bool, len(registries))
+	for _, reg := range registries {
+		if reg.defName != "" {
+			hosted[reg.defName] = true
+		}
+	}
+	iter, err := project.Fields(cue.Definitions(true))
+	if err != nil {
+		return nil
+	}
+	var out []entity
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsDefinition() {
+			continue
+		}
+		fv := iter.Value()
+		if fv.IncompleteKind() != cue.StructKind {
+			continue
+		}
+		if hosted[sel.String()] {
+			continue
+		}
+		out = append(out, entity{name: entityLabel(sel.String()), schema: fv})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// entityLabel is the node id and label for an orphan definition: the definition name
+// without its leading '#'.
+func entityLabel(def string) string { return strings.TrimPrefix(def, "#") }
+
+// projectOrphanSchema draws each orphan definition that participates in a relation as one
+// table node, with an edge per reference field into its target registry. A definition with
+// no detected reference (a pure constraint like #JumpRequirement) is skipped: it is not an
+// entity. References are read from the schema source AST, so no member data is consulted
+// and an empty target registry still yields the edge. Nodes and edges reuse the same
+// projection helpers as the registry tables, so they render identically.
+func projectOrphanSchema(registries []registry, orphans []entity, keySets map[string]string, regNames map[string]bool) ([]projectedNode, []projectedEdge, []TraceEntry, []LegendEntry) {
+	var nodes []projectedNode
+	var edges []projectedEdge
+	var trace []TraceEntry
+	var legend []LegendEntry
+	for _, ent := range orphans {
+		refs := entityReferences(ent.schema, registries, keySets, regNames)
+		if len(refs) == 0 {
+			continue
+		}
+		nodes = append(nodes, projectedNode{
+			id: ent.name, typ: "table", label: ent.name,
+			columns: schemaColumns(registry{schema: ent.schema}, refs),
+		})
+		trace = append(trace, TraceEntry{Element: ent.name, Kind: "node", Rule: "definition", Detail: ent.name})
+		legend = append(legend, LegendEntry{Field: ent.name, Kind: "table", Count: 1})
+		for _, ref := range refs {
+			id := edgeID(ent.name, ref.field, ref.targetField)
+			edges = append(edges, projectedEdge{
+				id: id, source: ent.name, sourceHandle: columnSourceHandle(ref.field),
+				target: ref.targetField, targetHandle: tableTargetHandle,
+				label: ref.field, rule: ref.rule,
+			})
+			trace = append(trace, TraceEntry{
+				Element: id, Kind: "edge", Rule: ref.rule,
+				Detail: fmt.Sprintf("%s.%s -> %s", ent.name, ref.field, ref.targetField),
+			})
+		}
+	}
+	return nodes, edges, trace, legend
+}
+
+// entityReferences detects each field of an orphan definition's schema that references a
+// registry, read from the field's source AST alone: a field naming a key-set definition
+// (`from: #EraID`), the comprehension embedded inline, or an explicit @ref attribute. No
+// data is read, so an empty target registry is still a valid reference. Fields are sorted
+// by name.
+func entityReferences(schema cue.Value, registries []registry, keySets map[string]string, regNames map[string]bool) []reference {
+	if !schema.Exists() {
+		return nil
+	}
+	iter, err := schema.Fields(cue.Optional(true))
+	if err != nil {
+		return nil
+	}
+	var refs []reference
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsString() {
+			continue
+		}
+		field := sel.Unquoted()
+		fv := iter.Value()
+		if ref, ok := keySetRefAST(field, fv, keySets, regNames); ok {
+			refs = append(refs, ref)
+			continue
+		}
+		if ref, ok := attrReference(field, fv, registries); ok {
+			refs = append(refs, ref)
+		}
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].field < refs[j].field })
+	return refs
+}
+
+// keySetRefAST reports whether field fv is a key-set reference, read from its source AST:
+// it names a key-set definition mapping to a registry (`from: #EraID`), or embeds the
+// `for _, _ in <registry>` comprehension inline. Either way the target registry is known
+// without touching any data, so an empty registry is still a valid target.
+func keySetRefAST(field string, fv cue.Value, keySets map[string]string, regNames map[string]bool) (reference, bool) {
+	src := fv.Source()
+	list := fv.IncompleteKind()&cue.ListKind != 0
+	for _, id := range defIdents(src) {
+		if target, ok := keySets[id]; ok {
+			return reference{field: field, targetField: target, list: list, rule: "key-set-ref"}, true
+		}
+	}
+	if target := registryInForClause(src); target != "" && regNames[target] {
+		return reference{field: field, targetField: target, list: list, rule: "key-set-ref"}, true
+	}
+	return reference{}, false
+}
+
+// keySetDefs maps each key-set definition name (like "#EraID") to the registry field its
+// comprehension iterates, read from the definition's source AST. This is the schema-level
+// link a reference field points through, independent of any member data. Only definitions
+// whose for-clause names an actual registry are included.
+func keySetDefs(project cue.Value, regNames map[string]bool) map[string]string {
+	out := map[string]string{}
+	iter, err := project.Fields(cue.Definitions(true), cue.Hidden(true))
+	if err != nil {
+		return out
+	}
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsDefinition() {
+			continue
+		}
+		if reg := registryInForClause(iter.Value().Source()); reg != "" && regNames[reg] {
+			out[sel.String()] = reg
+		}
+	}
+	return out
+}
+
+// registryInForClause returns the identifier a `for _, _ in <ident>` clause iterates,
+// found anywhere in n, else "". This is the structural core of key-set detection: the
+// comprehension names the registry regardless of whether it holds any members.
+func registryInForClause(n ast.Node) string {
+	if n == nil {
+		return ""
+	}
+	found := ""
+	ast.Walk(n, func(node ast.Node) bool {
+		if fc, ok := node.(*ast.ForClause); ok && found == "" {
+			if id, ok := fc.Source.(*ast.Ident); ok {
+				found = id.Name
+			}
+		}
+		return true
+	}, nil)
+	return found
+}
+
+// defIdents returns the names of definition identifiers (#Foo) referenced anywhere in n.
+func defIdents(n ast.Node) []string {
+	if n == nil {
+		return nil
+	}
+	var out []string
+	ast.Walk(n, func(node ast.Node) bool {
+		if id, ok := node.(*ast.Ident); ok && len(id.Name) > 0 && id.Name[0] == '#' {
+			out = append(out, id.Name)
+		}
+		return true
+	}, nil)
+	return out
 }
 
 // schemaColumns renders a registry's member schema as table columns: one per field,

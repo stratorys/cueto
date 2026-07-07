@@ -12,6 +12,7 @@
 
 import { nextTick, ref } from "vue";
 import type { ShapeKind, Tool, TypedNodeType } from "../model";
+import { isSameDockAnchor, resolveDockSide } from "../mapping";
 import { useDiagram } from "../useDiagram";
 import {
   findNode,
@@ -27,7 +28,7 @@ import {
   updateNodeData,
 } from "./flowStore";
 import { activeFileName, newNodeOwner } from "./useEditorFiles";
-import { pinAutoPosition, rebuildGraph } from "./useGraphView";
+import { clearDockSidesAround, pinAutoPosition, pinDockSide, rebuildGraph } from "./useGraphView";
 import { syncTextFromModel } from "./useCueSync";
 
 const { diagram, commit, addShape, addTable, addContainer, addTypedNode } = useDiagram();
@@ -60,6 +61,11 @@ const MIN_DRAW = 8;
 // A near-zero endpoint drag (client px) is a click on the edge, not a drag into
 // empty space; below this the relation is kept instead of being demoted to a line.
 const MIN_ENDPOINT_DRAG = 12;
+
+// How far outside its own table (graph units) an endpoint can be released and still count
+// as re-docking that table to the side dragged toward, rather than a drag into empty
+// space that demotes the relation to a floating line.
+const DOCK_MARGIN = 48;
 
 // The armed palette tool (a shape to draw, or "connect" mode); null when nothing
 // is armed.
@@ -352,6 +358,9 @@ onNodeDragStop(({ node }) => {
     target.x = droppedAbs.x - newParentAbs.x;
     target.y = droppedAbs.y - newParentAbs.y;
   });
+  // A move changes node centers, so any relation this node manually re-docked should
+  // re-flip by the new geometry; drop its override before the rebuild recomputes docking.
+  clearDockSidesAround(new Set([node.id]));
   // Always rebuild: re-parenting changes the node's parent link, and any move
   // invalidates the previous auto-layout's edge routing.
   rebuildGraph();
@@ -487,6 +496,27 @@ onEdgeUpdateStart(({ event, edge }) => {
 // Reconnected to another handle/node: repoint the model edge, keep its other fields.
 onEdgeUpdate(({ edge, connection }) => {
   if (edgeDrag) edgeDrag.reconnected = true;
+  const model = diagram.value.edges.find((m) => m.id === edge.id);
+  const end = edgeDrag?.end ?? "source";
+  const newHandle = end === "source" ? connection.sourceHandle : connection.targetHandle;
+  const oldHandle = end === "source" ? model?.sourceHandle : model?.targetHandle;
+  // A pure side re-dock: same relation, same endpoints, dropped on the other dot of the
+  // handle it was already on. Keep it out of the model (ephemeral, like a dragged node)
+  // so it never reaches CUE and a later node move re-flips it by geometry.
+  if (
+    model &&
+    connection.source === model.source &&
+    connection.target === model.target &&
+    newHandle &&
+    oldHandle &&
+    isSameDockAnchor(newHandle, oldHandle)
+  ) {
+    pinDockSide(
+      edge.id,
+      end === "source" ? { sourceHandle: newHandle } : { targetHandle: newHandle },
+    );
+    return;
+  }
   commit((draft) => {
     const e = draft.edges.find((m) => m.id === edge.id);
     if (!e) return;
@@ -514,10 +544,32 @@ onEdgeUpdateEnd(({ event, edge }) => {
   // keep the relation rather than silently demoting it to a floating line.
   const moved = Math.hypot(client.x - drag.start.x, client.y - drag.start.y);
   if (moved < MIN_ENDPOINT_DRAG) return;
+  const drop = screenToFlowCoordinate(client);
+  // Released over (or just outside) its own table: re-dock that end to the side dragged
+  // toward instead of demoting the relation to a line. The chosen side is ephemeral view
+  // state (pinDockSide), so it never reaches CUE and the next node move re-flips it.
+  const draggedNode = drag.end === "source" ? e.source : e.target;
+  const baseHandle = drag.end === "source" ? e.sourceHandle : e.targetHandle;
+  if (baseHandle) {
+    const dn = diagram.value.nodes.find((m) => m.id === draggedNode);
+    const bw = dn?.width ?? findNode(draggedNode)?.dimensions?.width ?? 0;
+    const bh = dn?.height ?? findNode(draggedNode)?.dimensions?.height ?? 0;
+    const at = absolutePosition(draggedNode);
+    const nearX = drop.x >= at.x - DOCK_MARGIN && drop.x <= at.x + bw + DOCK_MARGIN;
+    const nearY = drop.y >= at.y - DOCK_MARGIN && drop.y <= at.y + bh + DOCK_MARGIN;
+    if (nearX && nearY) {
+      const side = drop.x < at.x + bw / 2 ? "left" : "right";
+      const resolved = resolveDockSide(baseHandle, drag.end, side);
+      pinDockSide(
+        e.id,
+        drag.end === "source" ? { sourceHandle: resolved } : { targetHandle: resolved },
+      );
+      return;
+    }
+  }
   const keptNode = drag.end === "source" ? e.target : e.source;
   const keptHandle = drag.end === "source" ? e.targetHandle : e.sourceHandle;
   const anchor = handleAnchor(keptNode, keptHandle);
-  const drop = screenToFlowCoordinate(client);
   const x = Math.min(anchor.x, drop.x);
   const y = Math.min(anchor.y, drop.y);
   const width = Math.max(1, Math.round(Math.abs(drop.x - anchor.x)));

@@ -535,3 +535,52 @@ func TestEvalExplicitViewWinsOverInference(t *testing.T) {
 		t.Fatalf("declared view must carry no legend, got %+v", legend)
 	}
 }
+
+// TestInferOrphanDefinitionModel covers the schema-only entity path: a struct definition
+// with no registry container (#Trip) is drawn as a model-view table alongside the
+// registries, with an edge per reference field resolved from the schema AST. It proves
+// three things at once - the orphan node appears, its reference resolves against an empty
+// registry (no member data at all), and a reference-free struct def (#JumpRequirement) is
+// not drawn because it is a constraint, not an entity.
+func TestInferOrphanDefinitionModel(t *testing.T) {
+	e := realEngine(t)
+	got, trace := inferView(t, e, `
+#VehicleID: or([for id, _ in vehicles {id}])
+#Trip: {name: string, vehicle: #VehicleID}
+#JumpRequirement: {requiredGw: number}
+vehicles: [ID=string]: {name: string}
+`, viewModel)
+
+	// Trip is drawn from its definition; vehicles from its registry; JumpRequirement is
+	// excluded (no reference); #Vehicle-style duplicates cannot arise (vehicles is inline).
+	wantNodes := []string{"Trip", "vehicles"}
+	if ids := nodeIDs(got); !eq(ids, wantNodes) {
+		t.Fatalf("nodes = %v, want %v", ids, wantNodes)
+	}
+	// The edge resolves even though vehicles holds no members - detection is schema-only.
+	wantEdges := []string{"Trip--vehicle-->vehicles"}
+	if ids := edgeIDs(got); !eq(ids, wantEdges) {
+		t.Fatalf("edges = %v, want %v", ids, wantEdges)
+	}
+	trip, ok := got.Nodes["Trip"]
+	if !ok {
+		t.Fatalf("missing Trip node in %v", nodeIDs(got))
+	}
+	if trip.Type != "table" {
+		t.Fatalf("Trip type = %q, want table", trip.Type)
+	}
+	// The reference field is a foreign-key column typed by its target registry; the plain
+	// scalar field stays an ordinary column.
+	fk := map[string]string{}
+	for _, c := range trip.Columns {
+		if c.Fk {
+			fk[c.Name] = c.DBType
+		}
+	}
+	if fk["vehicle"] != "vehicles" {
+		t.Fatalf("Trip fk columns = %v, want vehicle -> vehicles", fk)
+	}
+	if len(trace) != len(got.Nodes)+len(got.Edges) {
+		t.Fatalf("trace = %d, want %d (one per element)", len(trace), len(got.Nodes)+len(got.Edges))
+	}
+}
