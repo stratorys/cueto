@@ -167,7 +167,7 @@ flowchart LR
 3. On `/eval`, the backend loads the schema fresh from disk, overlays the request's editable files, unifies them, and returns the concrete diagram as JSON - or structured diagnostics on failure - all under size, output, deadline, and concurrency bounds.
 4. Canvas edits are spliced back into CUE text via `/rewrite`, and `/format` normalizes it with `cue fmt`, so the code and the picture never disagree.
 5. `/repl` evaluates any CUE expression against the live model in the editor; `/cue/meta` exposes stdlib introspection that powers autocompletion and auto-import.
-6. `/vet` validates the model against the schema and returns structured diagnostics; `make check` runs `cue vet ./...` so an invalid committed diagram fails CI.
+6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` so an invalid committed diagram fails CI.
 7. Diagrams are grouped into projects (`/projects`); `/projects/:pid/save` writes the validated instance as an immutable, content-addressed version, and `/projects/:pid/versions` lists and reads them.
 
 ## Run locally

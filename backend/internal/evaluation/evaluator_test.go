@@ -278,3 +278,57 @@ diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
 		t.Fatalf("default view nodes = %v, want the diagram field's {a}", nodes)
 	}
 }
+
+// Vet validates the whole module, so a broken sibling package the root never
+// imports fails vet - the twin of TestBuildIgnoresBrokenSiblingPackage, where the
+// same module evaluates fine because eval builds only the root view.
+func TestVetWholeModuleCatchesBrokenSibling(t *testing.T) {
+	e, dir := tempModule(t, map[string]string{
+		"data.cue":          "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: \"A\"}}, edges: []}\n",
+		"broken/broken.cue": "package broken\n\nthis is not valid cue !!!\n",
+	})
+	diags, err := e.Vet(context.Background(), Source{Dir: dir})
+	if err != nil {
+		t.Fatalf("vet: %v", err)
+	}
+	if len(diags) == 0 {
+		t.Fatal("want diagnostics for the broken sibling package, got none")
+	}
+}
+
+// A knowledge-only module (no view) vets clean.
+func TestVetKnowledgeOnlyClean(t *testing.T) {
+	e := realEngine(t)
+	files := []domain.File{{Name: "data.cue", Content: "package main\n\npeople: {george: {name: \"George\"}}\n"}}
+	diags, err := e.Vet(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	if err != nil {
+		t.Fatalf("vet: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("want clean vet, got %+v", diags)
+	}
+}
+
+// A valid-but-non-concrete diagram vets clean (validity only) yet reports
+// incomplete from eval (which gates the rendered view's concreteness).
+func TestVetNonConcreteViewIsClean(t *testing.T) {
+	e := realEngine(t)
+	data := "package main\n\ndiagram: {nodes: {a: {type: \"entity\", label: string}}, edges: []}\n"
+	files := []domain.File{{Name: "data.cue", Content: data}}
+
+	diags, err := e.Vet(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	if err != nil {
+		t.Fatalf("vet: %v", err)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("want clean vet for a valid non-concrete diagram, got %+v", diags)
+	}
+
+	_, _, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	if len(evalDiags) == 0 || evalDiags[0].Kind != diag.KindIncomplete {
+		t.Fatalf("eval diags = %+v, want kind %q", evalDiags, diag.KindIncomplete)
+	}
+}

@@ -122,11 +122,68 @@ func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []strin
 	return out, views, hintsFrom(e.schemaRoot(), diagram), nil, nil
 }
 
-// Vet unifies the file set and validates it against the schema, returning the
-// same diagnostics an eval would surface. Diagnostics are empty when clean.
+// Vet validates every package in the module for validity - parse, unification,
+// schema, and closedness errors - across all packages, including siblings the root
+// never imports. It never requires concreteness: an incomplete but valid module
+// vets clean. Rendering a concrete view is eval's gate, not vet's. Diagnostics are
+// empty when clean. It runs under the same deadline and panic recovery as eval.
 func (e *Engine) Vet(ctx context.Context, src Source) ([]diag.Diagnostic, error) {
-	_, _, _, diags, err := e.evaluate(ctx, src, "")
-	return diags, err
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+
+	done := make(chan vetResult, 1)
+	go func() {
+		done <- recoverVet(func() vetResult { return vetResult{diags: e.vetModule(src)} })
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ErrTimeout
+	case r := <-done:
+		return r.diags, r.err
+	}
+}
+
+// vetModule builds every package in the module and returns validity diagnostics
+// from all of them. It selects no view and never gates concreteness: a package is
+// vet-clean when it parses, unifies, and validates, even if incomplete. Validate
+// without cue.Concrete reports structural errors (dangling references, schema and
+// closedness violations) but not incompleteness.
+func (e *Engine) vetModule(src Source) []diag.Diagnostic {
+	instances, diags := e.loadModule(src, "")
+	if diags != nil {
+		return diags
+	}
+	ctx := cuecontext.New()
+	var out []diag.Diagnostic
+	for _, inst := range instances {
+		if inst.Err != nil {
+			out = append(out, diag.From(inst.Err, src.Dir, diag.KindParse)...)
+			continue
+		}
+		if err := ctx.BuildInstance(inst).Validate(); err != nil {
+			out = append(out, diag.From(err, src.Dir, diag.KindSchema)...)
+		}
+	}
+	return out
+}
+
+type vetResult struct {
+	diags []diag.Diagnostic
+	err   error
+}
+
+// recoverVet is the vet twin of recoverToResult: it runs fn on the worker goroutine
+// under a panic recovery, converting an untrusted-input panic into errEvalPanic
+// rather than killing the process.
+func recoverVet(fn func() vetResult) (result vetResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("recovered panic in CUE evaluation: %v\n%s", r, debug.Stack())
+			result = vetResult{err: errEvalPanic}
+		}
+	}()
+	return fn()
 }
 
 // EvalExpr evaluates a standalone CUE snippet in a fresh context - no schema, no
@@ -269,24 +326,22 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 	return fn()
 }
 
-// build overlays the client's editable files on the module and returns the root
-// project value, the default view to render, and the names of every discovered
-// view. The loader loads the whole module (the recursive pattern), so packages the
-// root imports and sibling packages in subdirectories both resolve; eval then
-// selects the root project instance rather than trusting slice order. The schema
-// lives in the diagram/ subpackage, imported by the project, and is never an
-// overlay target: every client filename passes domain.ValidEditableName (a safe
-// relative path that reserves the diagram/ and cue.mod dirs), and the overlay key
-// is server-built via filepath.Join, so the schema can never be supplied, replaced,
-// or escaped by a client.
-func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
+// loadModule overlays the client's editable files on the module and loads every
+// package in it (the recursive pattern), so packages the root imports and sibling
+// packages in subdirectories both resolve. The schema lives in the diagram/
+// subpackage and is never an overlay target: every client filename passes
+// domain.ValidEditableName (a safe relative path that reserves the diagram/ and
+// cue.mod dirs), and the overlay key is server-built via filepath.Join, so the
+// schema can never be supplied, replaced, or escaped by a client. The diagnostics
+// return is non-nil only for a rejected client filename.
+func (e *Engine) loadModule(src Source, query string) ([]*build.Instance, []diag.Diagnostic) {
 	overlay := map[string]load.Source{}
 	for _, f := range src.Overlay {
 		if !domain.ValidEditableName(f.Name) {
-			return cue.Value{}, cue.Value{}, nil, []diag.Diagnostic{{
+			return nil, []diag.Diagnostic{{
 				Message: fmt.Sprintf("invalid file name %q", f.Name),
 				Kind:    diag.KindParse,
-			}}, nil
+			}}
 		}
 		overlay[filepath.Join(src.Dir, f.Name)] = load.FromString(f.Content)
 	}
@@ -298,8 +353,20 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string
 		overlay[replPath(src.Dir)] = load.FromString(replQuerySource(query))
 	}
 	cfg := &load.Config{Dir: src.Dir, Overlay: overlay}
+	return load.Instances([]string{"./..."}, cfg), nil
+}
 
-	root := rootInstance(load.Instances([]string{"./..."}, cfg), src.Dir)
+// build overlays the client's editable files on the module and returns the root
+// project value, the default view to render, and the names of every discovered
+// view. eval selects the root project instance rather than trusting slice order,
+// and gates only that rendered view's concreteness; sibling packages are ignored
+// here (whole-module validity is vet's job).
+func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
+	instances, diags := e.loadModule(src, query)
+	if diags != nil {
+		return cue.Value{}, cue.Value{}, nil, diags, nil
+	}
+	root := rootInstance(instances, src.Dir)
 	if root == nil {
 		return cue.Value{}, cue.Value{}, nil, nil, errors.New("no CUE instance loaded")
 	}
