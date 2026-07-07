@@ -53,6 +53,31 @@ export const evalError = ref<string | null>(null);
 export const diagnostics = ref<Diagnostic[]>([]);
 export const hints = ref<Hint[]>([]);
 
+// Names of every diagram view the last eval discovered, and which one is rendered.
+// A module can expose zero (knowledge-only), one, or many views; the switcher only
+// shows above one. activeView is passed back on the next eval so the backend
+// renders that view, and is re-pinned to the rendered view after each eval so a
+// view that disappears falls back to the default rather than leaving a stale tab.
+export const views = ref<string[]>([]);
+export const activeView = ref<string>("");
+
+// pickActiveView mirrors the backend's default-view choice (the one named
+// "diagram", else the first by name) so the switcher highlights the tab that was
+// actually rendered, keeping a still-valid selection.
+function pickActiveView(names: string[], current: string): string {
+  if (current && names.includes(current)) return current;
+  if (names.includes("diagram")) return "diagram";
+  return names[0] ?? "";
+}
+
+// selectView switches the rendered view and re-evaluates. A no-op when the view is
+// already active, so clicking the current tab does not thrash the canvas.
+export function selectView(name: string) {
+  if (name === activeView.value) return;
+  activeView.value = name;
+  void runEval();
+}
+
 // Whether the editor draws inlay hints (types / optional fields). Diagnostics are
 // never gated. On by default; the toggle lets a user quiet a dense x-ray.
 export const showHints = ref(true);
@@ -193,7 +218,7 @@ function onCueEdit(value: string) {
 let evalGeneration = 0;
 export async function runEval() {
   const generation = ++evalGeneration;
-  const result = await evalFiles(files.value);
+  const result = await evalFiles(files.value, activeView.value);
   if (generation !== evalGeneration) return;
   if (!result.ok) {
     evalError.value = result.error;
@@ -205,6 +230,8 @@ export async function runEval() {
   diagnostics.value = [];
   hints.value = result.hints;
   provenance.value = result.provenance;
+  views.value = result.views;
+  activeView.value = pickActiveView(result.views, activeView.value);
   // Eval is now authoritative for ownership, so drop the creation-time overrides.
   newNodeOwner.clear();
   replace(fromEval(result.diagram, result.provenance));

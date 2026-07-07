@@ -5,23 +5,37 @@
 // SPDX-License-Identifier: MPL-2.0
 
 // Command check is the CI entrypoint for diagram validation. It evaluates a
-// diagram (data.cue) against the schema and exits nonzero if it fails to build
-// or is not concrete. `cue vet ./...` covers the pure-CUE gate; this tool loads
-// the same package with an overlaid data.cue so CI can validate a candidate file
-// without writing it to disk.
+// candidate diagram (data.cue) against the schema and exits nonzero if it fails
+// to build or its rendered view is not concrete. `cue vet ./...` covers the
+// pure-CUE gate; this tool overlays a candidate data.cue on the module so CI can
+// validate the file without writing it to disk. It drives the same engine as the
+// server, so it inherits whole-module load, view discovery, and the view
+// concreteness gate rather than hardcoding a single top-level field.
 //
 //	check -cue ../cue -data data.cue
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
-	"cuelang.org/go/cue"
-	"cuelang.org/go/cue/cuecontext"
-	"cuelang.org/go/cue/load"
+	"github.com/stratorys/cueto/backend/internal/diag"
+	"github.com/stratorys/cueto/backend/internal/domain"
+	"github.com/stratorys/cueto/backend/internal/evaluation"
+)
+
+// CLI evaluation bounds. Generous next to the server's per-request caps: a CI run
+// is trusted, single-shot, and not a shared surface, so the deadline and output
+// cap exist only to bound a pathological input, not to ration a live service.
+const (
+	checkTimeout        = 30 * time.Second
+	checkMaxOutputBytes = 64 << 20
 )
 
 func main() {
@@ -37,7 +51,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "check: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("OK: diagram passes the schema.")
 }
 
 func run(cueDir, dataPath string) error {
@@ -49,20 +62,39 @@ func run(cueDir, dataPath string) error {
 	if err != nil {
 		return err
 	}
-	overlay := map[string]load.Source{
-		filepath.Join(cueDir, "data.cue"): load.FromString(string(data)),
+
+	engine := evaluation.New(cueDir, checkTimeout, checkMaxOutputBytes)
+	src := evaluation.Source{
+		Dir:     cueDir,
+		Overlay: []domain.File{{Name: "data.cue", Content: string(data)}},
+	}
+	_, views, _, diags, err := engine.Eval(context.Background(), src)
+	if err != nil {
+		return err
+	}
+	if len(diags) > 0 {
+		return errors.New(formatDiags(diags))
 	}
 
-	instances := load.Instances([]string{"."}, &load.Config{Dir: cueDir, Overlay: overlay})
-	if len(instances) == 0 {
-		return fmt.Errorf("no CUE instance loaded")
+	if len(views) == 0 {
+		fmt.Println("OK: module is valid (no diagram view).")
+	} else {
+		fmt.Println("OK: diagram passes the schema.")
 	}
-	if err := instances[0].Err; err != nil {
-		return err
+	return nil
+}
+
+// formatDiags renders evaluation diagnostics as an indented, multi-line message
+// so the CI log points at the offending line, matching what the editor surfaces.
+func formatDiags(diags []diag.Diagnostic) string {
+	var b strings.Builder
+	b.WriteString("diagram does not pass the schema:")
+	for _, d := range diags {
+		if d.Line > 0 {
+			fmt.Fprintf(&b, "\n  %d:%d: %s", d.Line, d.Column, d.Message)
+		} else {
+			fmt.Fprintf(&b, "\n  %s", d.Message)
+		}
 	}
-	value := cuecontext.New().BuildInstance(instances[0])
-	if err := value.Err(); err != nil {
-		return err
-	}
-	return value.LookupPath(cue.ParsePath("diagram")).Validate(cue.Concrete(true))
+	return b.String()
 }

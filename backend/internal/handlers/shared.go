@@ -75,6 +75,9 @@ type dataRequest struct {
 	// Editable file set for multi-file packages. When empty, Data is treated as a
 	// single data.cue, so single-file clients keep working.
 	Files []domain.File `json:"files"`
+	// View selects which discovered view /eval renders. Empty (the default and the
+	// single-file client's behavior) renders the default view.
+	View string `json:"view"`
 }
 
 // files returns the editable set: the explicit Files, or a single data.cue built

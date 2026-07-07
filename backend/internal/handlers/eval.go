@@ -15,8 +15,9 @@ import (
 	"github.com/stratorys/cueto/backend/internal/diag"
 )
 
-// Eval returns the default view's diagram JSON plus the names of every discovered
-// view, or 400 with structured diagnostics. A knowledge-only module is a success
+// Eval returns one view's diagram JSON plus the names of every discovered view,
+// or 400 with structured diagnostics. The rendered view is the request's View when
+// it names a discovered one, else the default. A knowledge-only module is a success
 // with an empty view list and an empty diagram, distinct from an error. Provenance
 // is derived by the authoring concern from the same file set, so the response still
 // carries the node/edge->file attribution the canvas needs.
@@ -26,7 +27,9 @@ func (h *handlers) Eval(c *gin.Context) {
 		return
 	}
 	files := req.files()
-	out, views, hints, diags, err := h.eval.Eval(c.Request.Context(), h.source(files))
+	src := h.source(files)
+	src.View = req.View
+	out, views, hints, diags, err := h.eval.Eval(c.Request.Context(), src)
 	if err != nil {
 		writeOpError(c, err)
 		return

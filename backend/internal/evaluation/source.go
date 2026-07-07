@@ -17,7 +17,12 @@ import "github.com/stratorys/cueto/backend/internal/domain"
 // Overlay entries are client-supplied and each Name is guarded by
 // domain.ValidEditableName before it becomes an overlay key, so a client can never
 // supply, replace, or escape a path outside Dir.
+//
+// View names which discovered view Eval renders. Empty selects the default view;
+// a name that no longer matches also falls back to the default, so a stale client
+// selection never fails the eval.
 type Source struct {
 	Dir     string        // module root (contains cue.mod)
 	Overlay []domain.File // unsaved client buffers layered over Dir
+	View    string        // discovered view to render; empty = default
 }

@@ -293,6 +293,40 @@ diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
 	}
 }
 
+func TestEvalSelectsView(t *testing.T) {
+	// The same two-view module, but the request names the non-default view; eval
+	// must render alt's node b, not the default diagram's a, and still list both.
+	data := `package main
+
+alt: {nodes: {b: {type: "entity", label: "B"}}, edges: []}
+diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
+`
+	reqBody, err := json.Marshal(dataRequest{Data: data, View: "alt"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	router := realRouter(t, testConfig(t))
+	rec := postJSON(router, "/eval", reqBody)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Diagram struct {
+			Nodes map[string]any `json:"nodes"`
+		} `json:"diagram"`
+		Views []string `json:"views"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := body.Diagram.Nodes["b"]; !ok || len(body.Diagram.Nodes) != 1 {
+		t.Fatalf("selected view nodes = %v, want alt's {b}", body.Diagram.Nodes)
+	}
+	if len(body.Views) != 2 {
+		t.Fatalf("views = %v, want both listed", body.Views)
+	}
+}
+
 func TestEvalSchemaViolation(t *testing.T) {
 	data := `package main
 

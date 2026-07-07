@@ -11,7 +11,7 @@ Diagrams drift from the domains they describe and carry no checkable meaning: th
 
 ## What it demonstrates
 
-- **Architecture pattern** - a hand-owned schema (`schema.cue`) that is never machine-written, with a concrete instance (`data.cue`) overlaid per request; the canvas only ever round-trips the data, the schema stays authoritative.
+- **Architecture pattern** - a hand-owned schema package (`cue/diagram/`) that is never machine-written, with a concrete instance (`data.cue`) overlaid per request; the canvas only ever round-trips the data, the schema stays authoritative.
 - **Workflow design** - the same model is edited two ways (visual canvas and CUE code) kept in sync through a source map, then evaluated, validated, formatted, and saved as immutable versions.
 - **Knowledge model** - the schema separates rendering fields (`type`, `shape`, colors) from a free-form `data` payload, so the nodes you draw carry domain facts you can query.
 - **Queryability** - a REPL pane with CUE stdlib introspection and autocompletion evaluates any expression against the live model in the editor.
@@ -147,7 +147,7 @@ flowchart LR
   end
 
   subgraph cue["cue/ (source of truth)"]
-    schema["schema.cue (authoritative)"]
+    schema["diagram/ (authoritative)"]
     data["data.cue (instance)"]
   end
 
@@ -162,9 +162,9 @@ flowchart LR
 
 ## How it works
 
-1. `cue/schema.cue` defines the diagram shape. It is hand-owned and never rewritten by the app.
-2. `cue/data.cue` is the concrete instance. The canvas round-trips only this file; the schema stays fixed.
-3. On `/eval`, the backend loads the schema fresh from disk, overlays the request's editable files, unifies them, and returns the concrete diagram as JSON - or structured diagnostics on failure - all under size, output, deadline, and concurrency bounds.
+1. `cue/diagram/` is the hand-owned schema package (`#Diagram`, `#Node`, `#Column`, `#Edge`). It is never rewritten by the app.
+2. `cue/data.cue` is the concrete instance that imports the schema and declares one or more diagram views. The canvas round-trips only this file; the schema stays fixed.
+3. On `/eval`, the backend loads the module fresh from disk, overlays the request's editable files, and unifies them against the schema. It discovers every top-level field that is diagram-shaped (unifies with `#Diagram` and carries `nodes`) - a module may expose zero, one, or many such **views** - and returns the selected view's concrete diagram as JSON plus the list of discovered view names, or structured diagnostics on failure. A view must be concrete to render, so `/eval` gates it; non-view knowledge fields need only be valid. A module with zero views is a well-formed "no view" result, not an error. All under size, output, deadline, and concurrency bounds.
 4. Canvas edits are spliced back into CUE text via `/rewrite`, and `/format` normalizes it with `cue fmt`, so the code and the picture never disagree.
 5. `/repl` evaluates any CUE expression against the live model in the editor; `/cue/meta` exposes stdlib introspection that powers autocompletion and auto-import.
 6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` so an invalid committed diagram fails CI.

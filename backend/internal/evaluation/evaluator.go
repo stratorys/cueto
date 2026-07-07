@@ -393,7 +393,7 @@ func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string
 		// A knowledge-only module has no view: valid, with nothing to render.
 		return value, cue.Value{}, names, nil, nil
 	}
-	return value, views[defaultView(views)].value, names, nil, nil
+	return value, views[selectView(views, src.View)].value, names, nil, nil
 }
 
 // view is a discovered diagram-shaped field of the project value.
@@ -449,6 +449,21 @@ func viewNames(views []view) []string {
 		names[i] = v.name
 	}
 	return names
+}
+
+// selectView picks which discovered view to render: the one named want when it
+// exists, else the default. An empty or unknown want (e.g. a client selection
+// left over from a prior edit that removed the view) falls back to the default
+// rather than failing the eval.
+func selectView(views []view, want string) int {
+	if want != "" {
+		for i, v := range views {
+			if v.name == want {
+				return i
+			}
+		}
+	}
+	return defaultView(views)
 }
 
 // defaultView picks the view the single-view frontend renders: the one named

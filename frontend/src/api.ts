@@ -35,6 +35,8 @@ export interface EvalOk {
   ok: true;
   diagram: unknown;
   hints: Hint[];
+  // Names of every discovered diagram view; empty for a knowledge-only module.
+  views: string[];
 }
 
 // Multi-file eval also reports provenance: which file authored each element.
@@ -43,6 +45,8 @@ export interface EvalFilesOk {
   diagram: unknown;
   hints: Hint[];
   provenance: Provenance;
+  // Names of every discovered diagram view; empty for a knowledge-only module.
+  views: string[];
 }
 
 // Result of /rewrite: the file's new text after splicing canvas edits.
@@ -249,26 +253,30 @@ async function sendJSON<T>(
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
   return post("/eval", { data }, async (response) => {
-    const body = await readJson<{ diagram?: unknown; hints?: Hint[] }>(response);
-    return { diagram: body.diagram, hints: body.hints ?? [] };
+    const body = await readJson<{ diagram?: unknown; hints?: Hint[]; views?: string[] }>(response);
+    return { diagram: body.diagram, hints: body.hints ?? [], views: body.views ?? [] };
   });
 }
 
 // evalFiles evaluates the multi-file package (all files unify into one diagram)
-// and returns the diagram JSON, inlay hints, and per-element provenance. The
-// single-file evalCue above stays for callers that have not moved to the file set.
-export function evalFiles(files: EditorFile[]): Promise<EvalFilesOk | EvalErr> {
-  const body = { files: files.map((f) => ({ name: f.name, content: f.text })) };
+// and returns the diagram JSON, inlay hints, per-element provenance, and the names
+// of every discovered view. view names which of those the backend renders; an
+// empty or unknown view renders the default. The single-file evalCue above stays
+// for callers that have not moved to the file set.
+export function evalFiles(files: EditorFile[], view = ""): Promise<EvalFilesOk | EvalErr> {
+  const body = { files: files.map((f) => ({ name: f.name, content: f.text })), view };
   return post("/eval", body, async (response) => {
     const parsed = await readJson<{
       diagram?: unknown;
       hints?: Hint[];
       provenance?: Provenance;
+      views?: string[];
     }>(response);
     return {
       diagram: parsed.diagram,
       hints: parsed.hints ?? [],
       provenance: parsed.provenance ?? { nodes: {}, edges: "" },
+      views: parsed.views ?? [],
     };
   });
 }

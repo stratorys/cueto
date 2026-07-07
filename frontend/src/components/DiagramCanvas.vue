@@ -23,6 +23,7 @@ import ElkEdge from "../edges/ElkEdge.vue";
 import MarkerDefs from "../edges/MarkerDefs.vue";
 import ShapePalette from "./ShapePalette.vue";
 import Toolbar from "./Toolbar.vue";
+import { views, activeView, selectView, evalError, diagnostics } from "../composables/useCueSync";
 
 // Registered here (not in the composable) so the composable never imports the
 // node components - they import commit helpers from the composable.
@@ -352,6 +353,23 @@ onBeforeUnmount(() => {
       />
     </div>
 
+    <!-- View switcher, top-left: only when the module exposes more than one
+         diagram view. Selecting a name re-evaluates with that view rendered. -->
+    <div
+      v-if="views.length > 1"
+      class="absolute left-3 top-3 z-10 flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white/90 p-1 shadow-sm backdrop-blur"
+    >
+      <button
+        v-for="name in views"
+        :key="name"
+        class="cursor-pointer rounded-md px-2 py-1 text-xs font-medium"
+        :class="name === activeView ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'"
+        @click="selectView(name)"
+      >
+        {{ name }}
+      </button>
+    </div>
+
     <!-- History / view controls, bottom-left beside the Vue Flow zoom controls. -->
     <div
       class="absolute bottom-3 left-14 z-10 flex items-center rounded-lg border border-slate-200 bg-white/90 px-1.5 py-1 shadow-sm backdrop-blur"
@@ -401,6 +419,20 @@ onBeforeUnmount(() => {
       <Background variant="dots" :gap="22" :size="1.5" :pattern-color="gridColor" />
       <Controls />
     </VueFlow>
+
+    <!-- No-view state: a knowledge-only module evaluated cleanly but exposes no
+         diagram-shaped field, so there is nothing to render. Distinct from an
+         ordinary empty diagram (which still has a view) and from an eval error. -->
+    <div
+      v-if="views.length === 0 && !evalError && diagnostics.length === 0"
+      class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+    >
+      <div
+        class="rounded-lg border border-slate-200 bg-white/90 px-4 py-3 text-center text-sm text-slate-500 shadow-sm backdrop-blur"
+      >
+        This module defines no diagram view.
+      </div>
+    </div>
 
     <!-- Draw overlay, only while a shape draw tool is armed (never in connect
          mode, so handle drags reach Vue Flow). Transparent, so the line tool's
