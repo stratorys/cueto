@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/domain"
 )
@@ -48,12 +47,7 @@ func realEngine(t *testing.T) *Engine {
 	if err != nil {
 		t.Fatalf("abs cue dir: %v", err)
 	}
-	return New(config.Config{
-		CueDir:         abs,
-		DataDir:        t.TempDir(),
-		MaxOutputBytes: 4 << 20,
-		EvalTimeout:    5 * time.Second,
-	})
+	return New(abs, 5*time.Second, 4<<20)
 }
 
 // A user membrane (shape A per the knowledge-as-code doc): a `people` map whose
@@ -102,7 +96,7 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 	e := realEngine(t)
 	files := []domain.File{{Name: "data.cue", Content: familyMembrane}}
 
-	diags, err := e.Vet(context.Background(), files)
+	diags, err := e.Vet(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil {
 		t.Fatalf("vet: %v", err)
 	}
@@ -110,7 +104,7 @@ func TestMembraneFamilyTreeVetsCleanAndDerives(t *testing.T) {
 		t.Fatalf("want clean vet, got %+v", diags)
 	}
 
-	out, _, evalDiags, err := e.Eval(context.Background(), files)
+	out, _, evalDiags, err := e.Eval(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil || len(evalDiags) != 0 {
 		t.Fatalf("eval err=%v diags=%+v", err, evalDiags)
 	}
@@ -135,7 +129,7 @@ func TestMembraneFamilyTreeDanglingReferenceFails(t *testing.T) {
 		`marty:    {name: "Marty McFly", mother: "lorraine", father: "ghost", year: 1968}`, 1)
 	files := []domain.File{{Name: "data.cue", Content: dangling}}
 
-	diags, err := e.Vet(context.Background(), files)
+	diags, err := e.Vet(context.Background(), Source{Dir: e.cueDir, Overlay: files})
 	if err != nil {
 		t.Fatalf("vet: %v", err)
 	}

@@ -53,7 +53,7 @@ func testConfig(t *testing.T) config.Config {
 
 func realRouter(t *testing.T, cfg config.Config) *gin.Engine {
 	t.Helper()
-	return NewRouter(evaluation.New(cfg), workspace.New(cfg), authoring.New(), cfg)
+	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), workspace.New(cfg), authoring.New(), cfg)
 }
 
 func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRecorder {
@@ -292,7 +292,7 @@ type blockingEval struct {
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, files []domain.File) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
 	return json.RawMessage(`{"nodes":{},"edges":[]}`), nil, nil, nil
@@ -302,11 +302,11 @@ func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMes
 	return json.RawMessage(`null`), nil, nil
 }
 
-func (b *blockingEval) EvalQuery(ctx context.Context, files []domain.File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
+func (b *blockingEval) EvalQuery(ctx context.Context, src evaluation.Source, expr string) (json.RawMessage, []diag.Diagnostic, error) {
 	return json.RawMessage(`null`), nil, nil
 }
 
-func (b *blockingEval) Keys(ctx context.Context, files []domain.File) ([]string, []diag.Diagnostic, error) {
+func (b *blockingEval) Keys(ctx context.Context, src evaluation.Source) ([]string, []diag.Diagnostic, error) {
 	return nil, nil, nil
 }
 
@@ -314,7 +314,7 @@ func (b *blockingEval) Introspect() evaluation.CueMeta {
 	return evaluation.CueMeta{}
 }
 
-func (b *blockingEval) Vet(ctx context.Context, files []domain.File) ([]diag.Diagnostic, error) {
+func (b *blockingEval) Vet(ctx context.Context, src evaluation.Source) ([]diag.Diagnostic, error) {
 	return nil, nil
 }
 

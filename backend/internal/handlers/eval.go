@@ -24,7 +24,7 @@ func (h *handlers) Eval(c *gin.Context) {
 		return
 	}
 	files := req.files()
-	out, hints, diags, err := h.eval.Eval(c.Request.Context(), files)
+	out, hints, diags, err := h.eval.Eval(c.Request.Context(), h.source(files))
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -53,7 +53,7 @@ func (h *handlers) EvalExpr(c *gin.Context) {
 		err   error
 	)
 	if len(req.Files) > 0 {
-		out, diags, err = h.eval.EvalQuery(c.Request.Context(), req.Files, req.Source)
+		out, diags, err = h.eval.EvalQuery(c.Request.Context(), h.source(req.Files), req.Source)
 	} else {
 		out, diags, err = h.eval.EvalExpr(c.Request.Context(), req.Source)
 	}
@@ -77,7 +77,7 @@ func (h *handlers) ReplKeys(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	keys, diags, err := h.eval.Keys(c.Request.Context(), req.Files)
+	keys, diags, err := h.eval.Keys(c.Request.Context(), h.source(req.Files))
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -96,7 +96,7 @@ func (h *handlers) Vet(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	diags, err := h.eval.Vet(c.Request.Context(), req.files())
+	diags, err := h.eval.Vet(c.Request.Context(), h.source(req.files()))
 	if err != nil {
 		writeOpError(c, err)
 		return

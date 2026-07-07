@@ -58,7 +58,7 @@ func main() {
 	// mid-response.
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handlers.NewRouter(evaluation.New(cfg), workspace.New(cfg), authoring.New(), cfg),
+		Handler:           handlers.NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), workspace.New(cfg), authoring.New(), cfg),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,

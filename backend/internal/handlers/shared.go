@@ -24,12 +24,12 @@ import (
 // interface isolates the cuelang library behind one seam so the transport stays
 // library-agnostic and tests can substitute a fake.
 type evalService interface {
-	Eval(ctx context.Context, files []domain.File) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error)
+	Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []evaluation.Hint, []diag.Diagnostic, error)
 	EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error)
-	EvalQuery(ctx context.Context, files []domain.File, expr string) (json.RawMessage, []diag.Diagnostic, error)
-	Keys(ctx context.Context, files []domain.File) ([]string, []diag.Diagnostic, error)
+	EvalQuery(ctx context.Context, src evaluation.Source, expr string) (json.RawMessage, []diag.Diagnostic, error)
+	Keys(ctx context.Context, src evaluation.Source) ([]string, []diag.Diagnostic, error)
 	Introspect() evaluation.CueMeta
-	Vet(ctx context.Context, files []domain.File) ([]diag.Diagnostic, error)
+	Vet(ctx context.Context, src evaluation.Source) ([]diag.Diagnostic, error)
 }
 
 // workspaceService is the project + version persistence the transport depends on.
@@ -58,6 +58,13 @@ type handlers struct {
 	ws        workspaceService
 	authoring authoringService
 	cueDir    string
+}
+
+// source wraps a client file set into an evaluation.Source rooted at the server's
+// module dir. It is the single place the transport picks the module root, so
+// workspace mode later changes only this method rather than every call site.
+func (h *handlers) source(files []domain.File) evaluation.Source {
+	return evaluation.Source{Dir: h.cueDir, Overlay: files}
 }
 
 type dataRequest struct {

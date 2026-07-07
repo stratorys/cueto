@@ -13,7 +13,6 @@ import (
 	"cuelang.org/go/cue"
 
 	"github.com/stratorys/cueto/backend/internal/diag"
-	"github.com/stratorys/cueto/backend/internal/domain"
 )
 
 // A CUE bare identifier. Non-identifier keys are addressed with quoted/index
@@ -37,8 +36,8 @@ const (
 // incomplete field still contributes its path. Diagnostics from an invalid/incomplete
 // diagram are surfaced the same way a query would; the overlay is thrown away, so
 // nothing is persisted.
-func (e *Engine) Keys(ctx context.Context, files []domain.File) ([]string, []diag.Diagnostic, error) {
-	root, _, diags, err := e.evaluate(ctx, files, "")
+func (e *Engine) Keys(ctx context.Context, src Source) ([]string, []diag.Diagnostic, error) {
+	root, _, diags, err := e.evaluate(ctx, src, "")
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}

@@ -27,7 +27,6 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/load"
 
-	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/domain"
 )
@@ -61,12 +60,14 @@ type Engine struct {
 	schemaRootVal cue.Value
 }
 
-// New builds an Engine from cfg.
-func New(cfg config.Config) *Engine {
+// New builds an Engine from plain parameters: the diagram schema dir, the
+// per-evaluation deadline, and the evaluated-output byte cap. The engine reads no
+// config struct, so the same code backs the HTTP server, the CLI, and MCP.
+func New(cueDir string, timeout time.Duration, maxOutputBytes int) *Engine {
 	return &Engine{
-		cueDir:         cfg.CueDir,
-		timeout:        cfg.EvalTimeout,
-		maxOutputBytes: cfg.MaxOutputBytes,
+		cueDir:         cueDir,
+		timeout:        timeout,
+		maxOutputBytes: maxOutputBytes,
 	}
 }
 
@@ -91,14 +92,14 @@ func (e *Engine) schemaRoot() cue.Value {
 // Hints are non-empty only on success. The error is non-nil only for operational
 // failures (timeout, output too large) not tied to a source position. Provenance
 // is derived separately by the authoring concern from the same file set.
-func (e *Engine) Eval(ctx context.Context, files []domain.File) (json.RawMessage, []Hint, []diag.Diagnostic, error) {
-	_, diagram, diags, err := e.evaluate(ctx, files, "")
+func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []Hint, []diag.Diagnostic, error) {
+	_, diagram, diags, err := e.evaluate(ctx, src, "")
 	if err != nil || len(diags) > 0 {
 		return nil, nil, diags, err
 	}
 	out, merr := diagram.MarshalJSON()
 	if merr != nil {
-		return nil, nil, diag.From(merr, e.cueDir, diag.KindIncomplete), nil
+		return nil, nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
 		return nil, nil, nil, ErrOutputTooLarge
@@ -108,8 +109,8 @@ func (e *Engine) Eval(ctx context.Context, files []domain.File) (json.RawMessage
 
 // Vet unifies the file set and validates it against the schema, returning the
 // same diagnostics an eval would surface. Diagnostics are empty when clean.
-func (e *Engine) Vet(ctx context.Context, files []domain.File) ([]diag.Diagnostic, error) {
-	_, _, diags, err := e.evaluate(ctx, files, "")
+func (e *Engine) Vet(ctx context.Context, src Source) ([]diag.Diagnostic, error) {
+	_, _, diags, err := e.evaluate(ctx, src, "")
 	return diags, err
 }
 
@@ -156,14 +157,14 @@ func (e *Engine) EvalExpr(ctx context.Context, source string) (json.RawMessage, 
 // joins the file set, the schema, or a saved version, and does not alter /eval
 // output. It runs under the same deadline, panic recovery, and output bound as
 // Eval via evaluate.
-func (e *Engine) EvalQuery(ctx context.Context, files []domain.File, expr string) (json.RawMessage, []diag.Diagnostic, error) {
-	_, result, diags, err := e.evaluate(ctx, files, expr)
+func (e *Engine) EvalQuery(ctx context.Context, src Source, expr string) (json.RawMessage, []diag.Diagnostic, error) {
+	_, result, diags, err := e.evaluate(ctx, src, expr)
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}
 	out, merr := result.MarshalJSON()
 	if merr != nil {
-		return nil, diag.From(merr, e.cueDir, diag.KindIncomplete), nil
+		return nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
 		return nil, nil, ErrOutputTooLarge
@@ -199,7 +200,7 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *Engine) evaluate(ctx context.Context, files []domain.File, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
+func (e *Engine) evaluate(ctx context.Context, src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
@@ -208,10 +209,10 @@ func (e *Engine) evaluate(ctx context.Context, files []domain.File, query string
 		done <- recoverToResult(func() buildResult {
 			// primary is the value whose concreteness gates success: the diagram for
 			// a plain build, or the query result when a REPL expression is overlaid.
-			root, primary, diags, err := e.build(files, query)
+			root, primary, diags, err := e.build(src, query)
 			if err == nil && len(diags) == 0 {
 				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
-					diags = diag.From(verr, e.cueDir, diag.KindIncomplete)
+					diags = diag.From(verr, src.Dir, diag.KindIncomplete)
 				}
 			}
 			return buildResult{root, primary, diags, err}
@@ -256,37 +257,37 @@ func recoverToResult(fn func() buildResult) (result buildResult) {
 // client filename passes domain.ValidEditableName (a bare .cue name at the module
 // root), and the overlay key is server-built via filepath.Join, so the schema can
 // never be supplied, replaced, or escaped by a client.
-func (e *Engine) build(files []domain.File, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
+func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []diag.Diagnostic, error) {
 	overlay := map[string]load.Source{}
-	for _, f := range files {
+	for _, f := range src.Overlay {
 		if !domain.ValidEditableName(f.Name) {
 			return cue.Value{}, cue.Value{}, []diag.Diagnostic{{
 				Message: fmt.Sprintf("invalid file name %q", f.Name),
 				Kind:    diag.KindParse,
 			}}, nil
 		}
-		overlay[filepath.Join(e.cueDir, f.Name)] = load.FromString(f.Content)
+		overlay[filepath.Join(src.Dir, f.Name)] = load.FromString(f.Content)
 	}
 	// REPL query: overlay a backend-authored field binding the expression into the
 	// diagram package so it can read the live `diagram`. Only present for /repl
 	// queries, so /eval, /vet, and /save are unaffected. replQuerySource wraps the
 	// expr in ( ) and prepends imports for any standard-library packages it uses.
 	if query != "" {
-		overlay[e.replPath()] = load.FromString(replQuerySource(query))
+		overlay[replPath(src.Dir)] = load.FromString(replQuerySource(query))
 	}
-	cfg := &load.Config{Dir: e.cueDir, Overlay: overlay}
+	cfg := &load.Config{Dir: src.Dir, Overlay: overlay}
 
 	instances := load.Instances([]string{"."}, cfg)
 	if len(instances) == 0 {
 		return cue.Value{}, cue.Value{}, nil, errors.New("no CUE instance loaded")
 	}
 	if err := instances[0].Err; err != nil {
-		return cue.Value{}, cue.Value{}, diag.From(err, e.cueDir, diag.KindParse), nil
+		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindParse), nil
 	}
 
 	value := cuecontext.New().BuildInstance(instances[0])
 	if err := value.Err(); err != nil {
-		return cue.Value{}, cue.Value{}, diag.From(err, e.cueDir, diag.KindSchema), nil
+		return cue.Value{}, cue.Value{}, diag.From(err, src.Dir, diag.KindSchema), nil
 	}
 
 	diagram := value.LookupPath(cue.ParsePath("diagram"))
@@ -304,10 +305,11 @@ func (e *Engine) build(files []domain.File, query string) (cue.Value, cue.Value,
 	return value, diagram, nil, nil
 }
 
-// replPath is the overlay path of the backend-authored REPL query binding. The
-// name has no leading underscore/dot, so the loader includes it.
-func (e *Engine) replPath() string {
-	return filepath.Join(e.cueDir, "repl_query.cue")
+// replPath is the overlay path of the backend-authored REPL query binding, rooted
+// at the source's module dir. The name has no leading underscore/dot, so the
+// loader includes it.
+func replPath(dir string) string {
+	return filepath.Join(dir, "repl_query.cue")
 }
 
 // replQuerySource builds the file overlaid (never written to disk) for a /repl

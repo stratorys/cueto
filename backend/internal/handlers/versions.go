@@ -28,7 +28,7 @@ func (h *handlers) Save(c *gin.Context) {
 		return
 	}
 	files := []domain.File{{Name: "data.cue", Content: req.Data}}
-	diags, err := h.eval.Vet(c.Request.Context(), files)
+	diags, err := h.eval.Vet(c.Request.Context(), h.source(files))
 	if err != nil {
 		writeOpError(c, err)
 		return
