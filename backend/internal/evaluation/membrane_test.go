@@ -83,6 +83,16 @@ func TestMembraneBroken(t *testing.T) {
 	if len(vetDiags) == 0 {
 		t.Fatal("vet should be red on the dangling owner reference")
 	}
+
+	// Check must not report a false "all clear" on a module that does not evaluate: it
+	// cannot walk a bottom package, so it says so rather than passing.
+	checkDiags, err := e.Check(context.Background(), src)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if len(checkDiags) == 0 {
+		t.Fatal("check should signal it could not verify an un-evaluable package")
+	}
 }
 
 // TestMembraneMissingFile proves Layer 2: the CUE is fully valid (vet clean) but a

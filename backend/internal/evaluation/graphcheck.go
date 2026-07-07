@@ -82,9 +82,31 @@ func (e *Engine) checkModule(src Source) []diag.Diagnostic {
 		if inst.Err != nil {
 			continue
 		}
-		walkChecks(ctx.BuildInstance(inst), src.Dir, seen, &out)
+		value := ctx.BuildInstance(inst)
+		if value.Err() != nil {
+			// The package does not evaluate, so Walk cannot descend it and its
+			// references cannot be inspected. Report that Check is incomplete here
+			// rather than a false "all clear"; Vet reports the underlying cause. Only
+			// a real build error trips this - mere incompleteness leaves Err nil - so
+			// a valid-but-abstract module is unaffected.
+			appendUnique(&out, seen, diag.Diagnostic{
+				Message: fmt.Sprintf("cannot verify references: package %q does not evaluate (run vet)", packageLabel(inst.ImportPath)),
+				Kind:    diag.KindReference,
+			})
+			continue
+		}
+		walkChecks(value, src.Dir, seen, &out)
 	}
 	return out
+}
+
+// packageLabel trims the version suffix a loaded import path carries
+// (example.com/m/components@v0 -> example.com/m/components) for a readable message.
+func packageLabel(importPath string) string {
+	if i := strings.IndexByte(importPath, '@'); i >= 0 {
+		return importPath[:i]
+	}
+	return importPath
 }
 
 // walkChecks visits every value in root and appends a diagnostic for each concrete

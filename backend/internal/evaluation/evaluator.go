@@ -162,14 +162,23 @@ func (e *Engine) vetModule(src Source) []diag.Diagnostic {
 		return diags
 	}
 	ctx := cuecontext.New()
+	// A composed error surfaces from every package that observes it (the package that
+	// declares the conflict and any root package re-exposing it), so the raw list can
+	// carry the same position and message more than once. Dedup by position+message,
+	// the same key the graph check uses, so the report reads once per distinct error.
+	seen := map[string]struct{}{}
 	var out []diag.Diagnostic
 	for _, inst := range instances {
 		if inst.Err != nil {
-			out = append(out, diag.From(inst.Err, src.Dir, diag.KindParse)...)
+			for _, d := range diag.From(inst.Err, src.Dir, diag.KindParse) {
+				appendUnique(&out, seen, d)
+			}
 			continue
 		}
 		if err := ctx.BuildInstance(inst).Validate(); err != nil {
-			out = append(out, diag.From(err, src.Dir, diag.KindSchema)...)
+			for _, d := range diag.From(err, src.Dir, diag.KindSchema) {
+				appendUnique(&out, seen, d)
+			}
 		}
 	}
 	return out
