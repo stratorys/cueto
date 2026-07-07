@@ -71,7 +71,7 @@ func main() {
 			log.Fatalf("Serve: %v", err)
 		}
 	}()
-	log.Printf("Listening on :%s, schema dir %s, workspace %s", cfg.Port, cfg.CueDir, cfg.WorkspaceDir)
+	log.Printf("Listening on :%s, schema dir %s, projects dir %s", cfg.Port, cfg.CueDir, cfg.ProjectsDir)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

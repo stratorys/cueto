@@ -11,6 +11,27 @@ import type { Diagram, DiagramEdge, DiagramNode, EditorFile, Provenance } from "
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8091";
 
+// The current project id, woven into every project-scoped request path. Every
+// module-touching endpoint (eval, vet, repl, save, history, file, tree) is served
+// under /projects/:id, so the id is set once at boot and on each project switch
+// via setProject, module-level like BASE. Module-independent endpoints
+// (/cue/meta, /format, /rewrite, /projects) do not use it.
+let projectId = "";
+
+export function setProject(id: string): void {
+  projectId = id;
+}
+
+// Whether a project is currently selected. Callers guard project-scoped work
+// (eval, save) on this so nothing hits /projects//… before a project is open.
+export function hasProject(): boolean {
+  return projectId !== "";
+}
+
+function proj(): string {
+  return `/projects/${encodeURIComponent(projectId)}`;
+}
+
 // One structured error from the backend. line/column are 1-based positions in
 // the data.cue text (0 when the error carries no position); kind is one of
 // "parse" | "schema" | "incomplete" | "internal".
@@ -108,15 +129,6 @@ export interface FormatOk {
   formatted: string;
 }
 
-// Which persistence mode the backend runs in: "playground" (the content-addressed
-// version store) or "workspace" (real files on disk, git as history).
-export type Mode = "playground" | "workspace";
-
-export interface ConfigOk {
-  ok: true;
-  mode: Mode;
-}
-
 // One point in a file's git history: the commit hash, its subject line, and when
 // it was authored (ISO 8601). The workspace-mode analogue of VersionMeta.
 export interface CommitMeta {
@@ -138,28 +150,10 @@ export interface WorkspaceFileOk {
   version: string;
 }
 
-// One saved version: its content-hash id and when it was first saved (ISO 8601).
-export interface VersionMeta {
-  version: string;
-  savedAt: string;
-}
-
-export interface VersionsOk {
-  ok: true;
-  versions: VersionMeta[];
-}
-
-export interface VersionDataOk {
-  ok: true;
-  data: string;
-}
-
-// One project: its slug id, display name, and timestamps (ISO 8601).
+// One project: its slug id and display name.
 export interface ProjectMeta {
   id: string;
   name: string;
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 export interface ProjectsOk {
@@ -172,13 +166,10 @@ export interface ProjectOk {
   project: ProjectMeta;
 }
 
-// A bare success with no payload (project delete).
+// A bare success with no payload (file delete).
 export interface OkResult {
   ok: true;
 }
-
-// What a new project's canvas starts from: empty, or a copy of the seed sample.
-export type ProjectSeed = "blank" | "sample";
 
 // Render diagnostics into a single human-readable string, prefixing positions
 // when present.
@@ -282,7 +273,7 @@ async function sendJSON<T>(
 // evalCue evaluates the project's data against the diagram schema and returns the diagram JSON,
 // or structured diagnostics. Network failures surface as an error result too.
 export function evalCue(data: string): Promise<EvalOk | EvalErr> {
-  return post("/eval", { data }, async (response) => {
+  return post(proj() + "/eval", { data }, async (response) => {
     const body = await readJson<{ diagram?: unknown; hints?: Hint[]; views?: string[] }>(response);
     return { diagram: body.diagram, hints: body.hints ?? [], views: body.views ?? [] };
   });
@@ -295,7 +286,7 @@ export function evalCue(data: string): Promise<EvalOk | EvalErr> {
 // for callers that have not moved to the file set.
 export function evalFiles(files: EditorFile[], view = ""): Promise<EvalFilesOk | EvalErr> {
   const body = { files: files.map((f) => ({ name: f.name, content: f.text })), view };
-  return post("/eval", body, async (response) => {
+  return post(proj() + "/eval", body, async (response) => {
     const parsed = await readJson<{
       diagram?: unknown;
       hints?: Hint[];
@@ -321,7 +312,7 @@ export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk |
   const body = files?.length
     ? { source, files: files.map((f) => ({ name: f.name, content: f.text })) }
     : { source };
-  return post("/repl", body, async (response) => {
+  return post(proj() + "/repl", body, async (response) => {
     const parsed = await readJson<{ result?: unknown }>(response);
     return { result: parsed.result ?? null };
   });
@@ -334,7 +325,7 @@ export function evalExpr(source: string, files?: EditorFile[]): Promise<ReplOk |
 // diagram comes back as an EvalErr, so callers keep their last good key set.
 export function fetchReplKeys(files: EditorFile[]): Promise<({ ok: true; keys: string[] }) | EvalErr> {
   const body = { files: files.map((f) => ({ name: f.name, content: f.text })) };
-  return post("/repl/keys", body, async (response) => {
+  return post(proj() + "/repl/keys", body, async (response) => {
     const parsed = await readJson<{ keys?: string[] }>(response);
     return { keys: parsed.keys ?? [] };
   });
@@ -364,21 +355,11 @@ export function rewriteFile(op: {
   });
 }
 
-// saveCue validates data and, when valid, persists it as an immutable version of
-// the given project, returning the version id. Invalid data comes back as
-// diagnostics.
-export function saveCue(projectId: string, data: string): Promise<SaveOk | EvalErr> {
-  return post(`/projects/${projectId}/save`, { data }, async (response) => {
-    const body = await readJson<{ version?: string }>(response);
-    return { version: body.version ?? "" };
-  });
-}
-
 // vetCue validates data against the schema. A well-formed but non-passing diagram
 // comes back as ok:true, passes:false with diagnostics; only a transport/
 // operational failure is an EvalErr.
 export function vetCue(data: string): Promise<VetOk | EvalErr> {
-  return post("/vet", { data }, async (response) => {
+  return post(proj() + "/vet", { data }, async (response) => {
     const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
@@ -388,7 +369,7 @@ export function vetCue(data: string): Promise<VetOk | EvalErr> {
 // (all files unify) against the schema.
 export function vetFiles(files: EditorFile[]): Promise<VetOk | EvalErr> {
   const mapped = files.map((f) => ({ name: f.name, content: f.text }));
-  return post("/vet", { files: mapped }, async (response) => {
+  return post(proj() + "/vet", { files: mapped }, async (response) => {
     const parsed = await readJson<{ ok?: boolean; diagnostics?: Diagnostic[] }>(response);
     return { passes: parsed.ok ?? false, diagnostics: parsed.diagnostics ?? [] };
   });
@@ -403,24 +384,8 @@ export function formatCue(source: string): Promise<FormatOk | EvalErr> {
   });
 }
 
-// listVersions returns a project's saved versions newest-first for the history view.
-export function listVersions(projectId: string): Promise<VersionsOk | EvalErr> {
-  return get(`/projects/${projectId}/versions`, async (response) => {
-    const body = await readJson<{ versions?: VersionMeta[] }>(response);
-    return { versions: body.versions ?? [] };
-  });
-}
-
-// readVersion returns one of a project's versions' stored data.cue text by its
-// content hash.
-export function readVersion(projectId: string, id: string): Promise<VersionDataOk | EvalErr> {
-  return get(`/projects/${projectId}/versions/${id}`, async (response) => {
-    const body = await readJson<{ data?: string }>(response);
-    return { data: body.data ?? "" };
-  });
-}
-
-// listProjects returns the registered projects (newest-updated first).
+// listProjects returns the projects under the root, each a git repo plus a CUE
+// module, sorted by id. The picker's data source.
 export function listProjects(): Promise<ProjectsOk | EvalErr> {
   return get("/projects", async (response) => {
     const body = await readJson<{ projects?: ProjectMeta[] }>(response);
@@ -428,65 +393,50 @@ export function listProjects(): Promise<ProjectsOk | EvalErr> {
   });
 }
 
-// createProject registers a new project seeded "blank" or "sample".
-export function createProject(name: string, seed: ProjectSeed): Promise<ProjectOk | EvalErr> {
-  return post("/projects", { name, seed }, async (response) => {
+// createProject git-initializes a new project directory under the root, scaffolds a
+// minimal module, and makes one initial commit, returning its id. A name that
+// collides with an existing project comes back as an error result (HTTP 409).
+export function createProject(name: string): Promise<ProjectOk | EvalErr> {
+  return post("/projects", { name }, async (response) => {
     const body = await readJson<{ project?: ProjectMeta }>(response);
     return { project: body.project ?? { id: "", name } };
   });
 }
 
-// renameProject changes a project's display name.
-export function renameProject(id: string, name: string): Promise<ProjectOk | EvalErr> {
-  return sendJSON("PATCH", `/projects/${id}`, { name }, async (response) => {
-    const body = await readJson<{ project?: ProjectMeta }>(response);
-    return { project: body.project ?? { id, name } };
-  });
-}
-
-// deleteProject removes a project and its version store.
-export function deleteProject(id: string): Promise<OkResult | EvalErr> {
-  return sendJSON("DELETE", `/projects/${id}`, undefined, async () => ({}));
-}
-
-// readSeed returns the on-disk seed data.cue text, the mount-time fallback when
-// no saved version exists yet.
-export function readSeed(): Promise<VersionDataOk | EvalErr> {
-  return get("/seed", async (response) => {
-    const body = await readJson<{ data?: string }>(response);
-    return { data: body.data ?? "" };
-  });
-}
-
-// getConfig reports the backend's persistence mode, so the frontend chooses its
-// data source: the versions API in playground mode, the git endpoints in workspace
-// mode. An unreachable backend falls back to playground (the default UI).
-export function getConfig(): Promise<ConfigOk | EvalErr> {
-  return get("/config", async (response) => {
-    const body = await readJson<{ mode?: Mode }>(response);
-    return { mode: body.mode === "workspace" ? "workspace" : "playground" };
+// getTree returns the current project's .cue files as workspace-relative slash
+// paths (subdirectories included), for the file tree.
+export function getTree(): Promise<({ ok: true; files: string[] }) | EvalErr> {
+  return get(proj() + "/tree", async (response) => {
+    const body = await readJson<{ files?: string[] }>(response);
+    return { files: body.files ?? [] };
   });
 }
 
 // saveWorkspaceFile writes a validated buffer to the real file at path in the
-// workspace, returning the new content token. baseVersion is the token the client
-// loaded; a concurrent on-disk change comes back as an error result (HTTP 409) with
-// a "changed on disk" diagnostic, and nothing is written.
+// current project, returning the new content token. baseVersion is the token the
+// client loaded; a concurrent on-disk change comes back as an error result (HTTP
+// 409) with a "changed on disk" diagnostic, and nothing is written.
 export function saveWorkspaceFile(
   path: string,
   data: string,
   baseVersion: string,
 ): Promise<SaveOk | EvalErr> {
-  return post("/workspace/save", { path, data, baseVersion }, async (response) => {
+  return post(proj() + "/save", { path, data, baseVersion }, async (response) => {
     const body = await readJson<{ version?: string }>(response);
     return { version: body.version ?? "" };
   });
 }
 
+// deleteWorkspaceFile removes path from the current project's working tree. The
+// removal shows in git status for the user to commit; cueto never commits it.
+export function deleteWorkspaceFile(path: string): Promise<OkResult | EvalErr> {
+  return sendJSON("DELETE", `${proj()}/file?path=${encodeURIComponent(path)}`, undefined, async () => ({}));
+}
+
 // listWorkspaceHistory returns the git commits that touched path, newest first. A
-// workspace that is not a git repository comes back with an empty list.
+// project with no commits touching it comes back with an empty list.
 export function listWorkspaceHistory(path: string): Promise<HistoryOk | EvalErr> {
-  return get(`/workspace/history?path=${encodeURIComponent(path)}`, async (response) => {
+  return get(`${proj()}/history?path=${encodeURIComponent(path)}`, async (response) => {
     const body = await readJson<{ entries?: CommitMeta[] }>(response);
     return { entries: body.entries ?? [] };
   });
@@ -499,7 +449,7 @@ export function readWorkspaceFile(path: string, commit = ""): Promise<WorkspaceF
   const query = commit
     ? `?path=${encodeURIComponent(path)}&commit=${encodeURIComponent(commit)}`
     : `?path=${encodeURIComponent(path)}`;
-  return get(`/workspace/file${query}`, async (response) => {
+  return get(`${proj()}/file${query}`, async (response) => {
     const body = await readJson<{ data?: string; version?: string }>(response);
     return { data: body.data ?? "", version: body.version ?? "" };
   });

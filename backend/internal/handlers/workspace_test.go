@@ -20,12 +20,23 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-// gitWorkspace builds a git-backed workspace module (its own cue.mod plus the given
-// files, all committed) and returns the dir and a workspace-mode router pointed at
-// it. Committing means the history endpoints have something to read.
+// wsProjectID is the id of the scratch git project gitWorkspace creates.
+const wsProjectID = "m"
+
+// wp builds a path scoped to the scratch git project.
+func wp(op string) string { return ppid(wsProjectID, op) }
+
+// gitWorkspace builds a git-backed project module (its own cue.mod plus the given
+// files, all committed) as project "m" under a temp projects root, and returns the
+// project dir and a router pointed at the root. Committing means the history
+// endpoints have something to read.
 func gitWorkspace(t *testing.T, files map[string]string) (string, *gin.Engine) {
 	t.Helper()
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, wsProjectID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
 	gitRepo, err := git.PlainInit(dir, false)
 	if err != nil {
 		t.Fatalf("git init: %v", err)
@@ -55,7 +66,7 @@ func gitWorkspace(t *testing.T, files map[string]string) (string, *gin.Engine) {
 		t.Fatalf("commit: %v", err)
 	}
 	cfg := testConfig(t)
-	cfg.WorkspaceDir = dir
+	cfg.ProjectsDir = root
 	return dir, realRouter(t, cfg)
 }
 
@@ -80,14 +91,14 @@ func TestConfigReportsMode(t *testing.T) {
 // wsSave posts a workspace save and returns the recorder.
 func wsSave(router *gin.Engine, path, data, base string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(workspaceSaveRequest{Path: path, Data: data, BaseVersion: base})
-	return postJSON(router, "/workspace/save", body)
+	return postJSON(router, wp("/save"), body)
 }
 
 func TestWorkspaceSaveWritesRealFile(t *testing.T) {
 	dir, router := gitWorkspace(t, map[string]string{"data.cue": knowledgeOnly})
 
 	// Load the working-tree file to obtain its base token, then overwrite it.
-	fileRec := getJSON(router, "/workspace/file?path=data.cue")
+	fileRec := getJSON(router, wp("/file")+"?path=data.cue")
 	var loaded struct {
 		Data    string `json:"data"`
 		Version string `json:"version"`
@@ -152,7 +163,7 @@ func TestWorkspaceSaveConflict(t *testing.T) {
 func TestWorkspaceHistoryAndFileAtCommit(t *testing.T) {
 	_, router := gitWorkspace(t, map[string]string{"data.cue": knowledgeOnly})
 
-	histRec := getJSON(router, "/workspace/history?path=data.cue")
+	histRec := getJSON(router, wp("/history")+"?path=data.cue")
 	if histRec.Code != http.StatusOK {
 		t.Fatalf("history status = %d", histRec.Code)
 	}
@@ -167,7 +178,7 @@ func TestWorkspaceHistoryAndFileAtCommit(t *testing.T) {
 		t.Fatalf("entries = %+v, want the one seed commit", hist.Entries)
 	}
 
-	fileRec := getJSON(router, "/workspace/file?path=data.cue&commit="+hist.Entries[0].Version)
+	fileRec := getJSON(router, wp("/file")+"?path=data.cue&commit="+hist.Entries[0].Version)
 	if fileRec.Code != http.StatusOK {
 		t.Fatalf("file status = %d, body %q", fileRec.Code, fileRec.Body.String())
 	}
@@ -177,5 +188,107 @@ func TestWorkspaceHistoryAndFileAtCommit(t *testing.T) {
 	_ = json.Unmarshal(fileRec.Body.Bytes(), &file)
 	if file.Data != knowledgeOnly {
 		t.Fatalf("file at commit = %q, want the seeded content", file.Data)
+	}
+}
+
+func TestTreeListsCueFilesAcrossDirectories(t *testing.T) {
+	_, router := gitWorkspace(t, map[string]string{
+		"data.cue":      knowledgeOnly,
+		"sub/extra.cue": "package sub\n",
+	})
+	rec := getJSON(router, wp("/tree"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Files []string `json:"files"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	// cue.mod/module.cue is pruned; the editable .cue files across directories remain.
+	if len(body.Files) != 2 || body.Files[0] != "data.cue" || body.Files[1] != "sub/extra.cue" {
+		t.Fatalf("files = %v, want [data.cue sub/extra.cue]", body.Files)
+	}
+}
+
+func TestDeleteFileRemovesAndIsIdempotent404(t *testing.T) {
+	dir, router := gitWorkspace(t, map[string]string{
+		"data.cue":  knowledgeOnly,
+		"extra.cue": "package main\n",
+	})
+	rec := deleteJSON(router, wp("/file")+"?path=extra.cue")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "extra.cue")); !os.IsNotExist(err) {
+		t.Fatalf("extra.cue still present after delete")
+	}
+	// Deleting again is a 404: the file is already gone.
+	if again := deleteJSON(router, wp("/file")+"?path=extra.cue"); again.Code != http.StatusNotFound {
+		t.Fatalf("second delete status = %d, want 404", again.Code)
+	}
+}
+
+func TestCreateAndListProjects(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig(t)
+	cfg.ProjectsDir = root
+	router := realRouter(t, cfg)
+
+	body, _ := json.Marshal(createProjectRequest{Name: "Acme Catalog"})
+	rec := postJSON(router, "/projects", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body %q", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Project struct {
+			ID string `json:"id"`
+		} `json:"project"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.Project.ID != "acme-catalog" {
+		t.Fatalf("created id = %q, want acme-catalog", created.Project.ID)
+	}
+
+	listRec := getJSON(router, "/projects")
+	var list struct {
+		Projects []struct {
+			ID string `json:"id"`
+		} `json:"projects"`
+	}
+	_ = json.Unmarshal(listRec.Body.Bytes(), &list)
+	if len(list.Projects) != 1 || list.Projects[0].ID != "acme-catalog" {
+		t.Fatalf("projects = %+v, want the one created project", list.Projects)
+	}
+
+	// The created project is immediately usable: its tree lists the scaffolded file.
+	treeRec := getJSON(router, ppid("acme-catalog", "/tree"))
+	var tree struct {
+		Files []string `json:"files"`
+	}
+	_ = json.Unmarshal(treeRec.Body.Bytes(), &tree)
+	if len(tree.Files) != 1 || tree.Files[0] != "main.cue" {
+		t.Fatalf("tree = %v, want [main.cue]", tree.Files)
+	}
+}
+
+func TestCreateProjectRejectsDuplicate(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig(t)
+	cfg.ProjectsDir = root
+	router := realRouter(t, cfg)
+
+	body, _ := json.Marshal(createProjectRequest{Name: "dup"})
+	if rec := postJSON(router, "/projects", body); rec.Code != http.StatusOK {
+		t.Fatalf("first create status = %d", rec.Code)
+	}
+	if rec := postJSON(router, "/projects", body); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate create status = %d, want 409", rec.Code)
+	}
+}
+
+func TestProjectScopedRouteUnknownProjectIs404(t *testing.T) {
+	router := realRouter(t, testConfig(t))
+	if rec := postJSON(router, ppid("nope", "/eval"), evalBody(t, validData)); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown project eval status = %d, want 404", rec.Code)
 	}
 }

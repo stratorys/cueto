@@ -32,10 +32,14 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
+// testProjectID is the repo's own cue dir seen as a project: rooting the projects
+// dir at the cue dir's parent makes "cue" resolve to the real schema module, so
+// eval overlays resolve the bundled diagram package.
+const testProjectID = "cue"
+
 // testConfig points at the repo's real ../cue schema dir with generous bounds and
-// roots the workspace module there too, so eval overlays resolve the bundled
-// diagram package. Individual tests tighten a single bound or override
-// WorkspaceDir to exercise it.
+// roots the projects dir at its parent, so the "cue" project resolves. Individual
+// tests tighten a single bound or override ProjectsDir to exercise it.
 func testConfig(t *testing.T) config.Config {
 	t.Helper()
 	abs, err := filepath.Abs("../../../cue")
@@ -44,7 +48,7 @@ func testConfig(t *testing.T) config.Config {
 	}
 	return config.Config{
 		CueDir:         abs,
-		WorkspaceDir:   abs,
+		ProjectsDir:    filepath.Dir(abs),
 		MaxBodyBytes:   1 << 20,
 		MaxOutputBytes: 4 << 20,
 		EvalTimeout:    2 * time.Second,
@@ -57,6 +61,12 @@ func realRouter(t *testing.T, cfg config.Config) *gin.Engine {
 	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg)
 }
 
+// pp builds a path scoped to the default test project. ppid does the same for an
+// explicit project id (a scratch workspace).
+func pp(op string) string { return ppid(testProjectID, op) }
+
+func ppid(id, op string) string { return "/projects/" + id + op }
+
 func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -67,6 +77,13 @@ func postJSON(router *gin.Engine, path string, body []byte) *httptest.ResponseRe
 
 func getJSON(router *gin.Engine, path string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func deleteJSON(router *gin.Engine, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec
@@ -95,11 +112,13 @@ func decodeDiags(t *testing.T, rec *httptest.ResponseRecorder) []diag.Diagnostic
 }
 
 // tempWorkspace writes a scratch module (its own cue.mod for example.com/m plus the
-// given files) under a temp dir and returns a router with WORKSPACE_DIR pointed at
-// it. The schema still comes from the repo CUE_DIR; only the Source root moves.
-func tempWorkspace(t *testing.T, files map[string]string) *gin.Engine {
+// given files) as a project named "m" under a temp projects root, and returns that
+// id and a router pointed at the root. The schema still comes from the repo
+// CUE_DIR; only the module root moves.
+func tempWorkspace(t *testing.T, files map[string]string) (string, *gin.Engine) {
 	t.Helper()
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "m")
 	write := func(rel, content string) {
 		path := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -114,8 +133,8 @@ func tempWorkspace(t *testing.T, files map[string]string) *gin.Engine {
 		write(rel, content)
 	}
 	cfg := testConfig(t)
-	cfg.WorkspaceDir = dir
-	return realRouter(t, cfg)
+	cfg.ProjectsDir = root
+	return "m", realRouter(t, cfg)
 }
 
 // workspaceImportRoot derives its diagram from an on-disk subpackage. The import
@@ -131,8 +150,8 @@ diagram: {nodes: sub.nodes, edges: []}
 const workspaceSub = "package sub\n\nnodes: {a: {type: \"entity\", label: \"A\"}}\n"
 
 func TestWorkspaceEval(t *testing.T) {
-	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
-	rec := postJSON(router, "/eval", evalBody(t, workspaceImportRoot))
+	id, router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	rec := postJSON(router, ppid(id, "/eval"), evalBody(t, workspaceImportRoot))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
@@ -150,8 +169,8 @@ func TestWorkspaceEval(t *testing.T) {
 }
 
 func TestWorkspaceVet(t *testing.T) {
-	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
-	rec := postJSON(router, "/vet", evalBody(t, workspaceImportRoot))
+	id, router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	rec := postJSON(router, ppid(id, "/vet"), evalBody(t, workspaceImportRoot))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -167,12 +186,12 @@ func TestWorkspaceVet(t *testing.T) {
 }
 
 func TestWorkspaceKeys(t *testing.T) {
-	router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
+	id, router := tempWorkspace(t, map[string]string{"sub/sub.cue": workspaceSub})
 	body, err := json.Marshal(sourceRequest{Files: []domain.File{{Name: "data.cue", Content: workspaceImportRoot}}})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	rec := postJSON(router, "/repl/keys", body)
+	rec := postJSON(router, ppid(id, "/repl/keys"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
@@ -212,7 +231,7 @@ diagram: d.#Diagram & {
 
 func TestEvalHappyPath(t *testing.T) {
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, validData))
+	rec := postJSON(router, pp("/eval"), evalBody(t, validData))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -245,7 +264,7 @@ func TestEvalNoView(t *testing.T) {
 	// A knowledge-only module has no diagram-shaped field: a valid success with an
 	// empty view list and an empty diagram, distinct from a diagnostic.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, "package main\n\npeople: {george: {name: \"George\"}}\n"))
+	rec := postJSON(router, pp("/eval"), evalBody(t, "package main\n\npeople: {george: {name: \"George\"}}\n"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -273,7 +292,7 @@ alt: {nodes: {b: {type: "entity", label: "B"}}, edges: []}
 diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
 `
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -307,7 +326,7 @@ diagram: {nodes: {a: {type: "entity", label: "A"}}, edges: []}
 		t.Fatalf("marshal: %v", err)
 	}
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", reqBody)
+	rec := postJSON(router, pp("/eval"), reqBody)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
@@ -339,7 +358,7 @@ diagram: d.#Diagram & {
 }
 `
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -374,7 +393,7 @@ diagram: d.#Diagram & {
 }
 `
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -396,7 +415,7 @@ diagram: d.#Diagram & {
 }
 `
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -413,7 +432,7 @@ func TestBodyTooLarge(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MaxBodyBytes = 16
 	router := realRouter(t, cfg)
-	rec := postJSON(router, "/eval", evalBody(t, validData))
+	rec := postJSON(router, pp("/eval"), evalBody(t, validData))
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", rec.Code)
 	}
@@ -423,7 +442,7 @@ func TestOutputTooLarge(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MaxOutputBytes = 5
 	router := realRouter(t, cfg)
-	rec := postJSON(router, "/eval", evalBody(t, validData))
+	rec := postJSON(router, pp("/eval"), evalBody(t, validData))
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", rec.Code)
 	}
@@ -448,7 +467,7 @@ diagram: d.#Diagram & {
 `
 	router := realRouter(t, cfg)
 	start := time.Now()
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	elapsed := time.Since(start)
 	if rec.Code != http.StatusGatewayTimeout {
 		t.Fatalf("status = %d, want 504 (body %q)", rec.Code, rec.Body.String())
@@ -501,12 +520,12 @@ func TestConcurrencyLimit(t *testing.T) {
 
 	// First request occupies the only slot and blocks inside the handler.
 	go func() {
-		postJSON(router, "/eval", evalBody(t, validData))
+		postJSON(router, pp("/eval"), evalBody(t, validData))
 	}()
 	<-be.entered
 
 	// Second request finds the slot taken and must be rejected immediately.
-	rec := postJSON(router, "/eval", evalBody(t, validData))
+	rec := postJSON(router, pp("/eval"), evalBody(t, validData))
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", rec.Code)
 	}
@@ -516,7 +535,7 @@ func TestConcurrencyLimit(t *testing.T) {
 func TestReplEvalExpr(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{Source: "a: b: 3\nc: a.b + 1"})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -540,7 +559,7 @@ func TestReplEvalExprError(t *testing.T) {
 	// A conflict is reported as diagnostics (400), never persisted or 500'd.
 	router := realRouter(t, testConfig(t))
 	body, _ := json.Marshal(sourceRequest{Source: "a: 1\na: 2"})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -557,7 +576,7 @@ func TestReplQueryAgainstEditorData(t *testing.T) {
 		Source: `diagram.nodes.a.label`,
 		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -579,7 +598,7 @@ func TestReplQueryComprehension(t *testing.T) {
 		Source: `[for e in diagram.edges {e.id}]`,
 		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -604,7 +623,7 @@ func TestReplQueryDoesNotAffectEval(t *testing.T) {
 	// The query overlay must not leak into /eval output: the marshaled diagram
 	// carries no replResult field.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, validData))
+	rec := postJSON(router, pp("/eval"), evalBody(t, validData))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -626,7 +645,7 @@ func TestReplQueryIncompleteExpr(t *testing.T) {
 		Source: `diagram.nodes.missing.label`,
 		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (body %q)", rec.Code, rec.Body.String())
 	}
@@ -643,7 +662,7 @@ func TestReplQueryUsesStdlibPackage(t *testing.T) {
 		Source: `strings.ToUpper(diagram.nodes.a.label)`,
 		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -666,7 +685,7 @@ func TestReplQueryFieldNamedLikePackage(t *testing.T) {
 		Source: `len(diagram.nodes)`,
 		Files:  []domain.File{{Name: "data.cue", Content: validData}},
 	})
-	rec := postJSON(router, "/repl", body)
+	rec := postJSON(router, pp("/repl"), body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -689,7 +708,7 @@ func TestCueMetaLists(t *testing.T) {
 
 func TestVetOk(t *testing.T) {
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/vet", evalBody(t, validData))
+	rec := postJSON(router, pp("/vet"), evalBody(t, validData))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -707,7 +726,7 @@ func TestVetOk(t *testing.T) {
 func TestVetInvalid(t *testing.T) {
 	data := "package main\n\nimport d \"github.com/stratorys/cueto/diagram\"\n\ndiagram: d.#Diagram & {nodes: {a: {type: \"process\", x: \"nope\", y: 1, label: \"l\"}}, edges: []}\n"
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/vet", evalBody(t, data))
+	rec := postJSON(router, pp("/vet"), evalBody(t, data))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -753,21 +772,21 @@ func TestFormatError(t *testing.T) {
 	}
 }
 
-func TestConfigRequiresWorkspaceDir(t *testing.T) {
-	t.Setenv("WORKSPACE_DIR", "")
+func TestConfigRequiresProjectsDir(t *testing.T) {
+	t.Setenv("PROJECTS_DIR", "")
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for missing WORKSPACE_DIR, got nil")
+		t.Fatal("want error for missing PROJECTS_DIR, got nil")
 	}
 }
 
-func TestConfigRejectsWorkspaceDirNotADirectory(t *testing.T) {
+func TestConfigRejectsProjectsDirNotADirectory(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	t.Setenv("WORKSPACE_DIR", file)
+	t.Setenv("PROJECTS_DIR", file)
 	if _, err := config.Load(); err == nil {
-		t.Fatal("want error for WORKSPACE_DIR pointing at a file, got nil")
+		t.Fatal("want error for PROJECTS_DIR pointing at a file, got nil")
 	}
 }
 
@@ -795,7 +814,7 @@ diagram: d.#Diagram & {
 diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 `}
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", filesBody(t, primary, extra))
+	rec := postJSON(router, pp("/eval"), filesBody(t, primary, extra))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -822,7 +841,7 @@ diagram: nodes: b: {type: "process", x: 2, y: 2, label: "b"}
 func TestEvalRejectsInvalidFilename(t *testing.T) {
 	// A client must never be able to escape the module root with a traversal path.
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: "../schema.cue", Content: "package main\n"}))
+	rec := postJSON(router, pp("/eval"), filesBody(t, domain.File{Name: "../schema.cue", Content: "package main\n"}))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -835,7 +854,7 @@ func TestEvalRejectsInvalidFilename(t *testing.T) {
 func TestEvalRejectsTraversalFilename(t *testing.T) {
 	router := realRouter(t, testConfig(t))
 	for _, name := range []string{"../evil.cue", "sub/../evil.cue", "sub//dir.cue", "diagram/x.cue"} {
-		rec := postJSON(router, "/eval", filesBody(t, domain.File{Name: name, Content: "package main\n"}))
+		rec := postJSON(router, pp("/eval"), filesBody(t, domain.File{Name: name, Content: "package main\n"}))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("name %q status = %d, want 400", name, rec.Code)
 		}

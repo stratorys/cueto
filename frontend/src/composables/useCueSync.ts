@@ -19,21 +19,20 @@ import {
   evalFiles,
   formatCue,
   fromEval,
-  listVersions,
-  readVersion,
+  getTree,
+  hasProject,
   readWorkspaceFile,
   rewriteFile,
-  saveCue,
   saveWorkspaceFile,
 } from "../api";
-import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody, toCue } from "../mapping";
+import type { EditorFile } from "../model";
+import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody } from "../mapping";
 import { useDiagram } from "../useDiagram";
-import { isWorkspace } from "./useMode";
-import { currentProjectId } from "./useProjects";
 import {
   activeFileName,
   edgeOwnerFile,
   files,
+  isDirty,
   newNodeOwner,
   ownerOf,
   primaryFile,
@@ -97,11 +96,11 @@ export type SaveState =
   | { status: "error" };
 export const saveState = ref<SaveState>({ status: "idle" });
 
-// Workspace-mode optimistic-concurrency token for the active file: the content
-// hash the backend returned when the buffer was loaded (or last saved). It rides
-// back into a save so a concurrent on-disk change is refused rather than clobbered.
-// Empty means "creating a new file". Unused in playground mode.
-export const workspaceBaseVersion = ref<string>("");
+// Optimistic-concurrency tokens per file path: the content hash the backend
+// returned when each buffer was loaded (or last saved). Each rides back into that
+// file's save so a concurrent on-disk change is refused rather than clobbered. A
+// missing entry means "creating a new file".
+export const workspaceBaseVersion = ref<Record<string, string>>({});
 
 // A graph edit invalidates the CUE text. The canvas is already updated from the
 // model (instant); the file text follows via a debounced, per-file /rewrite so a
@@ -226,6 +225,8 @@ function onCueEdit(value: string) {
 // newer one is dropped instead of overwriting the fresher model/provenance.
 let evalGeneration = 0;
 export async function runEval() {
+  // No project open: nothing to evaluate, and a project-scoped call would 404.
+  if (!hasProject()) return;
   const generation = ++evalGeneration;
   const result = await evalFiles(files.value, activeView.value);
   if (generation !== evalGeneration) return;
@@ -253,73 +254,67 @@ export async function runEval() {
   if (isAutoLayout.value) void nextTick(layoutAuto);
 }
 
-// Load a project's diagram into the canvas: its newest saved version, or a blank
-// diagram when the project has no versions yet. The text goes through runEval -
-// the same text -> model -> canvas pipeline typing uses - then history is cleared
-// so the first Undo can't revert to the previously shown project. A transport
-// failure leaves whatever is currently shown in place.
-export async function loadProjectDiagram(projectId: string) {
-  const list = await listVersions(projectId);
-  if (!list.ok) return;
-  let text: string;
-  if (list.versions.length) {
-    const version = await readVersion(projectId, list.versions[0].version);
-    if (!version.ok) return;
-    text = version.data;
-  } else {
-    text = toCue({ nodes: [], edges: [] });
+// Load the current project's files into the canvas: read its file tree, then each
+// file's working-tree text, keeping each returned content token as that file's save
+// baseline. A project with no .cue files opens a blank main.cue to author. The set
+// goes through runEval - the same text -> model -> canvas pipeline typing uses -
+// then history is cleared so the first Undo can't revert to the previous project. A
+// transport failure leaves whatever is currently shown in place.
+export async function loadProject() {
+  const tree = await getTree();
+  if (!tree.ok) return;
+  const loaded = await Promise.all(
+    tree.files.map(async (path) => {
+      const result = await readWorkspaceFile(path);
+      return result.ok ? { path, text: result.data, version: result.version } : null;
+    }),
+  );
+  const bases: Record<string, string> = {};
+  const set: EditorFile[] = [];
+  for (const entry of loaded) {
+    if (!entry) continue;
+    set.push({ name: entry.path, text: entry.text });
+    bases[entry.path] = entry.version;
   }
-  files.value = [{ name: "data.cue", text }];
-  activeFileName.value = "data.cue";
+  if (set.length === 0) {
+    // An empty (freshly created) project: open a blank main.cue to start authoring.
+    set.push({ name: "main.cue", text: "package main\n" });
+  }
+  files.value = set;
+  workspaceBaseVersion.value = bases;
+  activeFileName.value = set[0].name;
   snapshotSaved();
   await runEval();
   resetHistory();
 }
 
-// Load the workspace file into the canvas: its current working-tree text, or a
-// blank diagram when the file does not exist yet. Keeps the returned content token
-// as the save baseline. Mirrors loadProjectDiagram's pipeline (runEval then clear
-// history) so the two modes reach the canvas the same way.
-export async function loadWorkspaceFile(path = "data.cue") {
-  const result = await readWorkspaceFile(path);
-  let text: string;
-  if (result.ok) {
-    text = result.data;
-    workspaceBaseVersion.value = result.version;
-  } else {
-    // A missing file (or unreachable backend) opens a blank buffer to create it.
-    text = toCue({ nodes: [], edges: [] });
-    workspaceBaseVersion.value = "";
-  }
-  files.value = [{ name: path, text }];
-  activeFileName.value = path;
-  snapshotSaved();
-  await runEval();
-  resetHistory();
-}
-
-// Persist the current CUE. In workspace mode this writes the real file on disk (git
-// is the history); in playground mode it stores an immutable version. Either way the
-// backend re-validates, so invalid text surfaces diagnostics rather than saving, and
-// a workspace conflict (the file changed on disk) is refused, not overwritten.
+// Persist every dirty file to its real file on disk (git is the history). The
+// backend re-validates each write, so invalid text surfaces diagnostics rather than
+// saving, and a conflict (the file changed on disk since it was loaded) is refused,
+// not overwritten. Each file's returned token becomes the base for its next save.
 async function save() {
+  if (!hasProject()) return;
   saveState.value = { status: "saving" };
-  // Single-file save: persist the primary data.cue.
-  const primary = files.value.find((f) => f.name === primaryFile());
-  const text = primary?.text ?? "";
-  const result = isWorkspace.value
-    ? await saveWorkspaceFile(primary?.name ?? "data.cue", text, workspaceBaseVersion.value)
-    : await saveCue(currentProjectId.value, text);
-  if (!result.ok) {
-    evalError.value = result.error;
-    diagnostics.value = result.diagnostics;
-    hints.value = [];
-    saveState.value = { status: "error" };
+  const dirty = files.value.filter((f) => isDirty(f.name));
+  if (dirty.length === 0) {
+    saveState.value = { status: "saved", version: "" };
     return;
   }
-  // In workspace mode the returned token becomes the base for the next save.
-  if (isWorkspace.value) workspaceBaseVersion.value = result.version;
-  saveState.value = { status: "saved", version: result.version };
+  const bases = { ...workspaceBaseVersion.value };
+  for (const file of dirty) {
+    const result = await saveWorkspaceFile(file.name, file.text, bases[file.name] ?? "");
+    if (!result.ok) {
+      evalError.value = result.error;
+      diagnostics.value = result.diagnostics;
+      hints.value = [];
+      saveState.value = { status: "error" };
+      workspaceBaseVersion.value = bases;
+      return;
+    }
+    bases[file.name] = result.version;
+  }
+  workspaceBaseVersion.value = bases;
+  saveState.value = { status: "saved", version: "" };
   snapshotSaved();
 }
 
@@ -353,6 +348,6 @@ export function useCueSync() {
     save,
     format,
     saveState,
-    loadProjectDiagram,
+    loadProject,
   };
 }

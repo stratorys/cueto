@@ -18,6 +18,8 @@ import (
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/domain"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
+	"github.com/stratorys/cueto/backend/internal/projects"
+	"github.com/stratorys/cueto/backend/internal/repo"
 )
 
 // evalService is the CUE evaluation the transport depends on. Keeping it a small
@@ -32,21 +34,6 @@ type evalService interface {
 	Vet(ctx context.Context, src evaluation.Source) ([]diag.Diagnostic, error)
 }
 
-// saveService persists a validated buffer to the real file in the workspace. It
-// is the write seam the transport depends on; the implementation writes only
-// after the evaluation service validates, and never mutates git state.
-type saveService interface {
-	Save(ctx context.Context, req domain.SaveRequest) (domain.SaveResult, error)
-}
-
-// historyService reads a file's history. In workspace mode scope is a relative file
-// path and entries are git commits; the implementation is read-only and never
-// mutates git. FileAt with an empty version reads the current working-tree file.
-type historyService interface {
-	History(ctx context.Context, scope string) ([]domain.HistoryEntry, error)
-	FileAt(ctx context.Context, scope, version string) (string, error)
-}
-
 // authoringService is the canvas write-back the transport depends on.
 type authoringService interface {
 	Format(source string) (string, error)
@@ -54,23 +41,45 @@ type authoringService interface {
 	ProvenanceFor(files []domain.File) domain.Provenance
 }
 
-// handlers hold the concern services, the module dir Sources are rooted at, and
-// the schema dir needed to scrub host paths from diagnostics built at this layer.
-// moduleDir is the user's workspace module root; cueDir is the schema dir.
+// handlers hold the concern services, the projects manager that resolves a project
+// id to its module dir, the schema dir needed to scrub host paths from diagnostics
+// built at this layer, and the output cap threaded into per-project repos.
 type handlers struct {
-	eval      evalService
-	save      saveService
-	history   historyService
-	authoring authoringService
-	moduleDir string
-	cueDir    string
+	eval           evalService
+	authoring      authoringService
+	projects       *projects.Manager
+	cueDir         string
+	maxOutputBytes int
 }
 
-// source wraps a client file set into an evaluation.Source rooted at the server's
-// module dir. It is the single place the transport picks the module root, so
-// workspace mode changes only this method's input rather than every call site.
-func (h *handlers) source(files []domain.File) evaluation.Source {
-	return evaluation.Source{Dir: h.moduleDir, Overlay: files}
+// projectDir resolves the :id path param to an absolute module dir, writing a 404
+// and returning false when the id is malformed or names no project. Every
+// project-scoped handler calls it first, so an unknown project can never reach the
+// evaluation or persistence layers.
+func (h *handlers) projectDir(c *gin.Context) (string, bool) {
+	id := c.Param("id")
+	dir, ok := h.projects.Resolve(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{
+			"diagnostics": []diag.Diagnostic{{Message: "unknown project: " + id, Kind: diag.KindInternal}},
+		})
+		return "", false
+	}
+	return dir, true
+}
+
+// source wraps a client file set into an evaluation.Source rooted at a project's
+// module dir. It is the single place the transport builds a Source, so the module
+// root always comes from a resolved project id.
+func (h *handlers) source(dir string, files []domain.File) evaluation.Source {
+	return evaluation.Source{Dir: dir, Overlay: files}
+}
+
+// repoFor returns a Repo rooted at a project's module dir. Construction is cheap
+// (it holds only the dir and the output cap), so a fresh one per request avoids
+// any shared mutable state across projects.
+func (h *handlers) repoFor(dir string) *repo.Repo {
+	return repo.New(dir, h.maxOutputBytes)
 }
 
 type dataRequest struct {

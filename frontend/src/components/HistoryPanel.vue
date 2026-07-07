@@ -11,27 +11,19 @@ SPDX-License-Identifier: MPL-2.0
 // (added / removed / changed nodes, added / removed / rewired edges) rather than
 // a text diff. Clicking a change highlights that element on the canvas.
 import { computed, onMounted, ref, watch } from "vue";
-import {
-  evalCue,
-  fromEval,
-  listVersions,
-  listWorkspaceHistory,
-  readVersion,
-  readWorkspaceFile,
-} from "../api";
+import { evalCue, fromEval, listWorkspaceHistory, readWorkspaceFile } from "../api";
 import type { Diagram } from "../model";
 import type { DiagramDiff } from "../analysis/diff";
 import { diffDiagrams, isEmptyDiff } from "../analysis/diff";
 import { useHighlight } from "../composables/useHighlight";
-import { isWorkspace } from "../composables/useMode";
 import { useProjects } from "../composables/useProjects";
 import { activeFileName } from "../composables/useEditorFiles";
 
 const { setHighlight } = useHighlight();
 const { currentProjectId } = useProjects();
 
-// One point in history, common to both modes: a version/commit id, an optional
-// human label (the commit subject in workspace mode), and when it was recorded.
+// One point in the active file's git history: the commit id, its subject line, and
+// when it was authored.
 interface HistoryItem {
   version: string;
   label: string;
@@ -52,10 +44,8 @@ function versionLabel(v: HistoryItem): string {
   return `${head} - ${when}`;
 }
 
-// Load the history, defaulting the diff selectors to the two newest points. In
-// workspace mode this is the git log of the active file; in playground mode the
-// current project's saved versions. Re-run when the project, the file, or the mode
-// changes (the mode resolves after this panel first mounts).
+// Load the active file's git history, defaulting the diff selectors to the two
+// newest commits. Re-run when the project or the active file changes.
 async function refreshVersions() {
   versions.value = [];
   baseId.value = "";
@@ -63,24 +53,14 @@ async function refreshVersions() {
   diff.value = null;
   error.value = null;
 
-  if (isWorkspace.value) {
-    const result = await listWorkspaceHistory(activeFileName.value);
-    if (!result.ok) {
-      error.value = result.error;
-      return;
-    }
-    versions.value = result.entries.map((e) => ({ version: e.version, label: e.label, when: e.at }));
-  } else {
-    if (!currentProjectId.value) return;
-    const result = await listVersions(currentProjectId.value);
-    if (!result.ok) {
-      error.value = result.error;
-      return;
-    }
-    versions.value = result.versions.map((v) => ({ version: v.version, label: "", when: v.savedAt }));
+  const result = await listWorkspaceHistory(activeFileName.value);
+  if (!result.ok) {
+    error.value = result.error;
+    return;
   }
+  versions.value = result.entries.map((e) => ({ version: e.version, label: e.label, when: e.at }));
 
-  // Default to comparing the two newest points (list is newest-first).
+  // Default to comparing the two newest commits (list is newest-first).
   if (versions.value.length >= 2) {
     compareId.value = versions.value[0].version;
     baseId.value = versions.value[1].version;
@@ -88,15 +68,12 @@ async function refreshVersions() {
 }
 
 onMounted(refreshVersions);
-watch([currentProjectId, isWorkspace, activeFileName], refreshVersions);
+watch([currentProjectId, activeFileName], refreshVersions);
 
-// Read a version's stored text and evaluate it into a concrete Diagram, reusing the
-// canvas eval pipeline (no second parser). The text comes from the version store in
-// playground mode, or the file at that commit in workspace mode.
+// Read the active file at a commit and evaluate it into a concrete Diagram, reusing
+// the canvas eval pipeline (no second parser).
 async function loadDiagram(id: string): Promise<Diagram | null> {
-  const read = isWorkspace.value
-    ? await readWorkspaceFile(activeFileName.value, id)
-    : await readVersion(currentProjectId.value, id);
+  const read = await readWorkspaceFile(activeFileName.value, id);
   if (!read.ok) {
     error.value = read.error;
     return null;
@@ -128,9 +105,7 @@ const empty = computed(() => diff.value !== null && isEmptyDiff(diff.value));
 <template>
   <div class="flex flex-col gap-4 p-4 text-sm">
     <p v-if="versions.length < 2" class="text-slate-400">
-      {{ isWorkspace
-        ? "Need at least two commits touching this file to compare them."
-        : "Save at least two versions (Cmd+S) to compare them." }}
+      Need at least two commits touching this file to compare them.
     </p>
 
     <template v-else>

@@ -11,17 +11,17 @@
 
 import { computed, ref } from "vue";
 import type { DiagramNode, EditorFile, Provenance } from "../model";
-import { toCue } from "../mapping";
 import { useDiagram } from "../useDiagram";
 import { runEval } from "./useCueSync";
 
 const { diagram } = useDiagram();
 
-// The editable file set. Each file is `package main`; all unify into one
-// diagram. The canvas round-trips edits back into the file that owns each node.
-export const files = ref<EditorFile[]>([{ name: "data.cue", text: toCue(diagram.value) }]);
+// The editable file set of the open project (its tree of .cue files). Empty until a
+// project loads (loadProject); each file is a module file that unifies into the
+// diagram, and the canvas round-trips edits back into the file that owns each node.
+export const files = ref<EditorFile[]>([]);
 // Which file the editor is showing, and which receives canvas-created nodes.
-export const activeFileName = ref("data.cue");
+export const activeFileName = ref("");
 // The active file's text (for the single editor pane).
 export const activeText = computed(
   () => files.value.find((f) => f.name === activeFileName.value)?.text ?? "",
@@ -29,10 +29,8 @@ export const activeText = computed(
 
 // The last-saved text baseline per file. A file is dirty when its text diverges
 // from its baseline; a file with no entry (freshly added) is dirty until a save.
-// Only data.cue is actually persisted (versions are single-file), but a save
-// commits the whole current file set as the baseline. Seeded for the initial
-// data.cue below and re-seeded on project load.
-export const savedText = ref<Record<string, string>>({ "data.cue": files.value[0]?.text ?? "" });
+// Re-seeded on project load and after each save (snapshotSaved).
+export const savedText = ref<Record<string, string>>({});
 
 // Snapshot the current file set as the saved baseline (clears dirty for all).
 export function snapshotSaved() {
@@ -53,12 +51,10 @@ export const provenance = ref<Provenance>({ nodes: {}, edges: "" });
 // pinned at creation to the then-active file.
 export const newNodeOwner = new Map<string, string>();
 
-// The primary file that owns edges and receives fallback ownership. Prefer the
-// conventional data.cue, else the first file.
+// The primary file that owns edges and receives fallback ownership: the first file
+// in the set (the tree's first path).
 export function primaryFile(): string {
-  return files.value.some((f) => f.name === "data.cue")
-    ? "data.cue"
-    : files.value[0]?.name ?? "data.cue";
+  return files.value[0]?.name ?? "main.cue";
 }
 
 // The single file that owns the (unsplittable) edge list: whatever eval reported,
@@ -90,10 +86,13 @@ function addFile() {
   activeFileName.value = name;
 }
 
-// A valid editable filename: a bare .cue name that is not the reserved schema.cue.
-// Mirrors the backend guard so a rename the backend would reject is refused here.
+// A valid editable path: one or more word segments joined by "/", ending in a .cue
+// file, with the schema package dir (diagram) reserved as a first segment. Mirrors
+// the backend domain guard (cue.mod cannot match the segment charset, so it is
+// excluded for free), so a rename the backend would reject is refused here too.
 function validFileName(name: string): boolean {
-  return /^[a-zA-Z0-9_-]+\.cue$/.test(name) && name.toLowerCase() !== "schema.cue";
+  if (!/^([A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.cue$/.test(name)) return false;
+  return !(name.includes("/") && name.split("/")[0].toLowerCase() === "diagram");
 }
 
 // Rename a file, re-pointing ownership and re-evaluating so provenance refreshes.

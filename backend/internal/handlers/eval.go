@@ -22,12 +22,16 @@ import (
 // is derived by the authoring concern from the same file set, so the response still
 // carries the node/edge->file attribution the canvas needs.
 func (h *handlers) Eval(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	var req dataRequest
 	if !bindJSON(c, &req) {
 		return
 	}
 	files := req.files()
-	src := h.source(files)
+	src := h.source(dir, files)
 	src.View = req.View
 	out, views, hints, trace, diags, err := h.eval.Eval(c.Request.Context(), src)
 	if err != nil {
@@ -52,6 +56,10 @@ func (h *handlers) Eval(c *gin.Context) {
 // diagnostics on a compile/concreteness error. Nothing is persisted; the input
 // never joins the file set, the schema, or a saved version.
 func (h *handlers) EvalExpr(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	var req sourceRequest
 	if !bindJSON(c, &req) {
 		return
@@ -62,7 +70,7 @@ func (h *handlers) EvalExpr(c *gin.Context) {
 		err   error
 	)
 	if len(req.Files) > 0 {
-		out, diags, err = h.eval.EvalQuery(c.Request.Context(), h.source(req.Files), req.Source)
+		out, diags, err = h.eval.EvalQuery(c.Request.Context(), h.source(dir, req.Files), req.Source)
 	} else {
 		out, diags, err = h.eval.EvalExpr(c.Request.Context(), req.Source)
 	}
@@ -82,11 +90,15 @@ func (h *handlers) EvalExpr(c *gin.Context) {
 // whole data (not just the diagram). 200 {keys:[...]} on success, 400 with
 // diagnostics when the diagram is invalid/incomplete. Nothing is persisted.
 func (h *handlers) ReplKeys(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	var req sourceRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	keys, diags, err := h.eval.Keys(c.Request.Context(), h.source(req.Files))
+	keys, diags, err := h.eval.Keys(c.Request.Context(), h.source(dir, req.Files))
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -101,11 +113,15 @@ func (h *handlers) ReplKeys(c *gin.Context) {
 // Vet reports validation diagnostics. Keeping the existing contract it answers
 // 200 with {ok:false, diagnostics:[...]} for invalid input and {ok:true} on pass.
 func (h *handlers) Vet(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	var req dataRequest
 	if !bindJSON(c, &req) {
 		return
 	}
-	diags, err := h.eval.Vet(c.Request.Context(), h.source(req.files()))
+	diags, err := h.eval.Vet(c.Request.Context(), h.source(dir, req.files()))
 	if err != nil {
 		writeOpError(c, err)
 		return

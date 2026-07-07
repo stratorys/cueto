@@ -12,7 +12,7 @@ Diagrams drift from the domains they describe and carry no checkable meaning: th
 ## What it demonstrates
 
 - **Architecture pattern** - a hand-owned schema package (`cue/diagram/`) that is never machine-written, with a concrete instance (`data.cue`) overlaid per request; the canvas only ever round-trips the data, the schema stays authoritative.
-- **Workflow design** - the same model is edited two ways (visual canvas and CUE code) kept in sync through a source map, then evaluated, validated, formatted, and saved - as immutable content-addressed versions in playground mode, or written to real files on disk with git as the history when pointed at a user's module.
+- **Workflow design** - the same model is edited two ways (visual canvas and CUE code) kept in sync through a source map, then evaluated, validated, formatted, and saved to real files on disk in the user's own project, with git as the only history.
 - **Knowledge model** - the schema separates rendering fields (`type`, `shape`, colors) from a free-form `data` payload, so the nodes you draw carry domain facts you can query.
 - **Queryability** - a REPL pane with CUE stdlib introspection and autocompletion evaluates any expression against the live model in the editor.
 - **Observability** - evaluation returns structured diagnostics with source positions and host paths scrubbed, plus provenance and hints, rather than opaque errors.
@@ -141,10 +141,9 @@ flowchart LR
   end
 
   subgraph be["backend/ (Go + gin)"]
-    api["/eval /repl /vet /format /rewrite\nplayground: /projects /versions\nworkspace: /workspace/save /history /file"]
+    api["/config /cue/meta /format /rewrite /projects (list, create)\nper project: /projects/:id/{eval,repl,vet,tree,save,file,history}"]
     eval["CUE evaluator (bounded, in-process)"]
-    versions[("data/ (playground: registry + immutable versions)")]
-    workspace[("user checkout (workspace: real files, git = history)")]
+    projectsdir[("projects root (each child: git repo + CUE module, git = history)")]
   end
 
   subgraph cue["cue/ (source of truth)"]
@@ -158,8 +157,7 @@ flowchart LR
   api --> eval
   eval --> schema
   eval --> data
-  eval --> versions
-  api --> workspace
+  api --> projectsdir
 ```
 
 ## How it works
@@ -170,8 +168,8 @@ flowchart LR
 4. Canvas edits are spliced back into CUE text via `/rewrite`, and `/format` normalizes it with `cue fmt`, so the code and the picture never disagree.
 5. `/repl` evaluates any CUE expression against the live model in the editor; `/cue/meta` exposes stdlib introspection that powers autocompletion and auto-import.
 6. `/vet` validates every package in the module for validity (dangling references, schema and closedness violations) and returns structured diagnostics; it never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` plus `cueto vet` and `cueto check` (see [Command line](#command-line-ci)) so an invalid committed diagram - or a broken file/URI reference - fails CI.
-7. Persistence depends on the mode, reported by `/config`. In **playground** mode diagrams are grouped into projects (`/projects`); `/projects/:pid/save` writes the validated instance as an immutable, content-addressed version, and `/projects/:pid/versions` lists and reads them.
-8. In **workspace** mode git is the history and cueto is not a version store. `/workspace/save` validates the buffer and writes the real file on disk under a path guard, refusing a save when the file changed on disk since it was loaded and never staging, committing, or otherwise mutating git state. `/workspace/history` and `/workspace/file` read the git log and file blobs read-only to feed the history panel.
+7. Persistence is git. The server is pointed at a **projects root**; each child directory is a git repository with its own CUE module. `GET /projects` lists them and `POST /projects` creates one by git-initializing a new directory, scaffolding a minimal vocabulary-free module, and making one initial commit - the only time cueto ever writes git state. Every module-touching operation is scoped to a project: `/projects/:id/eval`, `/vet`, `/repl`, `/tree`, `/save`, `/file`, `/history`, and `DELETE /projects/:id/file`.
+8. `/projects/:id/save` validates the buffer against the whole module and writes the real file on disk under a path guard, refusing a save when the file changed on disk since it was loaded and never staging, committing, or otherwise mutating git state. `/projects/:id/history` and `/projects/:id/file` read the git log and file blobs read-only to feed the history panel. cueto is not a version store; git is the only history.
 
 ## Command line (CI)
 
@@ -195,9 +193,9 @@ cd backend
 go run ./cmd/server
 ```
 
-By default the server runs in playground mode against `CUE_DIR`. Set `WORKSPACE_DIR`
-to a directory with its own `cue.mod` to evaluate a user's module instead; the
-diagram schema still comes from `CUE_DIR`.
+Set `PROJECTS_DIR` to a directory that holds your projects - each child is a git
+repository with its own `cue.mod`. The web app lists them and creates new ones
+(the first is made for you via `git init`); the diagram schema comes from `CUE_DIR`.
 
 Frontend (in a second shell):
 

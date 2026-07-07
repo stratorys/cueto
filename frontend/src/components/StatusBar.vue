@@ -9,7 +9,6 @@ SPDX-License-Identifier: MPL-2.0
 <script setup lang="ts">
 import { CircleAlert, Check, Lightbulb } from "lucide-vue-next";
 import type { SaveState } from "../composables/useDiagramCanvas";
-import { isWorkspace } from "../composables/useMode";
 
 // The code pane's bottom status bar (VSCode idiom): save state and problem count on
 // the left, cursor position and the hints toggle on the right. Absence of problems
@@ -49,7 +48,7 @@ const item = "flex items-center gap-1 px-2 h-full";
         :class="item"
         class="text-emerald-400"
         :title="saveState.version"
-      >{{ isWorkspace ? "Written to file" : `Saved ${saveState.version.slice(0, 7)}` }}</span>
+      >Written to file</span>
       <span v-else-if="saveState.status === 'error'" :class="item" class="text-red-400">Save failed</span>
     </div>
 

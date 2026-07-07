@@ -58,6 +58,23 @@ func (r *Repo) Save(_ context.Context, req domain.SaveRequest) (domain.SaveResul
 	return domain.SaveResult{Version: ContentHash(req.Data)}, nil
 }
 
+// Delete removes the file at scope from the workspace. Like Save it never touches
+// git state: the removal shows in git status and the user commits it. The path is
+// validated and confined to the workspace root; a missing file is ErrFileNotFound.
+func (r *Repo) Delete(_ context.Context, scope string) error {
+	target, ok := r.resolve(scope)
+	if !ok {
+		return ErrInvalidPath
+	}
+	if err := os.Remove(target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrFileNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 // atomicWrite writes body to path via a temporary file in the same directory then
 // renames it into place, so a crash mid-write never leaves a truncated file and a
 // reader never sees a partial buffer.

@@ -20,7 +20,7 @@ import (
 // how CUE_DIR and PORT already work.
 type Config struct {
 	CueDir         string
-	WorkspaceDir   string // the user's module root; Sources root here
+	ProjectsDir    string // the projects root; each child dir is a git repo + CUE module
 	Port           string
 	MaxBodyBytes   int64         // request body cap, bytes
 	MaxOutputBytes int           // evaluated JSON cap, bytes
@@ -30,31 +30,32 @@ type Config struct {
 
 // Load reads configuration from the environment, applying safe defaults.
 // CueDir is resolved to an absolute path so overlay and diagnostics paths are
-// stable regardless of the working directory. WORKSPACE_DIR is required and must
-// be an existing directory (the user's module root); a missing or non-directory
-// path fails fast rather than surfacing as a per-request evaluation error.
+// stable regardless of the working directory. PROJECTS_DIR is required and must
+// be an existing directory (the root under which each project is a git repo plus
+// a CUE module); a missing or non-directory path fails fast rather than surfacing
+// as a per-request error.
 func Load() (Config, error) {
 	cueDir, err := filepath.Abs(envString("CUE_DIR", "../cue"))
 	if err != nil {
 		return Config{}, err
 	}
 
-	rawWorkspace := envString("WORKSPACE_DIR", "")
-	if rawWorkspace == "" {
-		return Config{}, errors.New("WORKSPACE_DIR is required")
+	rawProjects := envString("PROJECTS_DIR", "")
+	if rawProjects == "" {
+		return Config{}, errors.New("PROJECTS_DIR is required")
 	}
-	workspaceDir, err := filepath.Abs(rawWorkspace)
+	projectsDir, err := filepath.Abs(rawProjects)
 	if err != nil {
 		return Config{}, err
 	}
-	info, statErr := os.Stat(workspaceDir)
+	info, statErr := os.Stat(projectsDir)
 	if statErr != nil || !info.IsDir() {
-		return Config{}, fmt.Errorf("WORKSPACE_DIR (%s) is not a directory", workspaceDir)
+		return Config{}, fmt.Errorf("PROJECTS_DIR (%s) is not a directory", projectsDir)
 	}
 
 	return Config{
 		CueDir:         cueDir,
-		WorkspaceDir:   workspaceDir,
+		ProjectsDir:    projectsDir,
 		Port:           envString("PORT", "8091"),
 		MaxBodyBytes:   envInt64("MAX_BODY_BYTES", 1<<20),        // 1 MiB
 		MaxOutputBytes: int(envInt64("MAX_OUTPUT_BYTES", 4<<20)), // 4 MiB

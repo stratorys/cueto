@@ -16,13 +16,14 @@ import (
 
 	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/diag"
-	"github.com/stratorys/cueto/backend/internal/repo"
+	"github.com/stratorys/cueto/backend/internal/projects"
 )
 
-// NewRouter wires middleware and routes. Handlers depend only on the small
-// per-concern service interfaces; every untrusted-input bound lives either in
-// middleware here or inside a service deadline. Sources root at the user's
-// workspace module (cfg.WorkspaceDir), and git is the only history: saves write
+// NewRouter wires middleware and routes. Every untrusted-input bound lives either
+// in middleware here or inside a service deadline. Module-independent operations
+// (config, introspection, format, rewrite, project list/create) are top-level;
+// every operation that touches a module is scoped to /projects/:id, so the module
+// root always comes from a resolved project. Git is the only history: saves write
 // the real file and the history panel reads commits read-only.
 func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.Engine {
 	r := gin.New()
@@ -31,29 +32,33 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), cors(), limitBody(cfg.MaxBodyBytes), limitConcurrency(cfg.MaxConcurrent))
 
-	ws := repo.New(cfg.WorkspaceDir, cfg.MaxOutputBytes)
 	h := &handlers{
-		eval:      eval,
-		save:      ws,
-		history:   ws,
-		authoring: auth,
-		moduleDir: cfg.WorkspaceDir,
-		cueDir:    cfg.CueDir,
+		eval:           eval,
+		authoring:      auth,
+		projects:       projects.New(cfg.ProjectsDir),
+		cueDir:         cfg.CueDir,
+		maxOutputBytes: cfg.MaxOutputBytes,
 	}
-	r.POST("/eval", h.Eval)
-	r.POST("/repl", h.EvalExpr)
-	r.POST("/repl/keys", h.ReplKeys)
+
+	// Module-independent operations.
+	r.GET("/config", h.Config)
 	r.GET("/cue/meta", h.CueMeta)
-	r.POST("/vet", h.Vet)
 	r.POST("/format", h.Format)
 	r.POST("/rewrite", h.Rewrite)
-	r.GET("/config", h.Config)
+	r.GET("/projects", h.ListProjects)
+	r.POST("/projects", h.CreateProject)
 
-	// Git is the only history: saves write the real file, and the panel reads
-	// commits read-only. No project registry, no version store.
-	r.POST("/workspace/save", h.WorkspaceSave)
-	r.GET("/workspace/history", h.WorkspaceHistory)
-	r.GET("/workspace/file", h.WorkspaceFile)
+	// Project-scoped operations: evaluation and git-backed persistence, all rooted
+	// at the resolved project module.
+	r.POST("/projects/:id/eval", h.Eval)
+	r.POST("/projects/:id/repl", h.EvalExpr)
+	r.POST("/projects/:id/repl/keys", h.ReplKeys)
+	r.POST("/projects/:id/vet", h.Vet)
+	r.GET("/projects/:id/tree", h.Tree)
+	r.POST("/projects/:id/save", h.WorkspaceSave)
+	r.GET("/projects/:id/file", h.WorkspaceFile)
+	r.DELETE("/projects/:id/file", h.WorkspaceDeleteFile)
+	r.GET("/projects/:id/history", h.WorkspaceHistory)
 	return r
 }
 

@@ -11,31 +11,31 @@ import (
 	"testing"
 )
 
-func TestLoadWorkspaceDir(t *testing.T) {
+func TestLoadProjectsDir(t *testing.T) {
 	t.Run("unset errors", func(t *testing.T) {
-		t.Setenv("WORKSPACE_DIR", "")
+		t.Setenv("PROJECTS_DIR", "")
 		if _, err := Load(); err == nil {
-			t.Fatal("want error for missing WORKSPACE_DIR, got nil")
+			t.Fatal("want error for missing PROJECTS_DIR, got nil")
 		}
 	})
 
 	t.Run("set resolves to absolute", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("WORKSPACE_DIR", dir)
+		t.Setenv("PROJECTS_DIR", dir)
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("load: %v", err)
 		}
 		want, _ := filepath.Abs(dir)
-		if cfg.WorkspaceDir != want {
-			t.Fatalf("WorkspaceDir = %q, want %q", cfg.WorkspaceDir, want)
+		if cfg.ProjectsDir != want {
+			t.Fatalf("ProjectsDir = %q, want %q", cfg.ProjectsDir, want)
 		}
 	})
 
 	t.Run("missing dir errors", func(t *testing.T) {
-		t.Setenv("WORKSPACE_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
+		t.Setenv("PROJECTS_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
 		if _, err := Load(); err == nil {
-			t.Fatal("want error for non-existent WORKSPACE_DIR, got nil")
+			t.Fatal("want error for non-existent PROJECTS_DIR, got nil")
 		}
 	})
 }

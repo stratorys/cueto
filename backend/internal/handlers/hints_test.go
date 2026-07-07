@@ -19,7 +19,7 @@ import (
 func evalHints(t *testing.T, data string) []evaluation.Hint {
 	t.Helper()
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -92,7 +92,7 @@ diagram: d.#Diagram & {
 }
 `
 	router := realRouter(t, testConfig(t))
-	rec := postJSON(router, "/eval", evalBody(t, data))
+	rec := postJSON(router, pp("/eval"), evalBody(t, data))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}

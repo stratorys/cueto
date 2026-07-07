@@ -16,7 +16,6 @@ import type { SaveState } from "../composables/useDiagramCanvas";
 import type { EditorFile } from "../model";
 import type { Diagnostic, Hint } from "../api";
 import { isDirty } from "../composables/useEditorFiles";
-import { isWorkspace } from "../composables/useMode";
 // The diagram schema package, inlined at build time. The dev server needs
 // server.fs.allow: ['..'] to read it from the sibling cue/ dir.
 import schemaSource from "../../../cue/diagram/diagram.cue?raw";
@@ -151,7 +150,7 @@ const iconButton =
     <div class="flex items-stretch overflow-x-auto border-b border-slate-800">
       <!-- Projects are a playground concept; workspace mode edits the user's own
            module, so the switcher is hidden there. -->
-      <ProjectSwitcher v-if="!isWorkspace" />
+      <ProjectSwitcher />
       <button
         v-for="file in files"
         :key="file.name"

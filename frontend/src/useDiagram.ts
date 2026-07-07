@@ -10,7 +10,6 @@
 
 import { computed, ref, toRaw } from "vue";
 import type { Diagram, ShapeKind, TypedNodeType } from "./model";
-import { sampleDiagram } from "./model";
 
 // The model is pure JSON, so a JSON round-trip deep-clones it and strips Vue's
 // reactive proxy. structuredClone throws (DataCloneError) on a reactive proxy.
@@ -18,7 +17,9 @@ function clone(diagram: Diagram): Diagram {
   return JSON.parse(JSON.stringify(toRaw(diagram)));
 }
 
-const diagram = ref<Diagram>(clone(sampleDiagram));
+// The canvas starts empty; the open project's files populate it via loadProject.
+// With no project open the app shows a "no project" state rather than a sample.
+const diagram = ref<Diagram>({ nodes: [], edges: [] });
 const undoStack = ref<Diagram[]>([]);
 const redoStack = ref<Diagram[]>([]);
 

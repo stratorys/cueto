@@ -8,7 +8,11 @@ package handlers
 
 import (
 	"errors"
+	"io/fs"
 	"net/http"
+	"os"
+	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -39,6 +43,10 @@ type workspaceSaveRequest struct {
 // invalid diagram never reaches disk. A concurrent on-disk change is a 409, never a
 // silent overwrite. No git state is touched.
 func (h *handlers) WorkspaceSave(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	var req workspaceSaveRequest
 	if !bindJSON(c, &req) {
 		return
@@ -53,7 +61,7 @@ func (h *handlers) WorkspaceSave(c *gin.Context) {
 	// module as it would be after the write, so a save can never leave the module in
 	// a state that does not evaluate.
 	files := []domain.File{{Name: req.Path, Content: req.Data}}
-	diags, err := h.eval.Vet(c.Request.Context(), h.source(files))
+	diags, err := h.eval.Vet(c.Request.Context(), h.source(dir, files))
 	if err != nil {
 		writeOpError(c, err)
 		return
@@ -62,7 +70,7 @@ func (h *handlers) WorkspaceSave(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"diagnostics": diags})
 		return
 	}
-	res, err := h.save.Save(c.Request.Context(), domain.SaveRequest{
+	res, err := h.repoFor(dir).Save(c.Request.Context(), domain.SaveRequest{
 		Scope:       req.Path,
 		Data:        req.Data,
 		BaseVersion: req.BaseVersion,
@@ -85,6 +93,10 @@ func (h *handlers) WorkspaceSave(c *gin.Context) {
 // {entries:[{version,label,at}]}. A workspace that is not a git repo returns an
 // empty list.
 func (h *handlers) WorkspaceHistory(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	path := c.Query("path")
 	if !domain.ValidEditableName(path) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -92,7 +104,7 @@ func (h *handlers) WorkspaceHistory(c *gin.Context) {
 		})
 		return
 	}
-	entries, err := h.history.History(c.Request.Context(), path)
+	entries, err := h.repoFor(dir).History(c.Request.Context(), path)
 	if err != nil {
 		writeRepoError(c, err)
 		return
@@ -105,6 +117,10 @@ func (h *handlers) WorkspaceHistory(c *gin.Context) {
 // the client carries back into a save for conflict detection. With a commit (a full
 // git hash) it reads the blob at that commit.
 func (h *handlers) WorkspaceFile(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
 	path := c.Query("path")
 	if !domain.ValidEditableName(path) {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -112,12 +128,75 @@ func (h *handlers) WorkspaceFile(c *gin.Context) {
 		})
 		return
 	}
-	data, err := h.history.FileAt(c.Request.Context(), path, c.Query("commit"))
+	data, err := h.repoFor(dir).FileAt(c.Request.Context(), path, c.Query("commit"))
 	if err != nil {
 		writeRepoError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": data, "version": repo.ContentHash(data)})
+}
+
+// WorkspaceDeleteFile removes ?path from the project working tree. The removal
+// shows in git status for the user to commit; cueto never stages or commits it.
+func (h *handlers) WorkspaceDeleteFile(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
+	path := c.Query("path")
+	if !domain.ValidEditableName(path) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"diagnostics": []diag.Diagnostic{{Message: "invalid file name: " + path, Kind: diag.KindParse}},
+		})
+		return
+	}
+	if err := h.repoFor(dir).Delete(c.Request.Context(), path); err != nil {
+		writeRepoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "path": path})
+}
+
+// Tree lists the project's .cue files as workspace-relative slash paths, skipping
+// the cue.mod and .git directories. It backs the frontend file tree.
+func (h *handlers) Tree(c *gin.Context) {
+	dir, ok := h.projectDir(c)
+	if !ok {
+		return
+	}
+	files, err := listTree(dir)
+	if err != nil {
+		writeOpError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"files": files})
+}
+
+// listTree walks a module root and returns its .cue files as sorted slash paths
+// relative to the root, pruning the cue.mod schema dir and the .git dir so only
+// editable source shows in the tree.
+func listTree(root string) ([]string, error) {
+	out := make([]string, 0)
+	err := fs.WalkDir(os.DirFS(root), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != "." && (d.Name() == "cue.mod" || d.Name() == ".git") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".cue") {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // writeRepoError maps workspace-store errors to status codes: a malformed path or

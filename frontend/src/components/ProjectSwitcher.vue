@@ -8,19 +8,17 @@ SPDX-License-Identifier: MPL-2.0
 
 <script setup lang="ts">
 // The current-project control in the CUE pane's tab bar: shows the open project's
-// name and opens a dropdown to switch projects or create / rename / delete one.
-// Self-contained - it drives the shared useProjects() singleton directly, so no
-// props/emits are threaded through CodePane. Name entry uses the shared modal
-// service. The dropdown is teleported to <body> and fixed-positioned from the
-// trigger's rect so the tab bar's horizontal overflow can't clip it.
+// name and opens a dropdown to switch projects or create one. Creating a project
+// git-initializes a new module on the backend (git is the history). Self-contained -
+// it drives the shared useProjects() singleton directly. The dropdown is teleported
+// to <body> and fixed-positioned from the trigger's rect so the tab bar's horizontal
+// overflow can't clip it.
 import { ref } from "vue";
-import { Check, ChevronDown, FilePlus2, FolderPlus, Pencil, Trash2 } from "lucide-vue-next";
-import type { ProjectSeed } from "../api";
+import { Check, ChevronDown, FolderGit2, FolderPlus } from "lucide-vue-next";
 import { useProjects } from "../composables/useProjects";
-import { confirmDialog, promptDialog } from "../composables/useModal";
+import { promptDialog } from "../composables/useModal";
 
-const { projects, currentProjectId, currentProject, switchProject, createProject, renameProject, deleteProject } =
-  useProjects();
+const { projects, currentProjectId, currentProject, switchProject, createProject } = useProjects();
 
 const open = ref(false);
 const trigger = ref<HTMLElement | null>(null);
@@ -39,40 +37,15 @@ function pick(id: string) {
   void switchProject(id);
 }
 
-async function create(seed: ProjectSeed) {
+async function create() {
   open.value = false;
   const name = await promptDialog({
-    title: seed === "sample" ? "New project from sample" : "New project",
-    message: "Choose a name for the project.",
+    title: "New project",
+    message: "cueto will git-init a new module for it.",
     placeholder: "Project name",
     confirmLabel: "Create",
   });
-  if (name) void createProject(name, seed);
-}
-
-async function rename() {
-  open.value = false;
-  const project = currentProject.value;
-  if (!project) return;
-  const next = await promptDialog({
-    title: "Rename project",
-    defaultValue: project.name,
-    confirmLabel: "Rename",
-  });
-  if (next && next !== project.name) void renameProject(project.id, next);
-}
-
-async function remove() {
-  open.value = false;
-  const project = currentProject.value;
-  if (!project) return;
-  const ok = await confirmDialog({
-    title: "Delete project",
-    message: `Delete "${project.name}"? This removes its saved history.`,
-    confirmLabel: "Delete",
-    danger: true,
-  });
-  if (ok) void deleteProject(project.id);
+  if (name) void createProject(name);
 }
 
 const row =
@@ -87,7 +60,7 @@ const row =
       title="Switch project"
       @click="toggle"
     >
-      <FolderPlus class="h-3.5 w-3.5 text-slate-500" />
+      <FolderGit2 class="h-3.5 w-3.5 text-slate-500" />
       <span class="max-w-40 truncate">{{ currentProject?.name ?? "Project" }}</span>
       <ChevronDown class="h-3.5 w-3.5 text-slate-500" />
     </button>
@@ -113,21 +86,9 @@ const row =
 
           <div class="my-1 border-t border-slate-800"></div>
 
-          <button :class="row" @click="create('blank')">
+          <button :class="row" @click="create()">
             <FolderPlus class="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            New blank project
-          </button>
-          <button :class="row" @click="create('sample')">
-            <FilePlus2 class="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            New from sample
-          </button>
-          <button :class="row" :disabled="!currentProject" @click="rename()">
-            <Pencil class="h-3.5 w-3.5 shrink-0 text-slate-500" />
-            Rename…
-          </button>
-          <button :class="row" :disabled="!currentProject || projects.length <= 1" @click="remove()">
-            <Trash2 class="h-3.5 w-3.5 shrink-0 text-red-400" />
-            <span class="text-red-400">Delete…</span>
+            New project
           </button>
         </div>
       </div>
