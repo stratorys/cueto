@@ -466,10 +466,10 @@ type blockingEval struct {
 	release chan struct{}
 }
 
-func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []diag.Diagnostic, error) {
+func (b *blockingEval) Eval(ctx context.Context, src evaluation.Source) (json.RawMessage, []string, []evaluation.Hint, []evaluation.TraceEntry, []diag.Diagnostic, error) {
 	b.entered <- struct{}{}
 	<-b.release
-	return json.RawMessage(`{"nodes":{},"edges":[]}`), []string{"diagram"}, nil, nil, nil
+	return json.RawMessage(`{"nodes":{},"edges":[]}`), []string{"diagram"}, nil, nil, nil, nil
 }
 
 func (b *blockingEval) EvalExpr(ctx context.Context, source string) (json.RawMessage, []diag.Diagnostic, error) {

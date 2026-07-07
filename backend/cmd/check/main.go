@@ -68,7 +68,7 @@ func run(cueDir, dataPath string) error {
 		Dir:     cueDir,
 		Overlay: []domain.File{{Name: "data.cue", Content: string(data)}},
 	}
-	_, views, _, diags, err := engine.Eval(context.Background(), src)
+	_, views, _, _, diags, err := engine.Eval(context.Background(), src)
 	if err != nil {
 		return err
 	}

@@ -102,24 +102,31 @@ func (e *Engine) schemaRoot() cue.Value {
 // Hints are non-empty only on success. The error is non-nil only for operational
 // failures (timeout, output too large) not tied to a source position. Provenance
 // is derived separately by the authoring concern from the same file set.
-func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []string, []Hint, []diag.Diagnostic, error) {
-	_, diagram, views, diags, err := e.evaluate(ctx, src, "")
+func (e *Engine) Eval(ctx context.Context, src Source) (json.RawMessage, []string, []Hint, []TraceEntry, []diag.Diagnostic, error) {
+	_, diagram, views, trace, diags, err := e.evaluate(ctx, src, "")
 	if err != nil || len(diags) > 0 {
-		return nil, nil, nil, diags, err
+		return nil, nil, nil, nil, diags, err
 	}
-	// No discovered view is a valid outcome (a knowledge-only module): the view list
-	// is empty and there is nothing to render, distinct from an error.
+	// No view is a valid outcome (a knowledge-only module with nothing to infer): the
+	// view list is empty and there is nothing to render, distinct from an error.
 	if !diagram.Exists() {
-		return nil, views, nil, nil, nil
+		return nil, views, nil, nil, nil, nil
 	}
 	out, merr := diagram.MarshalJSON()
 	if merr != nil {
-		return nil, nil, nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
+		return nil, nil, nil, nil, diag.From(merr, src.Dir, diag.KindIncomplete), nil
 	}
 	if len(out) > e.maxOutputBytes {
-		return nil, nil, nil, nil, ErrOutputTooLarge
+		return nil, nil, nil, nil, nil, ErrOutputTooLarge
 	}
-	return out, views, hintsFrom(e.schemaRoot(), diagram), nil, nil
+	// Inlay hints join written diagram fields back to their schema positions; a derived
+	// diagram has no such source, so hints are skipped when the view was inferred (the
+	// trace is present exactly then).
+	var hints []Hint
+	if trace == nil {
+		hints = hintsFrom(e.schemaRoot(), diagram)
+	}
+	return out, views, hints, trace, nil, nil
 }
 
 // Vet validates every package in the module for validity - parse, unification,
@@ -230,7 +237,7 @@ func (e *Engine) EvalExpr(ctx context.Context, source string) (json.RawMessage, 
 // output. It runs under the same deadline, panic recovery, and output bound as
 // Eval via evaluate.
 func (e *Engine) EvalQuery(ctx context.Context, src Source, expr string) (json.RawMessage, []diag.Diagnostic, error) {
-	_, result, _, diags, err := e.evaluate(ctx, src, expr)
+	_, result, _, _, diags, err := e.evaluate(ctx, src, expr)
 	if err != nil || len(diags) > 0 {
 		return nil, diags, err
 	}
@@ -272,32 +279,32 @@ func evalExprValue(value cue.Value, cueDir string) exprResult {
 // concurrency cap bounds how many such goroutines can exist at once. A fresh
 // cue.Context per call means a leaked evaluation's memory is reclaimed once it
 // finally completes, instead of interning forever on a shared context.
-func (e *Engine) evaluate(ctx context.Context, src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
+func (e *Engine) evaluate(ctx context.Context, src Source, query string) (cue.Value, cue.Value, []string, []TraceEntry, []diag.Diagnostic, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
 	done := make(chan buildResult, 1)
 	go func() {
 		done <- recoverToResult(func() buildResult {
-			// primary is the value whose concreteness gates success: the default view
-			// for a plain build, or the query result when a REPL expression is overlaid.
-			// A knowledge-only module has no view, so primary is a zero value and there
-			// is nothing to gate.
-			root, primary, views, diags, err := e.build(src, query)
+			// primary is the value whose concreteness gates success: the rendered view
+			// (declared or inferred) for a plain build, or the query result when a REPL
+			// expression is overlaid. A knowledge-only module has no view, so primary is
+			// a zero value and there is nothing to gate.
+			root, primary, views, trace, diags, err := e.build(src, query)
 			if err == nil && len(diags) == 0 && primary.Exists() {
 				if verr := primary.Validate(cue.Concrete(true)); verr != nil {
 					diags = diag.From(verr, src.Dir, diag.KindIncomplete)
 				}
 			}
-			return buildResult{root, primary, views, diags, err}
+			return buildResult{root, primary, views, trace, diags, err}
 		})
 	}()
 
 	select {
 	case <-ctx.Done():
-		return cue.Value{}, cue.Value{}, nil, nil, ErrTimeout
+		return cue.Value{}, cue.Value{}, nil, nil, nil, ErrTimeout
 	case r := <-done:
-		return r.root, r.diagram, r.views, r.diags, r.err
+		return r.root, r.diagram, r.views, r.trace, r.diags, r.err
 	}
 }
 
@@ -305,6 +312,7 @@ type buildResult struct {
 	root    cue.Value
 	diagram cue.Value
 	views   []string
+	trace   []TraceEntry
 	diags   []diag.Diagnostic
 	err     error
 }
@@ -356,44 +364,60 @@ func (e *Engine) loadModule(src Source, query string) ([]*build.Instance, []diag
 	return load.Instances([]string{"./..."}, cfg), nil
 }
 
+// inferredViewName is the synthetic view name a derived diagram is listed under, so
+// the single-view frontend has an entry to render and echo back. It is not a
+// user-declared field and cannot collide with a discovered view, since inference runs
+// only when discovery found none.
+const inferredViewName = "inferred"
+
 // build overlays the client's editable files on the module and returns the root
-// project value, the default view to render, and the names of every discovered
-// view. eval selects the root project instance rather than trusting slice order,
-// and gates only that rendered view's concreteness; sibling packages are ignored
-// here (whole-module validity is vet's job).
-func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string, []diag.Diagnostic, error) {
+// project value, the view to render, the names of every discovered view, and the
+// inference trace (non-nil only when the view was derived, not declared). eval selects
+// the root project instance rather than trusting slice order, and gates only that
+// rendered view's concreteness; sibling packages are ignored here (whole-module
+// validity is vet's job). When discovery finds no view, inference derives one from the
+// module's registries and references; an explicit diagram-shaped field always wins.
+func (e *Engine) build(src Source, query string) (cue.Value, cue.Value, []string, []TraceEntry, []diag.Diagnostic, error) {
 	instances, diags := e.loadModule(src, query)
 	if diags != nil {
-		return cue.Value{}, cue.Value{}, nil, diags, nil
+		return cue.Value{}, cue.Value{}, nil, nil, diags, nil
 	}
 	root := rootInstance(instances, src.Dir)
 	if root == nil {
-		return cue.Value{}, cue.Value{}, nil, nil, errors.New("no CUE instance loaded")
+		return cue.Value{}, cue.Value{}, nil, nil, nil, errors.New("no CUE instance loaded")
 	}
 	if err := root.Err; err != nil {
-		return cue.Value{}, cue.Value{}, nil, diag.From(err, src.Dir, diag.KindParse), nil
+		return cue.Value{}, cue.Value{}, nil, nil, diag.From(err, src.Dir, diag.KindParse), nil
 	}
 
 	ctx := cuecontext.New()
 	value := ctx.BuildInstance(root)
 	if err := value.Err(); err != nil {
-		return cue.Value{}, cue.Value{}, nil, diag.From(err, src.Dir, diag.KindSchema), nil
+		return cue.Value{}, cue.Value{}, nil, nil, diag.From(err, src.Dir, diag.KindSchema), nil
 	}
 
 	// A REPL query returns its bound expression as the primary value; the diagram
 	// still had to build and resolve for the expression to read it. View discovery
-	// is irrelevant to a query.
+	// and inference are irrelevant to a query.
 	if query != "" {
-		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil, nil
+		return value, value.LookupPath(cue.ParsePath("replResult")), nil, nil, nil, nil
 	}
 
 	views := e.discoverViews(ctx, value)
-	names := viewNames(views)
-	if len(views) == 0 {
-		// A knowledge-only module has no view: valid, with nothing to render.
-		return value, cue.Value{}, names, nil, nil
+	if len(views) > 0 {
+		return value, views[selectView(views, src.View)].value, viewNames(views), nil, nil, nil
 	}
-	return value, views[selectView(views, src.View)].value, names, nil, nil
+
+	// No declared view: derive one from the module's schemas and data. A module with
+	// nothing to infer (no registries) stays a valid knowledge-only "no view" outcome.
+	diagram, trace, inferDiags := e.inferDiagram(ctx, value)
+	if inferDiags != nil {
+		return value, cue.Value{}, nil, nil, inferDiags, nil
+	}
+	if !diagram.Exists() {
+		return value, cue.Value{}, nil, nil, nil, nil
+	}
+	return value, diagram, []string{inferredViewName}, trace, nil, nil
 }
 
 // view is a discovered diagram-shaped field of the project value.
@@ -410,11 +434,7 @@ type view struct {
 // Only the rendered (default) view is later concreteness-gated; other views are
 // listed, and knowledge fields are neither gated nor rendered.
 func (e *Engine) discoverViews(ctx *cue.Context, value cue.Value) []view {
-	e.loadSchema()
-	if e.schemaInst == nil {
-		return nil
-	}
-	schemaDiagram := ctx.BuildInstance(e.schemaInst).LookupPath(cue.ParsePath("#Diagram"))
+	schemaDiagram := e.schemaDiagram(ctx)
 	if !schemaDiagram.Exists() {
 		return nil
 	}
@@ -439,6 +459,18 @@ func (e *Engine) discoverViews(ctx *cue.Context, value cue.Value) []view {
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].name < views[j].name })
 	return views
+}
+
+// schemaDiagram builds the bundled #Diagram definition into ctx, the value view
+// discovery unifies candidate fields against and inference validates its projection
+// against. A zero value (schema load failure) makes both a no-op. It is rebuilt into
+// the caller's context so no unification crosses contexts.
+func (e *Engine) schemaDiagram(ctx *cue.Context) cue.Value {
+	e.loadSchema()
+	if e.schemaInst == nil {
+		return cue.Value{}
+	}
+	return ctx.BuildInstance(e.schemaInst).LookupPath(cue.ParsePath("#Diagram"))
 }
 
 // viewNames projects the sorted view names, always non-nil so the eval response
