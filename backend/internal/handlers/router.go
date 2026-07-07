@@ -62,11 +62,13 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 	return r
 }
 
-// cors mirrors the previous permissive policy: any origin, GET + POST + OPTIONS.
+// cors is a permissive policy: any origin, and every method the API uses. PATCH and
+// DELETE are listed so the browser's preflight allows project rename and file/project
+// delete; without them those requests are blocked before they reach a handler.
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

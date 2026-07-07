@@ -27,6 +27,25 @@ export const activeText = computed(
   () => files.value.find((f) => f.name === activeFileName.value)?.text ?? "",
 );
 
+// Which files are open as tabs, in tab order. The tree lists every project file
+// (`files`); the tab bar shows only this open subset. Closing a tab drops a name
+// here but leaves the file in `files`, so it stays in the tree and in the evaluated
+// module - a real removal is a git delete of the file, not a tab close.
+export const openTabs = ref<string[]>([]);
+
+// The open files as records, in tab order, for the tab bar. A name with no matching
+// file (a just-closed or renamed entry) is skipped.
+export const openFiles = computed<EditorFile[]>(() =>
+  openTabs.value
+    .map((name) => files.value.find((f) => f.name === name))
+    .filter((f): f is EditorFile => f !== undefined),
+);
+
+// Reset the open tabs to the given files (all of them), for project load.
+export function openAllTabs(names: string[]) {
+  openTabs.value = [...names];
+}
+
 // The last-saved text baseline per file. A file is dirty when its text diverges
 // from its baseline; a file with no entry (freshly added) is dirty until a save.
 // Re-seeded on project load and after each save (snapshotSaved).
@@ -71,18 +90,22 @@ export function ownerOf(node: DiagramNode): string {
 
 // --- file tabs: add / rename / close / switch ---------------------------------
 
+// Show a file: open a tab for it if not already open (e.g. reopening from the tree),
+// then make it active.
 function setActiveFile(name: string) {
+  if (!openTabs.value.includes(name)) openTabs.value = [...openTabs.value, name];
   activeFileName.value = name;
 }
 
-// Add a fresh editable file (unique name) seeded with just the package clause,
-// and focus it so canvas-created nodes land there.
+// Add a fresh editable file (unique name) seeded with just the package clause, open
+// its tab, and focus it so canvas-created nodes land there.
 function addFile() {
   const taken = new Set(files.value.map((f) => f.name));
   let name = "file.cue";
   let k = 2;
   while (taken.has(name)) name = `file_${k++}.cue`;
   files.value.push({ name, text: "package main\n" });
+  openTabs.value = [...openTabs.value, name];
   activeFileName.value = name;
 }
 
@@ -105,6 +128,7 @@ function renameFile(oldName: string, newName: string) {
     const { [oldName]: base, ...rest } = savedText.value;
     savedText.value = { ...rest, [newName]: base };
   }
+  openTabs.value = openTabs.value.map((n) => (n === oldName ? newName : n));
   if (activeFileName.value === oldName) activeFileName.value = newName;
   for (const node of diagram.value.nodes) {
     if (node.sourceFile === oldName) node.sourceFile = newName;
@@ -115,18 +139,33 @@ function renameFile(oldName: string, newName: string) {
   void runEval();
 }
 
-// Close a file (never the last one). Its nodes leave the unified diagram on the
-// next eval.
+// Close a tab (never the last open one). The file stays in `files`, so it remains
+// in the tree and in the evaluated module and can be reopened from the tree; only
+// the tab view is dropped. Removing a file for real is a git delete on disk.
 function closeFile(name: string) {
-  if (files.value.length <= 1) return;
+  if (openTabs.value.length <= 1) return;
+  openTabs.value = openTabs.value.filter((n) => n !== name);
+  if (activeFileName.value === name) activeFileName.value = openTabs.value[0] ?? primaryFile();
+}
+
+// Drop a file from the client set entirely, after it has been deleted on disk.
+// Removes it from the project files, its open tab, and its saved baseline, and
+// re-points the active file if it was showing. The on-disk delete and re-eval are
+// the caller's job (useCueSync.deleteFile).
+export function removeFile(name: string) {
   files.value = files.value.filter((f) => f.name !== name);
-  if (activeFileName.value === name) activeFileName.value = primaryFile();
-  void runEval();
+  openTabs.value = openTabs.value.filter((n) => n !== name);
+  if (name in savedText.value) {
+    const { [name]: _removed, ...rest } = savedText.value;
+    savedText.value = rest;
+  }
+  if (activeFileName.value === name) activeFileName.value = openTabs.value[0] ?? primaryFile();
 }
 
 export function useEditorFiles() {
   return {
     files,
+    openFiles,
     activeFileName,
     activeText,
     savedText,

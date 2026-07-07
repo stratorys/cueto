@@ -16,6 +16,7 @@
 import { nextTick, ref } from "vue";
 import type { Diagnostic, Hint } from "../api";
 import {
+  deleteWorkspaceFile,
   evalFiles,
   formatCue,
   fromEval,
@@ -25,6 +26,7 @@ import {
   rewriteFile,
   saveWorkspaceFile,
 } from "../api";
+import { confirmDialog } from "./useModal";
 import type { EditorFile } from "../model";
 import { CANVAS_SENTINEL, canvasBlock, edgesBody, nodeBody } from "../mapping";
 import { useDiagram } from "../useDiagram";
@@ -34,9 +36,11 @@ import {
   files,
   isDirty,
   newNodeOwner,
+  openAllTabs,
   ownerOf,
   primaryFile,
   provenance,
+  removeFile,
   snapshotSaved,
 } from "./useEditorFiles";
 import { isAutoLayout, layoutAuto, rebuildGraph } from "./useGraphView";
@@ -281,6 +285,7 @@ export async function loadProject() {
     set.push({ name: "main.cue", text: "package main\n" });
   }
   files.value = set;
+  openAllTabs(set.map((f) => f.name));
   workspaceBaseVersion.value = bases;
   activeFileName.value = set[0].name;
   snapshotSaved();
@@ -318,6 +323,36 @@ async function save() {
   snapshotSaved();
 }
 
+// Delete a file from the project after a danger confirm. It removes the real file on
+// disk (git is the recovery path for a committed file; cueto never commits) then
+// drops it from the client set and re-evaluates so its nodes leave the diagram. A
+// transport failure surfaces in the error pane and nothing is removed client-side.
+async function deleteFile(name: string) {
+  if (!hasProject()) return;
+  const ok = await confirmDialog({
+    title: `Delete ${name}?`,
+    message: "This deletes the file from the project on disk. If it was committed, recover it with git.",
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
+  // A file that was never saved exists only in the client (no base token), so there
+  // is nothing on disk to delete - skip the API and just drop it. An on-disk file is
+  // deleted for real, and a genuine failure surfaces rather than removing it locally.
+  if (name in workspaceBaseVersion.value) {
+    const result = await deleteWorkspaceFile(name);
+    if (!result.ok) {
+      evalError.value = result.error;
+      diagnostics.value = result.diagnostics;
+      return;
+    }
+  }
+  removeFile(name);
+  const { [name]: _removed, ...restBases } = workspaceBaseVersion.value;
+  workspaceBaseVersion.value = restBases;
+  await runEval();
+}
+
 // Reformat the CUE text in place via `cue fmt`. Semantics are unchanged, so no
 // re-eval is triggered; a parse error surfaces in the error pane.
 async function format() {
@@ -347,6 +382,7 @@ export function useCueSync() {
     onCueEdit,
     save,
     format,
+    deleteFile,
     saveState,
     loadProject,
   };
