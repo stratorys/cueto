@@ -112,7 +112,8 @@ knowledge: {
 	}
 	checks: {catalogComplete: true}
 }
-`,
+
+	`,
 	})
 	compiler := New(evaluation.New("", time.Second, 1<<20))
 
@@ -137,5 +138,59 @@ knowledge: {
 	}
 	if len(got.Catalog.Checks) != 1 || !got.Catalog.Checks[0].Value {
 		t.Fatalf("checks=%+v, want catalogComplete=true", got.Catalog.Checks)
+	}
+}
+
+func TestRuntimeServesCatalogDomainsQueriesEvaluationsAndHealth(t *testing.T) {
+	dir := testModule(t, map[string]string{
+		"data.cue": `package main
+
+customers: [ID=string]: {name: string}
+customers: {acme: {name: "Acme"}}
+let customerCollection = customers
+
+discountInput: {customer: "acme"}
+discountResult: {discount: 0.2}
+knowledge: {
+	metadata: {title: "Company"}
+	domains: customers: {collection: customerCollection}
+	evaluations: discount: {
+		description: "Discount for a customer"
+		input: discountInput
+		output: discountResult
+	}
+}
+`,
+	})
+	runtime := NewRuntime(New(evaluation.New("", time.Second, 1<<20)))
+	project := ProjectRef{ModuleDir: dir}
+
+	catalog, err := runtime.Catalog(context.Background(), project)
+	if err != nil || len(catalog.Domains) != 1 || catalog.Domains[0].Name != "customers" {
+		t.Fatalf("Catalog = %+v, %v", catalog, err)
+	}
+	description, err := runtime.Describe(context.Background(), project, "customers")
+	if err != nil || len(description.Members) != 1 || description.Members[0] != "acme" {
+		t.Fatalf("Describe = %+v, %v", description, err)
+	}
+	got, err := runtime.Get(context.Background(), project, "customers", "acme")
+	if err != nil || string(got) != `{"name":"Acme"}` {
+		t.Fatalf("Get = %s, %v", got, err)
+	}
+	query, err := runtime.Query(context.Background(), project, Query{Expression: "customers.acme.name"})
+	if err != nil || string(query.Result) != `"Acme"` || len(query.Diagnostics) != 0 {
+		t.Fatalf("Query = %+v, %v", query, err)
+	}
+	evaluation, err := runtime.Evaluate(context.Background(), project, EvaluationRequest{Name: "discount"})
+	if err != nil || string(evaluation.Output) != `{"discount":0.2}` {
+		t.Fatalf("Evaluate = %+v, %v", evaluation, err)
+	}
+	provenance, err := runtime.Provenance(context.Background(), project, "customers")
+	if err != nil || len(provenance.Provenance.Entries) == 0 {
+		t.Fatalf("Provenance = %+v, %v", provenance, err)
+	}
+	health, err := runtime.Health(context.Background(), project)
+	if err != nil || !health.Valid {
+		t.Fatalf("Health = %+v, %v", health, err)
 	}
 }
