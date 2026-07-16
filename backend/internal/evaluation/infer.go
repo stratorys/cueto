@@ -88,6 +88,26 @@ type registry struct {
 	keys    []string
 }
 
+// RegistryInfo is the diagram-independent shape discovery result shared with
+// the knowledge compiler. A registry is a top-level open-label struct whose
+// members conform to a struct pattern; no domain vocabulary is assumed.
+type RegistryInfo struct {
+	Name    string
+	Members []string
+}
+
+// DiscoverRegistries exposes the existing structural registry detector without
+// exposing its diagram projection types. It keeps implicit knowledge discovery
+// and inferred diagram discovery grounded in exactly the same CUE shape rule.
+func DiscoverRegistries(project cue.Value) []RegistryInfo {
+	registries := detectRegistries(project)
+	result := make([]RegistryInfo, 0, len(registries))
+	for _, registry := range registries {
+		result = append(result, RegistryInfo{Name: registry.field, Members: append([]string(nil), registry.keys...)})
+	}
+	return result
+}
+
 // inferredViewName is the name of each derived view, shown in the frontend switcher.
 // The model view (registries as types, drawn as tables) is the default; the instances
 // view draws each concrete member as a node. Both are derived from the same detection.

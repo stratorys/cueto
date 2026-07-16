@@ -79,3 +79,63 @@ func TestCompileOverlaysAndSelectsPackage(t *testing.T) {
 		t.Fatal("overlay must contribute to revision")
 	}
 }
+
+func TestCompileDiscoversExplicitAndImplicitKnowledge(t *testing.T) {
+	dir := testModule(t, map[string]string{
+		"data.cue": `package main
+
+#Customer: {name: string}
+customers: [ID=string]: #Customer
+customers: {acme: {name: "Acme"}}
+let customersCollection = customers
+
+products: [ID=string]: {sku: string}
+products: {starter: {sku: "starter"}}
+
+pricingInput: {customer: string}
+pricingResult: {discount: 0.2}
+
+knowledge: {
+	metadata: {title: "Company knowledge", description: "Canonical catalog"}
+	domains: {
+		customers: {
+			description: "Canonical customers"
+			collection: customersCollection
+		}
+	}
+	evaluations: {
+		"pricing.enterpriseDiscount": {
+			description: "Evaluate an enterprise discount"
+			input: pricingInput
+			output: pricingResult
+		}
+	}
+	checks: {catalogComplete: true}
+}
+`,
+	})
+	compiler := New(evaluation.New("", time.Second, 1<<20))
+
+	got, err := compiler.Compile(context.Background(), CompileRequest{ModuleDir: dir})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("compile diagnostics=%+v", got.Diagnostics)
+	}
+	if got.Catalog.Metadata == nil || got.Catalog.Metadata.Title != "Company knowledge" {
+		t.Fatalf("metadata=%+v, want explicit metadata", got.Catalog.Metadata)
+	}
+	if len(got.Catalog.Domains) != 2 {
+		t.Fatalf("domains=%+v, want explicit customers and inferred products", got.Catalog.Domains)
+	}
+	if got.Catalog.Domains[0].Name != "customers" || !got.Catalog.Domains[0].Explicit || got.Catalog.Domains[1].Name != "products" || got.Catalog.Domains[1].Explicit {
+		t.Fatalf("domains=%+v, want explicit customers and implicit products", got.Catalog.Domains)
+	}
+	if len(got.Catalog.Evaluations) != 1 || got.Catalog.Evaluations[0].Name != "pricing.enterpriseDiscount" {
+		t.Fatalf("evaluations=%+v, want named pricing evaluation", got.Catalog.Evaluations)
+	}
+	if len(got.Catalog.Checks) != 1 || !got.Catalog.Checks[0].Value {
+		t.Fatalf("checks=%+v, want catalogComplete=true", got.Catalog.Checks)
+	}
+}
