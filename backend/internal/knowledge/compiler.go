@@ -54,7 +54,28 @@ func (c *CueCompiler) Compile(ctx context.Context, request CompileRequest) (*Com
 		return nil, err
 	}
 	result.Catalog = catalog.(Catalog)
+	DiscoverExplicitKnowledge(value, &result.Catalog)
+	addImplicitDomains(&result.Catalog, evaluation.DiscoverRegistries(value))
 	return result, nil
+}
+
+// addImplicitDomains preserves Cueto's vocabulary-free discovery mode. An
+// explicit domain wins when it has the same name, letting metadata enrich or
+// intentionally replace an inferred registry without duplicate API entries.
+func addImplicitDomains(catalog *Catalog, registries []evaluation.RegistryInfo) {
+	explicit := make(map[string]bool, len(catalog.Domains))
+	for _, domain := range catalog.Domains {
+		if domain.Explicit {
+			explicit[domain.Name] = true
+		}
+	}
+	for _, registry := range registries {
+		if explicit[registry.Name] {
+			continue
+		}
+		catalog.Domains = append(catalog.Domains, Domain{Name: registry.Name, Key: "id"})
+	}
+	sort.Slice(catalog.Domains, func(i, j int) bool { return catalog.Domains[i].Name < catalog.Domains[j].Name })
 }
 
 func sourceFrom(request CompileRequest) evaluation.Source {
