@@ -1,3 +1,9 @@
+// cueto
+//
+// Copyright: 2026, Lucas Jahier - Stratorys
+// License: Mozilla Public License v2.0 (MPL v2.0)
+// SPDX-License-Identifier: MPL-2.0
+
 // Package knowledge defines Cueto's diagram-independent compiled knowledge
 // model. It is intentionally small in phase one: callers receive the compiled
 // CUE value plus projections that can evolve without making diagrams the core
