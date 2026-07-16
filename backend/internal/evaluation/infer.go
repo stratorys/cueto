@@ -96,6 +96,28 @@ type RegistryInfo struct {
 	Members []string
 }
 
+// RegistrySchemaInfo is the schema-level companion to RegistryInfo. It reuses
+// the same registry and relation detectors that drive inferred diagrams, making
+// it suitable for a machine-readable knowledge catalog.
+type RegistrySchemaInfo struct {
+	Name    string
+	Members []string
+	Fields  []RegistryFieldInfo
+}
+
+type RegistryFieldInfo struct {
+	Name     string
+	Type     string
+	Required bool
+	Relation *RegistryRelationInfo
+}
+
+type RegistryRelationInfo struct {
+	Domain      string
+	Cardinality string
+	Rule        string
+}
+
 // DiscoverRegistries exposes the existing structural registry detector without
 // exposing its diagram projection types. It keeps implicit knowledge discovery
 // and inferred diagram discovery grounded in exactly the same CUE shape rule.
@@ -106,6 +128,62 @@ func DiscoverRegistries(project cue.Value) []RegistryInfo {
 		result = append(result, RegistryInfo{Name: registry.field, Members: append([]string(nil), registry.keys...)})
 	}
 	return result
+}
+
+// DescribeRegistries exposes registry fields and discovered key-set/@ref
+// relations without importing diagram projection types. This is the one shared
+// structural discovery implementation for diagrams and the knowledge catalog.
+func DescribeRegistries(project cue.Value) []RegistrySchemaInfo {
+	registries := detectRegistries(project)
+	regNames := make(map[string]bool, len(registries))
+	for _, reg := range registries {
+		regNames[reg.field] = true
+	}
+	keySets := keySetDefs(project, regNames)
+	result := make([]RegistrySchemaInfo, 0, len(registries))
+	for _, reg := range registries {
+		refs := entityReferences(reg.schema, registries, keySets, regNames)
+		byField := map[string]reference{}
+		for _, ref := range refs {
+			byField[ref.field] = ref
+		}
+		info := RegistrySchemaInfo{Name: reg.field, Members: append([]string(nil), reg.keys...), Fields: []RegistryFieldInfo{}}
+		iter, err := reg.schema.Fields(cue.Optional(true))
+		if err != nil {
+			result = append(result, info)
+			continue
+		}
+		for iter.Next() {
+			sel := iter.Selector()
+			if !sel.IsString() {
+				continue
+			}
+			field := RegistryFieldInfo{Name: sel.Unquoted(), Type: catalogType(iter.Value()), Required: !iter.IsOptional()}
+			if ref, ok := byField[field.Name]; ok {
+				cardinality := "one"
+				if ref.list {
+					cardinality = "many"
+				}
+				field.Relation = &RegistryRelationInfo{Domain: ref.targetField, Cardinality: cardinality, Rule: ref.rule}
+			}
+			info.Fields = append(info.Fields, field)
+		}
+		sort.Slice(info.Fields, func(i, j int) bool { return info.Fields[i].Name < info.Fields[j].Name })
+		result = append(result, info)
+	}
+	return result
+}
+
+func catalogType(value cue.Value) string {
+	kind := value.IncompleteKind()
+	if kind&cue.ListKind != 0 {
+		element := value.LookupPath(cue.MakePath(cue.AnyIndex))
+		if element.Exists() {
+			return "list<" + catalogType(element) + ">"
+		}
+		return "list<value>"
+	}
+	return kindLabel(value)
 }
 
 // inferredViewName is the name of each derived view, shown in the frontend switcher.
