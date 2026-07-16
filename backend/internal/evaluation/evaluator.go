@@ -286,6 +286,23 @@ func (e *Engine) CompileValue(ctx context.Context, src Source) (cue.Value, []dia
 	}
 }
 
+// EncodeValue validates and encodes an already compiled value under the same
+// output limit used by Eval and EvalQuery. Generic runtime projections use this
+// instead of bypassing the evaluator with an unbounded MarshalJSON call.
+func (e *Engine) EncodeValue(value cue.Value, src Source) (json.RawMessage, []diag.Diagnostic, error) {
+	if err := value.Validate(cue.Concrete(true)); err != nil {
+		return nil, diag.From(err, src.Dir, diag.KindIncomplete), nil
+	}
+	out, err := value.MarshalJSON()
+	if err != nil {
+		return nil, diag.From(err, src.Dir, diag.KindIncomplete), nil
+	}
+	if len(out) > e.maxOutputBytes {
+		return nil, nil, ErrOutputTooLarge
+	}
+	return out, nil, nil
+}
+
 // buildValue is the diagram-independent half of build. Unlike build it neither
 // discovers views nor requires a value to be concrete: a valid abstract schema
 // is useful compiled knowledge in its own right.

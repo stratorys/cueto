@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 
 	"cuelang.org/go/cue"
@@ -57,6 +58,10 @@ func (c *CueCompiler) Compile(ctx context.Context, request CompileRequest) (*Com
 	DiscoverExplicitKnowledge(value, &result.Catalog)
 	addImplicitDomains(&result.Catalog, evaluation.DiscoverRegistries(value))
 	return result, nil
+}
+
+func (c *CueCompiler) encode(value cue.Value, request CompileRequest) (json.RawMessage, []Diagnostic, error) {
+	return c.engine.EncodeValue(value, sourceFrom(request))
 }
 
 // addImplicitDomains preserves Cueto's vocabulary-free discovery mode. An

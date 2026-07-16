@@ -32,6 +32,7 @@ import (
 
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
+	"github.com/stratorys/cueto/backend/internal/knowledge"
 )
 
 // CLI evaluation bounds. Generous next to the server's per-request caps: a CI run is
@@ -100,12 +101,13 @@ func runVet(args []string) error {
 	if err != nil {
 		return err
 	}
-	diags, err := engine.Vet(context.Background(), src)
+	runtime := knowledge.NewRuntime(knowledge.New(engine))
+	health, err := runtime.Health(context.Background(), knowledge.ProjectRef{ModuleDir: src.Dir, Package: src.Package})
 	if err != nil {
 		return err
 	}
-	if len(diags) > 0 {
-		return errors.New(formatDiags("module is not valid:", diags))
+	if !health.Valid {
+		return errors.New(formatDiags("module is not valid:", health.Diagnostics))
 	}
 	fmt.Println("OK: module is valid.")
 	return nil
