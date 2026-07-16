@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,6 +259,53 @@ func (e *Engine) EvalQuery(ctx context.Context, src Source, expr string) (json.R
 		return nil, nil, ErrOutputTooLarge
 	}
 	return out, nil, nil
+}
+
+// CompileValue builds one package from a module without imposing any diagram
+// schema or concreteness requirement. It is the generic compiler seam used by
+// the knowledge package. It deliberately reuses the evaluator's module loader,
+// overlay guard, deadline, panic recovery, and diagnostic scrubbing rather than
+// maintaining a second CUE loading path.
+func (e *Engine) CompileValue(ctx context.Context, src Source) (cue.Value, []diag.Diagnostic, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+
+	done := make(chan buildResult, 1)
+	go func() {
+		done <- recoverToResult(func() buildResult {
+			value, diags, err := e.buildValue(src)
+			return buildResult{root: value, diags: diags, err: err}
+		})
+	}()
+
+	select {
+	case <-ctx.Done():
+		return cue.Value{}, nil, ErrTimeout
+	case r := <-done:
+		return r.root, r.diags, r.err
+	}
+}
+
+// buildValue is the diagram-independent half of build. Unlike build it neither
+// discovers views nor requires a value to be concrete: a valid abstract schema
+// is useful compiled knowledge in its own right.
+func (e *Engine) buildValue(src Source) (cue.Value, []diag.Diagnostic, error) {
+	instances, diags := e.loadModule(src, "")
+	if diags != nil {
+		return cue.Value{}, diags, nil
+	}
+	root := packageInstance(instances, src.Dir, src.Package)
+	if root == nil {
+		return cue.Value{}, nil, errors.New("no CUE instance loaded for requested package")
+	}
+	if err := root.Err; err != nil {
+		return cue.Value{}, diag.From(err, src.Dir, diag.KindParse), nil
+	}
+	value := cuecontext.New().BuildInstance(root)
+	if err := value.Err(); err != nil {
+		return cue.Value{}, diag.From(err, src.Dir, diag.KindSchema), nil
+	}
+	return value, nil, nil
 }
 
 type exprResult struct {
@@ -550,10 +598,32 @@ func defaultView(views []view) int {
 // the project explicitly rather than trust slice order. A nil result means the
 // module has no package at its root.
 func rootInstance(instances []*build.Instance, dir string) *build.Instance {
+	return packageInstance(instances, dir, "")
+}
+
+// packageInstance selects either the module-root package or a package directory
+// relative to it. The relative-path check prevents a package selector from
+// escaping the already trusted module root.
+func packageInstance(instances []*build.Instance, dir, pkg string) *build.Instance {
 	want, err := filepath.Abs(dir)
 	if err != nil {
 		return nil
 	}
+	if pkg != "" && pkg != "." {
+		if filepath.IsAbs(pkg) {
+			return nil
+		}
+		want = filepath.Join(want, pkg)
+		root, err := filepath.Abs(dir)
+		if err != nil {
+			return nil
+		}
+		rel, err := filepath.Rel(root, want)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	want = filepath.Clean(want)
 	for _, inst := range instances {
 		if filepath.Clean(inst.Dir) == want {
 			return inst

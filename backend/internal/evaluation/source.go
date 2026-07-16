@@ -22,7 +22,11 @@ import "github.com/stratorys/cueto/backend/internal/domain"
 // a name that no longer matches also falls back to the default, so a stale client
 // selection never fails the eval.
 type Source struct {
-	Dir     string        // module root (contains cue.mod)
+	Dir string // module root (contains cue.mod)
+	// Package optionally selects a package below Dir for generic compilation. An
+	// empty value selects the module-root package, preserving the diagram
+	// evaluator's existing behaviour.
+	Package string
 	Overlay []domain.File // unsaved client buffers layered over Dir
 	View    string        // discovered view to render; empty = default
 }
