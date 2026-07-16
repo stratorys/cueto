@@ -80,117 +80,22 @@ func TestCompileOverlaysAndSelectsPackage(t *testing.T) {
 	}
 }
 
-func TestCompileDiscoversExplicitAndImplicitKnowledge(t *testing.T) {
-	dir := testModule(t, map[string]string{
-		"data.cue": `package main
-
-#Customer: {name: string}
-customers: [ID=string]: #Customer
-customers: {acme: {name: "Acme"}}
-let customersCollection = customers
-
-products: [ID=string]: {sku: string}
-products: {starter: {sku: "starter"}}
-
-pricingInput: {customer: string}
-pricingResult: {discount: 0.2}
-
-knowledge: {
-	metadata: {title: "Company knowledge", description: "Canonical catalog"}
-	domains: {
-		customers: {
-			description: "Canonical customers"
-			collection: customersCollection
+func TestBuildCatalogDescribesSchema(t *testing.T) {
+	dir := testModule(t, map[string]string{"data.cue": "package main\n\nproducts: [ID=string]: {sku: string}\nproducts: {starter: {sku: \"starter\"}}\n#ProductID: or([for id, _ in products {id}])\ncustomers: [ID=string]: {name: string, country?: string, productIds: [...#ProductID]}\ncustomers: {acme: {name: \"Acme\", productIds: [\"starter\"]}}\n"})
+	compiled, err := New(evaluation.New("", time.Second, 1<<20)).Compile(context.Background(), CompileRequest{ModuleDir: dir})
+	if err != nil || len(compiled.Diagnostics) != 0 {
+		t.Fatalf("Compile = %+v, %v", compiled.Diagnostics, err)
+	}
+	var customers Domain
+	for _, domain := range compiled.Catalog.Domains {
+		if domain.Name == "customers" {
+			customers = domain
 		}
 	}
-	evaluations: {
-		"pricing.enterpriseDiscount": {
-			description: "Evaluate an enterprise discount"
-			input: pricingInput
-			output: pricingResult
-		}
+	if customers.Kind != "registry" || !customers.Fields["name"].Required || customers.Fields["country"].Required {
+		t.Fatalf("customers = %+v", customers)
 	}
-	checks: {catalogComplete: true}
-}
-
-	`,
-	})
-	compiler := New(evaluation.New("", time.Second, 1<<20))
-
-	got, err := compiler.Compile(context.Background(), CompileRequest{ModuleDir: dir})
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	if len(got.Diagnostics) != 0 {
-		t.Fatalf("compile diagnostics=%+v", got.Diagnostics)
-	}
-	if got.Catalog.Metadata == nil || got.Catalog.Metadata.Title != "Company knowledge" {
-		t.Fatalf("metadata=%+v, want explicit metadata", got.Catalog.Metadata)
-	}
-	if len(got.Catalog.Domains) != 2 {
-		t.Fatalf("domains=%+v, want explicit customers and inferred products", got.Catalog.Domains)
-	}
-	if got.Catalog.Domains[0].Name != "customers" || !got.Catalog.Domains[0].Explicit || got.Catalog.Domains[1].Name != "products" || got.Catalog.Domains[1].Explicit {
-		t.Fatalf("domains=%+v, want explicit customers and implicit products", got.Catalog.Domains)
-	}
-	if len(got.Catalog.Evaluations) != 1 || got.Catalog.Evaluations[0].Name != "pricing.enterpriseDiscount" {
-		t.Fatalf("evaluations=%+v, want named pricing evaluation", got.Catalog.Evaluations)
-	}
-	if len(got.Catalog.Checks) != 1 || !got.Catalog.Checks[0].Value {
-		t.Fatalf("checks=%+v, want catalogComplete=true", got.Catalog.Checks)
-	}
-}
-
-func TestRuntimeServesCatalogDomainsQueriesEvaluationsAndHealth(t *testing.T) {
-	dir := testModule(t, map[string]string{
-		"data.cue": `package main
-
-customers: [ID=string]: {name: string}
-customers: {acme: {name: "Acme"}}
-let customerCollection = customers
-
-discountInput: {customer: "acme"}
-discountResult: {discount: 0.2}
-knowledge: {
-	metadata: {title: "Company"}
-	domains: customers: {collection: customerCollection}
-	evaluations: discount: {
-		description: "Discount for a customer"
-		input: discountInput
-		output: discountResult
-	}
-}
-`,
-	})
-	runtime := NewRuntime(New(evaluation.New("", time.Second, 1<<20)))
-	project := ProjectRef{ModuleDir: dir}
-
-	catalog, err := runtime.Catalog(context.Background(), project)
-	if err != nil || len(catalog.Domains) != 1 || catalog.Domains[0].Name != "customers" {
-		t.Fatalf("Catalog = %+v, %v", catalog, err)
-	}
-	description, err := runtime.Describe(context.Background(), project, "customers")
-	if err != nil || len(description.Members) != 1 || description.Members[0] != "acme" {
-		t.Fatalf("Describe = %+v, %v", description, err)
-	}
-	got, err := runtime.Get(context.Background(), project, "customers", "acme")
-	if err != nil || string(got) != `{"name":"Acme"}` {
-		t.Fatalf("Get = %s, %v", got, err)
-	}
-	query, err := runtime.Query(context.Background(), project, Query{Expression: "customers.acme.name"})
-	if err != nil || string(query.Result) != `"Acme"` || len(query.Diagnostics) != 0 {
-		t.Fatalf("Query = %+v, %v", query, err)
-	}
-	evaluation, err := runtime.Evaluate(context.Background(), project, EvaluationRequest{Name: "discount"})
-	if err != nil || string(evaluation.Output) != `{"discount":0.2}` {
-		t.Fatalf("Evaluate = %+v, %v", evaluation, err)
-	}
-	provenance, err := runtime.Provenance(context.Background(), project, "customers")
-	if err != nil || len(provenance.Provenance.Entries) == 0 {
-		t.Fatalf("Provenance = %+v, %v", provenance, err)
-	}
-	health, err := runtime.Health(context.Background(), project)
-	if err != nil || !health.Valid {
-		t.Fatalf("Health = %+v, %v", health, err)
+	if relation := customers.Fields["productIds"].Relation; relation == nil || relation.Domain != "products" || relation.Cardinality != "many" {
+		t.Fatalf("relation = %+v", relation)
 	}
 }

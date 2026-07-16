@@ -4,53 +4,121 @@ import (
 	"sort"
 
 	"cuelang.org/go/cue"
+
+	"github.com/stratorys/cueto/backend/internal/evaluation"
 )
 
 // Catalog is the first generic projection: top-level declarations exposed by a
 // compiled package. It deliberately contains no diagram concepts.
 type Catalog struct {
-	Entries     []CatalogEntry
-	Metadata    *Metadata
-	Domains     []Domain
-	Evaluations []NamedEvaluation
-	Checks      []Check
+	Entries     []CatalogEntry    `json:"entries"`
+	Metadata    *Metadata         `json:"metadata,omitempty"`
+	Domains     []Domain          `json:"domains"`
+	Evaluations []NamedEvaluation `json:"evaluations"`
+	Checks      []Check           `json:"checks"`
 }
 
 type CatalogEntry struct {
-	Name string
-	Kind string
+	Name string `json:"name"`
+	Kind string `json:"kind"`
 }
 
 // Metadata is optional module-level context supplied through knowledge.metadata.
 type Metadata struct {
-	Title       string
-	Description string
-	Revision    string
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Revision    string `json:"revision,omitempty"`
 }
 
 // Domain is either explicitly declared under knowledge.domains or inferred from
 // Cueto's existing open-label registry shape. Collection retains the typed CUE
 // value for downstream projections without forcing a lossy JSON representation.
 type Domain struct {
-	Name        string
-	Description string
-	Key         string
-	Explicit    bool
-	Collection  cue.Value
+	Name        string           `json:"name"`
+	Path        string           `json:"path"`
+	Kind        string           `json:"kind"`
+	Description string           `json:"description,omitempty"`
+	Key         string           `json:"key"`
+	KeyType     string           `json:"keyType"`
+	Explicit    bool             `json:"explicit"`
+	Fields      map[string]Field `json:"fields"`
+	Collection  cue.Value        `json:"-"`
+}
+
+type Field struct {
+	Type     string    `json:"type"`
+	Required bool      `json:"required"`
+	Relation *Relation `json:"relation,omitempty"`
+}
+
+type Relation struct {
+	Domain      string `json:"domain"`
+	Cardinality string `json:"cardinality"`
+	Rule        string `json:"rule,omitempty"`
 }
 
 // NamedEvaluation describes an optional, declared agent-facing operation.
 // Input and Output stay typed CUE values for an MCP/HTTP adapter to marshal.
 type NamedEvaluation struct {
-	Name        string
-	Description string
-	Input       cue.Value
-	Output      cue.Value
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	InputSchema  Schema    `json:"inputSchema"`
+	OutputSchema Schema    `json:"outputSchema"`
+	Input        cue.Value `json:"-"`
+	Output       cue.Value `json:"-"`
+}
+
+type Schema struct {
+	Type   string           `json:"type"`
+	Fields map[string]Field `json:"fields,omitempty"`
 }
 
 type Check struct {
-	Name  string
-	Value bool
+	Name  string `json:"name"`
+	Value bool   `json:"value"`
+}
+
+// BuildCatalog is the schema-catalog compiler pass. It overlays optional
+// explicit metadata on the same registry/relation discovery used by diagrams.
+func BuildCatalog(root cue.Value) (Catalog, error) {
+	projected, err := (KnowledgeCatalogProjection{}).Discover(root)
+	if err != nil {
+		return Catalog{}, err
+	}
+	catalog := projected.(Catalog)
+	DiscoverExplicitKnowledge(root, &catalog)
+	explicit := map[string]int{}
+	for i, domain := range catalog.Domains {
+		if domain.Explicit {
+			explicit[domain.Name] = i
+		}
+	}
+	for _, registry := range evaluation.DescribeRegistries(root) {
+		domain := domainFromRegistry(registry)
+		if i, ok := explicit[registry.Name]; ok {
+			domain.Description = catalog.Domains[i].Description
+			domain.Key = catalog.Domains[i].Key
+			domain.Explicit = true
+			domain.Collection = catalog.Domains[i].Collection
+			catalog.Domains[i] = domain
+			continue
+		}
+		catalog.Domains = append(catalog.Domains, domain)
+	}
+	sort.Slice(catalog.Domains, func(i, j int) bool { return catalog.Domains[i].Name < catalog.Domains[j].Name })
+	return catalog, nil
+}
+
+func domainFromRegistry(registry evaluation.RegistrySchemaInfo) Domain {
+	fields := make(map[string]Field, len(registry.Fields))
+	for _, field := range registry.Fields {
+		var relation *Relation
+		if field.Relation != nil {
+			relation = &Relation{Domain: field.Relation.Domain, Cardinality: field.Relation.Cardinality, Rule: field.Relation.Rule}
+		}
+		fields[field.Name] = Field{Type: field.Type, Required: field.Required, Relation: relation}
+	}
+	return Domain{Name: registry.Name, Path: registry.Name, Kind: "registry", Key: "id", KeyType: "string", Fields: fields}
 }
 
 // KnowledgeCatalogProjection discovers a stable top-level catalog from any CUE
@@ -102,8 +170,12 @@ func DiscoverExplicitKnowledge(value cue.Value, catalog *Catalog) {
 				}
 				catalog.Domains = append(catalog.Domains, Domain{
 					Name:        it.Selector().Unquoted(),
+					Path:        it.Selector().Unquoted(),
+					Kind:        "declared",
 					Description: concreteString(entry.LookupPath(cue.ParsePath("description"))),
 					Key:         key,
+					KeyType:     "string",
+					Fields:      map[string]Field{},
 					Explicit:    true,
 					Collection:  entry.LookupPath(cue.ParsePath("collection")),
 				})
@@ -116,10 +188,12 @@ func DiscoverExplicitKnowledge(value cue.Value, catalog *Catalog) {
 			for it.Next() {
 				entry := it.Value()
 				catalog.Evaluations = append(catalog.Evaluations, NamedEvaluation{
-					Name:        it.Selector().Unquoted(),
-					Description: concreteString(entry.LookupPath(cue.ParsePath("description"))),
-					Input:       entry.LookupPath(cue.ParsePath("input")),
-					Output:      entry.LookupPath(cue.ParsePath("output")),
+					Name:         it.Selector().Unquoted(),
+					Description:  concreteString(entry.LookupPath(cue.ParsePath("description"))),
+					InputSchema:  schemaFor(entry.LookupPath(cue.ParsePath("input"))),
+					OutputSchema: schemaFor(entry.LookupPath(cue.ParsePath("output"))),
+					Input:        entry.LookupPath(cue.ParsePath("input")),
+					Output:       entry.LookupPath(cue.ParsePath("output")),
 				})
 			}
 		}
@@ -146,4 +220,47 @@ func concreteString(value cue.Value) string {
 		return ""
 	}
 	return result
+}
+
+func schemaFor(value cue.Value) Schema {
+	schema := Schema{Type: typeFor(value)}
+	if value.IncompleteKind()&cue.StructKind == 0 {
+		return schema
+	}
+	schema.Fields = map[string]Field{}
+	it, err := value.Fields(cue.Optional(true))
+	if err != nil {
+		return schema
+	}
+	for it.Next() {
+		if it.Selector().IsString() {
+			schema.Fields[it.Selector().Unquoted()] = Field{Type: typeFor(it.Value()), Required: !it.IsOptional()}
+		}
+	}
+	return schema
+}
+
+func typeFor(value cue.Value) string {
+	kind := value.IncompleteKind()
+	if kind&cue.ListKind != 0 {
+		element := value.LookupPath(cue.MakePath(cue.AnyIndex))
+		if element.Exists() {
+			return "list<" + typeFor(element) + ">"
+		}
+		return "list<value>"
+	}
+	switch {
+	case kind&cue.StringKind != 0:
+		return "string"
+	case kind&cue.IntKind != 0:
+		return "int"
+	case kind&(cue.FloatKind|cue.NumberKind) != 0:
+		return "number"
+	case kind&cue.BoolKind != 0:
+		return "bool"
+	case kind&cue.StructKind != 0:
+		return "struct"
+	default:
+		return "value"
+	}
 }
