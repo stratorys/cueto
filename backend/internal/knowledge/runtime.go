@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -25,14 +26,33 @@ type ProjectRef struct {
 	Overlay   map[string][]byte
 }
 
-// Query is an ad-hoc CUE expression evaluated against a compiled module.
+// Query is the safe, data-oriented agent query model. It never accepts CUE
+// source: records are exported and filtered in Go against the catalog.
 type Query struct {
-	Expression string
+	Domain string      `json:"domain"`
+	Select []string    `json:"select"`
+	Where  []Predicate `json:"where,omitempty"`
+	Limit  int         `json:"limit,omitempty"`
+	Expand []Expansion `json:"expand,omitempty"`
+}
+
+type Predicate struct {
+	Field    string `json:"field"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value,omitempty"`
+}
+
+// Expansion is reserved for bounded relation expansion. The initial safe query
+// implementation rejects it rather than silently issuing unbounded graph walks.
+type Expansion struct {
+	Field  string   `json:"field"`
+	Select []string `json:"select,omitempty"`
+	Limit  int      `json:"limit,omitempty"`
 }
 
 type QueryResult struct {
-	Result      json.RawMessage
-	Diagnostics []Diagnostic
+	Result json.RawMessage `json:"result"`
+	Count  int             `json:"count"`
 }
 
 // DomainDescription gives agents a stable description without exposing the
@@ -124,14 +144,8 @@ func (r *CueRuntime) Get(ctx context.Context, project ProjectRef, domain, key st
 	if err != nil {
 		return nil, err
 	}
-	collection := compiled.Value.LookupPath(cue.MakePath(cue.Str(domain)))
-	for _, candidate := range compiled.Catalog.Domains {
-		if candidate.Name == domain && candidate.Explicit && candidate.Collection.Exists() {
-			collection = candidate.Collection
-			break
-		}
-	}
-	if !collection.Exists() {
+	collection, ok := domainCollection(compiled, domain)
+	if !ok {
 		return nil, fmt.Errorf("unknown domain %q", domain)
 	}
 	value := collection.LookupPath(cue.MakePath(cue.Str(key)))
@@ -149,8 +163,198 @@ func (r *CueRuntime) Get(ctx context.Context, project ProjectRef, domain, key st
 }
 
 func (r *CueRuntime) Query(ctx context.Context, project ProjectRef, query Query) (QueryResult, error) {
-	result, diagnostics, err := r.compiler.Query(ctx, compileRequest(project), query.Expression)
-	return QueryResult{Result: result, Diagnostics: diagnostics}, err
+	if query.Domain == "" {
+		return QueryResult{}, fmt.Errorf("query domain is required")
+	}
+	if len(query.Expand) > 0 {
+		return QueryResult{}, fmt.Errorf("relation expansion is not available in the initial safe query API")
+	}
+	compiled, err := r.compile(ctx, project)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	var domain Domain
+	found := false
+	for _, candidate := range compiled.Catalog.Domains {
+		if candidate.Name == query.Domain {
+			domain, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return QueryResult{}, fmt.Errorf("unknown domain %q", query.Domain)
+	}
+	if err := validateQuery(domain, query); err != nil {
+		return QueryResult{}, err
+	}
+	limit := query.Limit
+	if limit == 0 {
+		limit = 100
+	}
+	if limit < 0 || limit > 1000 {
+		return QueryResult{}, fmt.Errorf("query limit must be between 1 and 1000")
+	}
+	collection, ok := domainCollection(compiled, query.Domain)
+	if !ok {
+		return QueryResult{}, fmt.Errorf("unknown domain %q", query.Domain)
+	}
+	raw, diagnostics, err := r.compiler.encode(collection, compileRequest(project))
+	if err != nil {
+		return QueryResult{}, err
+	}
+	if len(diagnostics) > 0 {
+		return QueryResult{}, &DiagnosticError{Diagnostics: diagnostics}
+	}
+	var records map[string]map[string]any
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return QueryResult{}, fmt.Errorf("domain %q is not a record collection", query.Domain)
+	}
+	keys := make([]string, 0, len(records))
+	for key := range records {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]map[string]any, 0, min(limit, len(keys)))
+	for _, key := range keys {
+		record := records[key]
+		if !matches(record, query.Where) {
+			continue
+		}
+		selected := map[string]any{"id": key}
+		if len(query.Select) == 0 {
+			for field, value := range record {
+				selected[field] = value
+			}
+		} else {
+			for _, field := range query.Select {
+				if field != "id" {
+					selected[field] = record[field]
+				}
+			}
+		}
+		result = append(result, selected)
+		if len(result) == limit {
+			break
+		}
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return QueryResult{Result: encoded, Count: len(result)}, nil
+}
+
+// Repl retains trusted arbitrary CUE evaluation for developer tooling. It is not
+// part of Runtime, so MCP and other agent transports default to Query instead.
+func (r *CueRuntime) Repl(ctx context.Context, project ProjectRef, expression string) (json.RawMessage, []Diagnostic, error) {
+	return r.compiler.Query(ctx, compileRequest(project), expression)
+}
+
+func domainCollection(compiled *CompiledKnowledge, name string) (cue.Value, bool) {
+	collection := compiled.Value.LookupPath(cue.MakePath(cue.Str(name)))
+	for _, candidate := range compiled.Catalog.Domains {
+		if candidate.Name == name && candidate.Explicit && candidate.Collection.Exists() {
+			collection = candidate.Collection
+			break
+		}
+	}
+	return collection, collection.Exists()
+}
+
+func validateQuery(domain Domain, query Query) error {
+	known := func(field string) bool { _, ok := domain.Fields[field]; return ok }
+	for _, field := range query.Select {
+		if field != "id" && !known(field) {
+			return fmt.Errorf("unknown field %q for domain %q", field, domain.Name)
+		}
+	}
+	for _, predicate := range query.Where {
+		if !known(predicate.Field) {
+			return fmt.Errorf("unknown field %q for domain %q", predicate.Field, domain.Name)
+		}
+		switch predicate.Operator {
+		case "eq", "neq", "in", "exists", "gt", "gte", "lt", "lte":
+		default:
+			return fmt.Errorf("unsupported query operator %q", predicate.Operator)
+		}
+		if predicate.Operator == "in" {
+			if _, ok := predicate.Value.([]any); !ok {
+				return fmt.Errorf("operator in requires an array value")
+			}
+		}
+	}
+	return nil
+}
+
+func matches(record map[string]any, predicates []Predicate) bool {
+	for _, predicate := range predicates {
+		value, exists := record[predicate.Field]
+		switch predicate.Operator {
+		case "exists":
+			if !exists || value == nil {
+				return false
+			}
+		case "eq":
+			if !exists || !reflect.DeepEqual(value, predicate.Value) {
+				return false
+			}
+		case "neq":
+			if exists && reflect.DeepEqual(value, predicate.Value) {
+				return false
+			}
+		case "in":
+			values, _ := predicate.Value.([]any)
+			found := false
+			for _, candidate := range values {
+				if reflect.DeepEqual(value, candidate) {
+					found = true
+					break
+				}
+			}
+			if !exists || !found {
+				return false
+			}
+		case "gt", "gte", "lt", "lte":
+			cmp, ok := compare(value, predicate.Value)
+			if !ok {
+				return false
+			}
+			if (predicate.Operator == "gt" && cmp <= 0) || (predicate.Operator == "gte" && cmp < 0) || (predicate.Operator == "lt" && cmp >= 0) || (predicate.Operator == "lte" && cmp > 0) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func compare(left, right any) (int, bool) {
+	if l, ok := left.(float64); ok {
+		r, ok := right.(float64)
+		if !ok {
+			return 0, false
+		}
+		if l < r {
+			return -1, true
+		}
+		if l > r {
+			return 1, true
+		}
+		return 0, true
+	}
+	if l, ok := left.(string); ok {
+		r, ok := right.(string)
+		if !ok {
+			return 0, false
+		}
+		if l < r {
+			return -1, true
+		}
+		if l > r {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func (r *CueRuntime) Evaluate(ctx context.Context, project ProjectRef, request EvaluationRequest) (EvaluationResult, error) {
