@@ -72,19 +72,21 @@ type DomainDescription struct {
 // by the CUE contract in phase two; parameter binding is deliberately deferred
 // until the contract defines input substitution semantics.
 type EvaluationRequest struct {
-	Name string
+	Evaluation string          `json:"evaluation"`
+	Input      json.RawMessage `json:"input"`
 }
 
 type EvaluationResult struct {
-	Name        string
-	Description string
-	Input       json.RawMessage
-	Output      json.RawMessage
+	Status     string          `json:"status"`
+	Result     json.RawMessage `json:"result"`
+	Revision   string          `json:"revision"`
+	Evaluation string          `json:"evaluation"`
 }
 
 type ProvenanceResult struct {
-	Name       string
-	Provenance Provenance
+	Name         string
+	Provenance   Provenance
+	Observations []Observation `json:"observations"`
 }
 
 // Runtime is the transport-independent knowledge service shared by CLI, HTTP,
@@ -369,26 +371,58 @@ func (r *CueRuntime) Evaluate(ctx context.Context, project ProjectRef, request E
 		return EvaluationResult{}, err
 	}
 	for _, evaluation := range compiled.Catalog.Evaluations {
-		if evaluation.Name != request.Name {
+		if evaluation.Name != request.Evaluation {
 			continue
 		}
-		input, diagnostics, err := r.compiler.encode(evaluation.Input, compileRequest(project))
+		if len(request.Input) == 0 || !json.Valid(request.Input) {
+			return EvaluationResult{}, fmt.Errorf("evaluation input must be valid JSON")
+		}
+		withInput := projectWithEvaluationInput(project, evaluation.Path, evaluation.Name, request.Input)
+		executed, err := r.compiler.Compile(ctx, compileRequest(withInput))
+		if err != nil {
+			return EvaluationResult{}, err
+		}
+		if len(executed.Diagnostics) > 0 {
+			return EvaluationResult{}, &DiagnosticError{Diagnostics: executed.Diagnostics}
+		}
+		value := evaluationValue(executed.Value, evaluation.Path, evaluation.Name, "result")
+		if !value.Exists() {
+			// Phase-two compatibility: output remains readable until callers migrate.
+			value = evaluationValue(executed.Value, evaluation.Path, evaluation.Name, "output")
+		}
+		result, diagnostics, err := r.compiler.encode(value, compileRequest(withInput))
 		if err != nil {
 			return EvaluationResult{}, err
 		}
 		if len(diagnostics) > 0 {
 			return EvaluationResult{}, &DiagnosticError{Diagnostics: diagnostics}
 		}
-		output, diagnostics, err := r.compiler.encode(evaluation.Output, compileRequest(project))
-		if err != nil {
-			return EvaluationResult{}, err
-		}
-		if len(diagnostics) > 0 {
-			return EvaluationResult{}, &DiagnosticError{Diagnostics: diagnostics}
-		}
-		return EvaluationResult{Name: evaluation.Name, Description: evaluation.Description, Input: input, Output: output}, nil
+		return EvaluationResult{Status: "success", Result: result, Revision: executed.Revision, Evaluation: evaluation.Name}, nil
 	}
-	return EvaluationResult{}, fmt.Errorf("unknown evaluation %q", request.Name)
+	return EvaluationResult{}, fmt.Errorf("unknown evaluation %q", request.Evaluation)
+}
+
+func projectWithEvaluationInput(project ProjectRef, path, name string, input json.RawMessage) ProjectRef {
+	overlay := make(map[string][]byte, len(project.Overlay)+1)
+	for name, content := range project.Overlay {
+		overlay[name] = content
+	}
+	label, _ := json.Marshal(name)
+	prefix := "evaluations"
+	if path == "knowledge.evaluations" {
+		prefix = "knowledge: evaluations"
+	}
+	overlay["cueto_evaluation_input.cue"] = []byte(fmt.Sprintf("package main\n\n%s: {%s: {input: %s}}\n", prefix, label, input))
+	project.Overlay = overlay
+	return project
+}
+
+func evaluationValue(root cue.Value, path, name, field string) cue.Value {
+	selectors := []cue.Selector{cue.Str("evaluations"), cue.Str(name), cue.Str(field)}
+	if path == "knowledge.evaluations" {
+		selectors = append([]cue.Selector{cue.Str("knowledge")}, selectors...)
+	}
+	return root.LookupPath(cue.MakePath(selectors...))
 }
 
 func (r *CueRuntime) Provenance(ctx context.Context, project ProjectRef, name string) (ProvenanceResult, error) {
@@ -411,7 +445,7 @@ func (r *CueRuntime) Provenance(ctx context.Context, project ProjectRef, name st
 		result = projection.(Provenance)
 	}
 	if name == "" {
-		return ProvenanceResult{Provenance: result}, nil
+		return ProvenanceResult{Provenance: result, Observations: compiled.Catalog.Observations}, nil
 	}
 	filtered := Provenance{Entries: []ProvenanceEntry{}}
 	for _, entry := range result.Entries {
@@ -419,10 +453,16 @@ func (r *CueRuntime) Provenance(ctx context.Context, project ProjectRef, name st
 			filtered.Entries = append(filtered.Entries, entry)
 		}
 	}
-	if len(filtered.Entries) == 0 {
+	semantic := make([]Observation, 0)
+	for _, observation := range compiled.Catalog.Observations {
+		if observation.Name == name || observation.Entity == name {
+			semantic = append(semantic, observation)
+		}
+	}
+	if len(filtered.Entries) == 0 && len(semantic) == 0 {
 		return ProvenanceResult{}, fmt.Errorf("no provenance for %q", name)
 	}
-	return ProvenanceResult{Name: name, Provenance: filtered}, nil
+	return ProvenanceResult{Name: name, Provenance: filtered, Observations: semantic}, nil
 }
 
 // sourceProvenance is declaration-level provenance from the prepared module

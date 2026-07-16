@@ -23,6 +23,7 @@ package knowledge
 
 	domains: [string]: #Domain
 	evaluations?: [string]: #Evaluation
+	observations?: [string]: #Observation
 	checks?: [string]: bool
 }
 
@@ -35,5 +36,27 @@ package knowledge
 #Evaluation: {
 	description: string
 	input:       _
-	output:      _
+	result:      _
 }
+
+// #Evaluations is the optional root-level contract for phase-six named
+// evaluations: `evaluations: knowledge.#Evaluations & { ... }`.
+#Evaluations: [string]: #Evaluation
+
+#SourceRef: {
+	kind: "file" | "uri" | "database" | "manual"
+	uri: string @uri()
+	pointer?: string
+	retrievedAt?: string
+}
+
+#Observation: {
+	entity: string
+	field: string
+	value: _
+	source: #SourceRef
+	status: "active" | "stale" | "disputed"
+	authority?: int & >=0 & <=100
+}
+
+#Observations: [string]: #Observation

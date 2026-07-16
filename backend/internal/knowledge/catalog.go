@@ -7,6 +7,7 @@
 package knowledge
 
 import (
+	"encoding/json"
 	"sort"
 
 	"cuelang.org/go/cue"
@@ -17,11 +18,12 @@ import (
 // Catalog is the first generic projection: top-level declarations exposed by a
 // compiled package. It deliberately contains no diagram concepts.
 type Catalog struct {
-	Entries     []CatalogEntry    `json:"entries"`
-	Metadata    *Metadata         `json:"metadata,omitempty"`
-	Domains     []Domain          `json:"domains"`
-	Evaluations []NamedEvaluation `json:"evaluations"`
-	Checks      []Check           `json:"checks"`
+	Entries      []CatalogEntry    `json:"entries"`
+	Metadata     *Metadata         `json:"metadata,omitempty"`
+	Domains      []Domain          `json:"domains"`
+	Evaluations  []NamedEvaluation `json:"evaluations"`
+	Observations []Observation     `json:"observations"`
+	Checks       []Check           `json:"checks"`
 }
 
 type CatalogEntry struct {
@@ -67,6 +69,7 @@ type Relation struct {
 // Input and Output stay typed CUE values for an MCP/HTTP adapter to marshal.
 type NamedEvaluation struct {
 	Name         string    `json:"name"`
+	Path         string    `json:"path"`
 	Description  string    `json:"description"`
 	InputSchema  Schema    `json:"inputSchema"`
 	OutputSchema Schema    `json:"outputSchema"`
@@ -77,6 +80,24 @@ type NamedEvaluation struct {
 type Schema struct {
 	Type   string           `json:"type"`
 	Fields map[string]Field `json:"fields,omitempty"`
+}
+
+// Observation is author-declared semantic provenance for a domain fact.
+type Observation struct {
+	Name      string          `json:"name"`
+	Entity    string          `json:"entity"`
+	Field     string          `json:"field"`
+	Value     json.RawMessage `json:"value"`
+	Source    SourceRef       `json:"source"`
+	Status    string          `json:"status"`
+	Authority *int            `json:"authority,omitempty"`
+}
+
+type SourceRef struct {
+	Kind        string `json:"kind"`
+	URI         string `json:"uri"`
+	Pointer     string `json:"pointer,omitempty"`
+	RetrievedAt string `json:"retrievedAt,omitempty"`
 }
 
 type Check struct {
@@ -93,6 +114,8 @@ func BuildCatalog(root cue.Value) (Catalog, error) {
 	}
 	catalog := projected.(Catalog)
 	DiscoverExplicitKnowledge(root, &catalog)
+	discoverEvaluations(root.LookupPath(cue.ParsePath("evaluations")), "evaluations", &catalog.Evaluations)
+	discoverObservations(root.LookupPath(cue.ParsePath("observations")), &catalog.Observations)
 	explicit := map[string]int{}
 	for i, domain := range catalog.Domains {
 		if domain.Explicit {
@@ -135,7 +158,7 @@ type KnowledgeCatalogProjection struct{}
 func (KnowledgeCatalogProjection) Name() string { return "knowledge-catalog" }
 
 func (KnowledgeCatalogProjection) Discover(value cue.Value) (any, error) {
-	catalog := Catalog{Entries: []CatalogEntry{}, Domains: []Domain{}, Evaluations: []NamedEvaluation{}, Checks: []Check{}}
+	catalog := Catalog{Entries: []CatalogEntry{}, Domains: []Domain{}, Evaluations: []NamedEvaluation{}, Observations: []Observation{}, Checks: []Check{}}
 	it, err := value.Fields(cue.Optional(true), cue.Definitions(true))
 	if err != nil {
 		return catalog, nil
@@ -188,22 +211,8 @@ func DiscoverExplicitKnowledge(value cue.Value, catalog *Catalog) {
 			}
 		}
 	}
-	if evaluations := knowledge.LookupPath(cue.ParsePath("evaluations")); evaluations.Exists() {
-		it, err := evaluations.Fields()
-		if err == nil {
-			for it.Next() {
-				entry := it.Value()
-				catalog.Evaluations = append(catalog.Evaluations, NamedEvaluation{
-					Name:         it.Selector().Unquoted(),
-					Description:  concreteString(entry.LookupPath(cue.ParsePath("description"))),
-					InputSchema:  schemaFor(entry.LookupPath(cue.ParsePath("input"))),
-					OutputSchema: schemaFor(entry.LookupPath(cue.ParsePath("output"))),
-					Input:        entry.LookupPath(cue.ParsePath("input")),
-					Output:       entry.LookupPath(cue.ParsePath("output")),
-				})
-			}
-		}
-	}
+	discoverEvaluations(knowledge.LookupPath(cue.ParsePath("evaluations")), "knowledge.evaluations", &catalog.Evaluations)
+	discoverObservations(knowledge.LookupPath(cue.ParsePath("observations")), &catalog.Observations)
 	if checks := knowledge.LookupPath(cue.ParsePath("checks")); checks.Exists() {
 		it, err := checks.Fields()
 		if err == nil {
@@ -217,7 +226,60 @@ func DiscoverExplicitKnowledge(value cue.Value, catalog *Catalog) {
 	}
 	sort.Slice(catalog.Domains, func(i, j int) bool { return catalog.Domains[i].Name < catalog.Domains[j].Name })
 	sort.Slice(catalog.Evaluations, func(i, j int) bool { return catalog.Evaluations[i].Name < catalog.Evaluations[j].Name })
+	sort.Slice(catalog.Observations, func(i, j int) bool { return catalog.Observations[i].Name < catalog.Observations[j].Name })
 	sort.Slice(catalog.Checks, func(i, j int) bool { return catalog.Checks[i].Name < catalog.Checks[j].Name })
+}
+
+func discoverEvaluations(evaluations cue.Value, path string, target *[]NamedEvaluation) {
+	if !evaluations.Exists() {
+		return
+	}
+	it, err := evaluations.Fields()
+	if err != nil {
+		return
+	}
+	for it.Next() {
+		entry := it.Value()
+		result := entry.LookupPath(cue.ParsePath("result"))
+		// output is read only as a compatibility bridge for phase-two modules.
+		if !result.Exists() {
+			result = entry.LookupPath(cue.ParsePath("output"))
+		}
+		*target = append(*target, NamedEvaluation{
+			Name: it.Selector().Unquoted(), Path: path + "." + it.Selector().Unquoted(),
+			Description: concreteString(entry.LookupPath(cue.ParsePath("description"))),
+			InputSchema: schemaFor(entry.LookupPath(cue.ParsePath("input"))), OutputSchema: schemaFor(result),
+			Input: entry.LookupPath(cue.ParsePath("input")), Output: result,
+		})
+	}
+}
+
+func discoverObservations(observations cue.Value, target *[]Observation) {
+	if !observations.Exists() {
+		return
+	}
+	it, err := observations.Fields()
+	if err != nil {
+		return
+	}
+	for it.Next() {
+		entry := it.Value()
+		value, err := entry.LookupPath(cue.ParsePath("value")).MarshalJSON()
+		if err != nil {
+			value = json.RawMessage("null")
+		}
+		source := entry.LookupPath(cue.ParsePath("source"))
+		observation := Observation{
+			Name: it.Selector().Unquoted(), Entity: concreteString(entry.LookupPath(cue.ParsePath("entity"))), Field: concreteString(entry.LookupPath(cue.ParsePath("field"))), Value: value,
+			Status: concreteString(entry.LookupPath(cue.ParsePath("status"))),
+			Source: SourceRef{Kind: concreteString(source.LookupPath(cue.ParsePath("kind"))), URI: concreteString(source.LookupPath(cue.ParsePath("uri"))), Pointer: concreteString(source.LookupPath(cue.ParsePath("pointer"))), RetrievedAt: concreteString(source.LookupPath(cue.ParsePath("retrievedAt")))},
+		}
+		if authority, err := entry.LookupPath(cue.ParsePath("authority")).Int64(); err == nil {
+			n := int(authority)
+			observation.Authority = &n
+		}
+		*target = append(*target, observation)
+	}
 }
 
 func concreteString(value cue.Value) string {
