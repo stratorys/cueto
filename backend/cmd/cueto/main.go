@@ -59,6 +59,16 @@ func main() {
 		err = runCheck(args)
 	case "graph":
 		err = runGraph(args)
+	case "catalog":
+		err = runCatalog(args)
+	case "describe":
+		err = runDescribe(args)
+	case "get":
+		err = runGet(args)
+	case "query":
+		err = runQuery(args)
+	case "eval":
+		err = runEval(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -80,12 +90,176 @@ usage:
   cueto vet   -C <dir>              validate the whole module (Layer 1, pure CUE)
   cueto check -C <dir>             run @file/@uri graph checks (Layer 2)
   cueto graph -C <dir> [-view v]   print the discovered/inferred diagram as JSON
+  cueto catalog -C <dir>            print the knowledge catalog as JSON
+  cueto describe <domain> -C <dir>  describe one catalog domain
+  cueto get <domain> <id> -C <dir>  print one domain record
+  cueto query <query.json> -C <dir> run a safe knowledge query
+  cueto eval <name> --input <json> -C <dir> run a named evaluation
 
 flags:
   -C    module root directory (contains cue.mod); default "."
   -cue  cueto diagram schema directory; default "../cue" (graph only)
   -view discovered view to render (graph only)
 `)
+}
+
+func runtimeFor(moduleDir, cueDir string) (*knowledge.CueRuntime, knowledge.ProjectRef, error) {
+	engine, src, err := setup(moduleDir, cueDir, "")
+	if err != nil {
+		return nil, knowledge.ProjectRef{}, err
+	}
+	return knowledge.NewRuntime(knowledge.New(engine)), knowledge.ProjectRef{ModuleDir: src.Dir}, nil
+}
+
+func commandFlags(name string, args []string) (*flag.FlagSet, *string, *string, error) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	dir := fs.String("C", ".", "module root directory")
+	cueDir := fs.String("cue", "../cue", "cueto schema directory")
+	if err := fs.Parse(normalizeFlags(args)); err != nil {
+		return nil, nil, nil, err
+	}
+	return fs, dir, cueDir, nil
+}
+
+// normalizeFlags permits the documented `command positional -C dir` form even
+// though Go's flag package otherwise stops parsing at the first positional arg.
+func normalizeFlags(args []string) []string {
+	flags, positional := []string{}, []string{}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-C" || args[i] == "-cue" || args[i] == "--input" {
+			flags = append(flags, args[i])
+			if i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positional = append(positional, args[i])
+	}
+	return append(flags, positional...)
+}
+
+func printJSON(value any) error {
+	out, err := json.MarshalIndent(value, "", "  ")
+	if err == nil {
+		fmt.Println(string(out))
+	}
+	return err
+}
+
+func runCatalog(args []string) error {
+	_, dir, cueDir, err := commandFlags("catalog", args)
+	if err != nil {
+		return err
+	}
+	runtime, project, err := runtimeFor(*dir, *cueDir)
+	if err != nil {
+		return err
+	}
+	result, err := runtime.Catalog(context.Background(), project)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func runDescribe(args []string) error {
+	fs, dir, cueDir, err := commandFlags("describe", args)
+	if err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: cueto describe <domain> -C <dir>")
+	}
+	runtime, project, err := runtimeFor(*dir, *cueDir)
+	if err != nil {
+		return err
+	}
+	result, err := runtime.Describe(context.Background(), project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func runGet(args []string) error {
+	fs, dir, cueDir, err := commandFlags("get", args)
+	if err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: cueto get <domain> <id> -C <dir>")
+	}
+	runtime, project, err := runtimeFor(*dir, *cueDir)
+	if err != nil {
+		return err
+	}
+	result, err := runtime.Get(context.Background(), project, fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(result))
+	return nil
+}
+
+func readJSONArg(name string) ([]byte, error) {
+	if name == "-" {
+		return os.ReadFile("/dev/stdin")
+	}
+	return os.ReadFile(name)
+}
+
+func runQuery(args []string) error {
+	fs, dir, cueDir, err := commandFlags("query", args)
+	if err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: cueto query <query.json> -C <dir>")
+	}
+	raw, err := readJSONArg(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	var query knowledge.Query
+	if err := json.Unmarshal(raw, &query); err != nil {
+		return err
+	}
+	runtime, project, err := runtimeFor(*dir, *cueDir)
+	if err != nil {
+		return err
+	}
+	result, err := runtime.Query(context.Background(), project, query)
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
+}
+
+func runEval(args []string) error {
+	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
+	dir := fs.String("C", ".", "module root directory")
+	cueDir := fs.String("cue", "../cue", "cueto schema directory")
+	input := fs.String("input", "", "input JSON file or - for stdin")
+	if err := fs.Parse(normalizeFlags(args)); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 || *input == "" {
+		return errors.New("usage: cueto eval <name> --input <json> -C <dir>")
+	}
+	raw, err := readJSONArg(*input)
+	if err != nil {
+		return err
+	}
+	runtime, project, err := runtimeFor(*dir, *cueDir)
+	if err != nil {
+		return err
+	}
+	result, err := runtime.Eval(context.Background(), project, knowledge.EvalRequest{Evaluation: fs.Arg(0), Input: raw})
+	if err != nil {
+		return err
+	}
+	return printJSON(result)
 }
 
 // runVet validates the whole module and exits nonzero on any diagnostic. It never

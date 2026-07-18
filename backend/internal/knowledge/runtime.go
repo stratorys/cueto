@@ -68,15 +68,15 @@ type DomainDescription struct {
 	Members []string
 }
 
-// EvaluationRequest selects one optional named evaluation. Inputs are declared
-// by the CUE contract in phase two; parameter binding is deliberately deferred
-// until the contract defines input substitution semantics.
-type EvaluationRequest struct {
+// EvalRequest selects one optional named evaluation. Inputs are declared by the
+// CUE contract in phase two; parameter binding is deliberately deferred until
+// the contract defines input substitution semantics.
+type EvalRequest struct {
 	Evaluation string          `json:"evaluation"`
 	Input      json.RawMessage `json:"input"`
 }
 
-type EvaluationResult struct {
+type EvalResult struct {
 	Status     string          `json:"status"`
 	Result     json.RawMessage `json:"result"`
 	Revision   string          `json:"revision"`
@@ -97,7 +97,7 @@ type Runtime interface {
 	Describe(context.Context, ProjectRef, string) (DomainDescription, error)
 	Get(context.Context, ProjectRef, string, string) (json.RawMessage, error)
 	Query(context.Context, ProjectRef, Query) (QueryResult, error)
-	Evaluate(context.Context, ProjectRef, EvaluationRequest) (EvaluationResult, error)
+	Eval(context.Context, ProjectRef, EvalRequest) (EvalResult, error)
 	Provenance(context.Context, ProjectRef, string) (ProvenanceResult, error)
 	Health(context.Context, ProjectRef) (Health, error)
 }
@@ -365,25 +365,25 @@ func compare(left, right any) (int, bool) {
 	return 0, false
 }
 
-func (r *CueRuntime) Evaluate(ctx context.Context, project ProjectRef, request EvaluationRequest) (EvaluationResult, error) {
+func (r *CueRuntime) Eval(ctx context.Context, project ProjectRef, request EvalRequest) (EvalResult, error) {
 	compiled, err := r.compile(ctx, project)
 	if err != nil {
-		return EvaluationResult{}, err
+		return EvalResult{}, err
 	}
 	for _, evaluation := range compiled.Catalog.Evaluations {
 		if evaluation.Name != request.Evaluation {
 			continue
 		}
 		if len(request.Input) == 0 || !json.Valid(request.Input) {
-			return EvaluationResult{}, fmt.Errorf("evaluation input must be valid JSON")
+			return EvalResult{}, fmt.Errorf("evaluation input must be valid JSON")
 		}
 		withInput := projectWithEvaluationInput(project, evaluation.Path, evaluation.Name, request.Input)
 		executed, err := r.compiler.Compile(ctx, compileRequest(withInput))
 		if err != nil {
-			return EvaluationResult{}, err
+			return EvalResult{}, err
 		}
 		if len(executed.Diagnostics) > 0 {
-			return EvaluationResult{}, &DiagnosticError{Diagnostics: executed.Diagnostics}
+			return EvalResult{}, &DiagnosticError{Diagnostics: executed.Diagnostics}
 		}
 		value := evaluationValue(executed.Value, evaluation.Path, evaluation.Name, "result")
 		if !value.Exists() {
@@ -392,14 +392,14 @@ func (r *CueRuntime) Evaluate(ctx context.Context, project ProjectRef, request E
 		}
 		result, diagnostics, err := r.compiler.encode(value, compileRequest(withInput))
 		if err != nil {
-			return EvaluationResult{}, err
+			return EvalResult{}, err
 		}
 		if len(diagnostics) > 0 {
-			return EvaluationResult{}, &DiagnosticError{Diagnostics: diagnostics}
+			return EvalResult{}, &DiagnosticError{Diagnostics: diagnostics}
 		}
-		return EvaluationResult{Status: "success", Result: result, Revision: executed.Revision, Evaluation: evaluation.Name}, nil
+		return EvalResult{Status: "success", Result: result, Revision: executed.Revision, Evaluation: evaluation.Name}, nil
 	}
-	return EvaluationResult{}, fmt.Errorf("unknown evaluation %q", request.Evaluation)
+	return EvalResult{}, fmt.Errorf("unknown evaluation %q", request.Evaluation)
 }
 
 func projectWithEvaluationInput(project ProjectRef, path, name string, input json.RawMessage) ProjectRef {

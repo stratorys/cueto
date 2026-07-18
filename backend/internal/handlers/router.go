@@ -16,6 +16,8 @@ import (
 
 	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/diag"
+	"github.com/stratorys/cueto/backend/internal/evaluation"
+	"github.com/stratorys/cueto/backend/internal/knowledge"
 	"github.com/stratorys/cueto/backend/internal/projects"
 )
 
@@ -39,6 +41,9 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 		cueDir:         cfg.CueDir,
 		maxOutputBytes: cfg.MaxOutputBytes,
 	}
+	if engine, ok := eval.(*evaluation.Engine); ok {
+		h.runtime = knowledge.NewRuntime(knowledge.New(engine))
+	}
 
 	// Module-independent operations.
 	r.GET("/config", h.Config)
@@ -54,6 +59,13 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 	r.POST("/projects/:id/repl", h.EvalExpr)
 	r.POST("/projects/:id/repl/keys", h.ReplKeys)
 	r.POST("/projects/:id/vet", h.Vet)
+	r.GET("/projects/:id/knowledge/catalog", h.KnowledgeCatalog)
+	r.GET("/projects/:id/knowledge/domains/:domain", h.KnowledgeDescribe)
+	r.GET("/projects/:id/knowledge/domains/:domain/:key", h.KnowledgeGet)
+	r.POST("/projects/:id/knowledge/query", h.KnowledgeQuery)
+	r.POST("/projects/:id/knowledge/eval/:name", h.KnowledgeEval)
+	r.GET("/projects/:id/knowledge/provenance", h.KnowledgeProvenance)
+	r.GET("/projects/:id/knowledge/health", h.KnowledgeHealth)
 	r.GET("/projects/:id/tree", h.Tree)
 	r.POST("/projects/:id/save", h.WorkspaceSave)
 	r.GET("/projects/:id/file", h.WorkspaceFile)

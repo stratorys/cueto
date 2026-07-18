@@ -18,6 +18,7 @@ import (
 	"github.com/stratorys/cueto/backend/internal/diag"
 	"github.com/stratorys/cueto/backend/internal/domain"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
+	"github.com/stratorys/cueto/backend/internal/knowledge"
 	"github.com/stratorys/cueto/backend/internal/projects"
 	"github.com/stratorys/cueto/backend/internal/repo"
 )
@@ -50,6 +51,7 @@ type handlers struct {
 	projects       *projects.Manager
 	cueDir         string
 	maxOutputBytes int
+	runtime        knowledge.Runtime
 }
 
 // projectDir resolves the :id path param to an absolute module dir, writing a 404

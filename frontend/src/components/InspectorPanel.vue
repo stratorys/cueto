@@ -14,16 +14,18 @@ import { ref, watch } from "vue";
 import AnalysisPanel from "./AnalysisPanel.vue";
 import ElementInspector from "./ElementInspector.vue";
 import HistoryPanel from "./HistoryPanel.vue";
+import KnowledgePanel from "./KnowledgePanel.vue";
 import { useDiagramCanvas } from "../composables/useDiagramCanvas";
 import { useHighlight } from "../composables/useHighlight";
 
-type Tab = "analysis" | "inspector" | "history";
+type Tab = "analysis" | "knowledge" | "inspector" | "history";
 const tab = ref<Tab>("analysis");
 const { clearHighlight } = useHighlight();
 const { selectedElementId } = useDiagramCanvas();
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "analysis", label: "Analysis" },
+  { id: "knowledge", label: "Knowledge" },
   { id: "inspector", label: "Inspector" },
   { id: "history", label: "History" },
 ];
@@ -65,6 +67,7 @@ watch(selectedElementId, (id, prev) => {
     <div class="min-h-0 flex-1 overflow-y-auto">
       <ElementInspector v-if="tab === 'inspector'" />
       <AnalysisPanel v-else-if="tab === 'analysis'" />
+      <KnowledgePanel v-else-if="tab === 'knowledge'" />
       <HistoryPanel v-else />
     </div>
   </div>
