@@ -140,6 +140,10 @@ export interface CueMeta {
   packages: CuePackage[];
 }
 
+export interface KnowledgeField { type: string; required: boolean; relation?: { domain: string; cardinality: string } }
+export interface KnowledgeDomain { name: string; description?: string; fields: Record<string, KnowledgeField> }
+export interface KnowledgeCatalog { domains: KnowledgeDomain[]; evaluations: { name: string; description: string; inputSchema: { fields?: Record<string, KnowledgeField> } }[]; observations: unknown[] }
+
 export interface EvalErr {
   ok: false;
   error: string;
@@ -268,6 +272,10 @@ async function get<T>(
   }
   const errorBody = await readJson<{ diagnostics?: Diagnostic[]; error?: string }>(response);
   return errorResult(errorBody, response.status);
+}
+
+export function getKnowledgeCatalog(): Promise<({ ok: true; catalog: KnowledgeCatalog } | EvalErr)> {
+  return get(proj() + "/knowledge/catalog", async (response) => ({ catalog: await readJson<KnowledgeCatalog>(response) }));
 }
 
 // sendJSON is post generalized to any mutating method (PATCH/DELETE), with an

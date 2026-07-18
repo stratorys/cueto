@@ -26,12 +26,12 @@ evaluations: enterpriseDiscount: {
 }
 `})
 	runtime := NewRuntime(New(evaluation.New("", time.Second, 1<<20)))
-	result, err := runtime.Evaluate(context.Background(), ProjectRef{ModuleDir: dir}, EvaluationRequest{
+	result, err := runtime.Eval(context.Background(), ProjectRef{ModuleDir: dir}, EvalRequest{
 		Evaluation: "enterpriseDiscount",
 		Input:      []byte(`{"customerId":"acme","seats":120}`),
 	})
 	if err != nil {
-		t.Fatalf("Evaluate: %v", err)
+		t.Fatalf("Eval: %v", err)
 	}
 	if result.Status != "success" || result.Evaluation != "enterpriseDiscount" || string(result.Result) != `{"eligible":true,"discountPercent":15}` || result.Revision == "" {
 		t.Fatalf("result = %+v", result)
@@ -43,7 +43,7 @@ func TestEvaluateRejectsInputOutsideCueSchema(t *testing.T) {
 evaluations: seats: {description: "x", input: {seats: int & >=0}, result: {ok: true}}
 `})
 	runtime := NewRuntime(New(evaluation.New("", time.Second, 1<<20)))
-	_, err := runtime.Evaluate(context.Background(), ProjectRef{ModuleDir: dir}, EvaluationRequest{Evaluation: "seats", Input: []byte(`{"seats":-1}`)})
+	_, err := runtime.Eval(context.Background(), ProjectRef{ModuleDir: dir}, EvalRequest{Evaluation: "seats", Input: []byte(`{"seats":-1}`)})
 	if err == nil {
 		t.Fatal("invalid evaluation input succeeded")
 	}

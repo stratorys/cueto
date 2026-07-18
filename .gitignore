@@ -3,3 +3,6 @@
 
 # Project store: registry and per-project versions (runtime data, default DATA_DIR).
 /data/
+
+# go build output for the CLI binary (e.g. `go build ./cmd/cueto`).
+/cueto

@@ -20,6 +20,7 @@ The same property makes cueto a deterministic retrieval surface for agents. A qu
 - **Workflow design**. The same model is edited two ways, a visual canvas and CUE code, kept in sync through a source map, then evaluated, validated, formatted, and saved to real files on disk in the user's own project, with git as the only history.
 - **Knowledge model**. The schema separates rendering fields (`type`, `shape`, colors) from a free-form `data` payload, so the nodes you draw carry domain facts you can query.
 - **Queryability**. A REPL pane with CUE stdlib introspection and autocompletion evaluates any expression against the live model in the editor.
+- **Agent-safe retrieval**. Named domains, bounded Go-side queries, and schema-validated evaluations expose the same compiled value without ever handing an agent arbitrary CUE. See [Knowledge](#knowledge).
 - **Observability**. Evaluation returns structured diagnostics with source positions and host paths scrubbed, plus provenance and hints, rather than opaque errors.
 - **Production trade-offs**. Untrusted CUE is evaluated in-process under body-size, output-size, per-request deadline, and concurrency bounds, behind explicit server timeouts and graceful shutdown.
 
@@ -127,6 +128,44 @@ diagram: d.#Diagram & {
 
 </details>
 
+## Knowledge
+
+The REPL answers with a CUE expression, which is expressive but not something to hand an agent: an agent should not be trusted with arbitrary CUE against your module. The knowledge runtime is a fixed set of named operations instead. It requires no import and no extra vocabulary: the same registry and evaluation shapes that drive inference and the REPL are enough. Add one plain `evaluations` field next to the `people` data above:
+
+```cue
+evaluations: isTraveler: {
+	description: "Check whether a person travels through time"
+	input: {personId: string}
+	result: {traveler: people[input.personId].role == "traveler"}
+}
+```
+
+`cueto catalog` (or `GET /projects/:id/knowledge/catalog`) discovers `people` as a domain and `isTraveler` as a named evaluation, with their fields, types, and relations, so an agent can plan a call without ever reading the module's CUE:
+
+```
+$ cueto catalog -C cue
+{
+  "domains": [{"name": "people", "kind": "registry", "fields": {"role": {"type": "string", "required": true}, ...}}],
+  "evaluations": [{"name": "isTraveler", "description": "Check whether a person travels through time", ...}]
+}
+```
+
+`cueto query` (or `POST /projects/:id/knowledge/query`) runs a bounded, schema-checked filter, never a CUE expression:
+
+```
+$ echo '{"domain":"people","select":["name"],"where":[{"field":"role","operator":"eq","value":"traveler"}]}' | cueto query - -C cue
+{"result": [{"id": "marty", "name": "Marty McFly"}], "count": 1}
+```
+
+`cueto eval` (or `POST /projects/:id/knowledge/eval/isTraveler`) runs one named, schema-validated evaluation against a JSON input:
+
+```
+$ echo '{"personId":"marty"}' | cueto eval isTraveler --input - -C cue
+{"status": "success", "result": {"traveler": true}, "evaluation": "isTraveler", "revision": "..."}
+```
+
+Every answer comes from the same compiled value the canvas renders and the REPL queries, so there is no separate index to drift out of sync. `describe`, `get`, `provenance`, and `health` round out the same operation set (see [How it works](#how-it-works) above). Today only the catalog is wired into the app itself, in the Knowledge panel; the rest are CLI and HTTP only, for CI and agents.
+
 ## Authoring
 
 The canvas and the CUE editor stay in sync through a source map, so a change in one appears in the other. Canvas edits are spliced back into CUE text through `/rewrite`, and `/format` normalizes the result with `cue fmt`, so the code and the picture never disagree.
@@ -142,7 +181,7 @@ flowchart LR
   end
 
   subgraph be["backend/ (Go + gin)"]
-    api["/config /cue/meta /format /rewrite /projects (list, create)\nper project: /projects/:id/{eval,repl,vet,tree,save,file,history}"]
+    api["/config /cue/meta /format /rewrite /projects (list, create)\nper project: /projects/:id/{eval,repl,vet,tree,save,file,history}\nknowledge: /projects/:id/knowledge/{catalog,domains,query,eval,provenance,health}"]
     eval["CUE evaluator (bounded, in-process)"]
     projectsdir[("projects root (each child: git repo + CUE module, git = history)")]
   end
@@ -173,6 +212,7 @@ The CUE evaluator is a pure, adapter-independent core. It takes a prepared file 
 6. `/vet` validates every package in the module for validity, catching dangling references and schema and closedness violations, and returns structured diagnostics. It never requires concreteness, so an incomplete-but-valid module vets clean while `/eval` gates the rendered view. `make check` runs `cue vet ./...` plus `cueto vet` and `cueto check`, so an invalid committed diagram, or a broken file or URI reference, fails CI.
 7. Persistence is git. The server is pointed at a **projects root**, and each child directory is a git repository with its own CUE module. `GET /projects` lists them and `POST /projects` creates one by git-initializing a new directory, scaffolding a minimal vocabulary-free module, and making one initial commit, the only time cueto ever writes git state. Every module-touching operation is scoped to a project, namely `/projects/:id/eval`, `/vet`, `/repl`, `/tree`, `/save`, `/file`, `/history`, and `DELETE /projects/:id/file`.
 8. `/projects/:id/save` validates the buffer against the whole module and writes the real file on disk under a path guard, refusing a save when the file changed on disk since it was loaded and never staging, committing, or otherwise mutating git state. `/projects/:id/history` and `/projects/:id/file` read the git log and file blobs read-only to feed the history panel. cueto is not a version store, and git is the only history.
+9. The knowledge runtime (`internal/knowledge`) generalizes the same discovery beyond diagrams: `/projects/:id/knowledge/catalog` lists every domain (declared or structurally inferred, same registry detector as inference) and every named `evaluations` entry; `domains/:domain` and `domains/:domain/:key` describe one domain and fetch one record; `query` runs a bounded, Go-side filter against a domain, never arbitrary CUE, so it stays safe for an agent to call; `eval/:name` runs one named, schema-validated evaluation against a JSON input overlay; `provenance` and `health` report where facts are declared and whether the module is valid. See [Knowledge](#knowledge) above. The `cueto catalog|describe|get|query|eval` CLI subcommands run the identical operations outside the server. Today only the catalog is wired into the app (the Knowledge panel lists domains and evaluations); query, eval, provenance, and health are CLI and HTTP only.
 
 ## Run locally
 
