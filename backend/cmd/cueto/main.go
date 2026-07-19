@@ -69,6 +69,12 @@ func main() {
 		err = runQuery(args)
 	case "eval":
 		err = runEval(args)
+	case "serve":
+		err = runServe(args)
+	case "projects":
+		err = runProjects(args)
+	case "use":
+		err = runUse(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -84,21 +90,30 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `cueto - evaluate and validate a CUE module
+	fmt.Fprint(os.Stderr, `cueto - evaluate, validate, query, and serve CUE knowledge modules
 
 usage:
-  cueto vet   -C <dir>              validate the whole module (Layer 1, pure CUE)
-  cueto check -C <dir>             run @file/@uri graph checks (Layer 2)
-  cueto graph -C <dir> [-view v]   print the discovered/inferred diagram as JSON
-  cueto catalog -C <dir>            print the knowledge catalog as JSON
-  cueto describe <domain> -C <dir>  describe one catalog domain
-  cueto get <domain> <id> -C <dir>  print one domain record
-  cueto query <query.json> -C <dir> run a safe knowledge query
-  cueto eval <name> --input <json> -C <dir> run a named evaluation
+  cueto serve [-port n] [-home d] [-projects d]  run the app: API plus embedded web UI
+  cueto vet                          validate the whole module (Layer 1, pure CUE)
+  cueto check                        run @file/@uri graph checks (Layer 2)
+  cueto graph [-view v]              print the discovered/inferred diagram as JSON
+  cueto catalog                      print the knowledge catalog as JSON
+  cueto describe <domain>            describe one catalog domain
+  cueto get <domain> <id>            print one domain record
+  cueto query <query.json>           run a safe knowledge query
+  cueto eval <name> --input <json>   run a named evaluation
+  cueto projects                     list projects under the cueto home (* = current)
+  cueto use <project-id>             set the current project
+
+module resolution for vet/check/graph/catalog/describe/get/query/eval:
+an explicit -C <dir> wins; else the working directory when it is a CUE module;
+else -p <id>; else the selected project, or the only one, under the cueto home
+($XDG_DATA_HOME/cueto or ~/.cueto).
 
 flags:
-  -C    module root directory (contains cue.mod); default "."
-  -cue  cueto diagram schema directory; default "../cue" (graph only)
+  -C    module root directory (contains cue.mod)
+  -p    project id under the cueto home projects root
+  -cue  cueto diagram schema directory (default: embedded schema)
   -view discovered view to render (graph only)
 `)
 }
@@ -113,12 +128,21 @@ func runtimeFor(moduleDir, cueDir string) (*knowledge.CueRuntime, knowledge.Proj
 
 func commandFlags(name string, args []string) (*flag.FlagSet, *string, *string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	dir := fs.String("C", ".", "module root directory")
-	cueDir := fs.String("cue", "../cue", "cueto schema directory")
+	dir := fs.String("C", "", "module root directory (default: resolved project)")
+	project := fs.String("p", "", "project id under the cueto home")
+	cueDir := fs.String("cue", "", "cueto schema directory (default: embedded schema)")
 	if err := fs.Parse(normalizeFlags(args)); err != nil {
 		return nil, nil, nil, err
 	}
-	return fs, dir, cueDir, nil
+	moduleDir, err := resolveModuleDir(*dir, *project)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	schemaDir, err := resolveSchemaDir(*cueDir)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return fs, &moduleDir, &schemaDir, nil
 }
 
 // normalizeFlags permits the documented `command positional -C dir` form even
@@ -126,7 +150,7 @@ func commandFlags(name string, args []string) (*flag.FlagSet, *string, *string, 
 func normalizeFlags(args []string) []string {
 	flags, positional := []string{}, []string{}
 	for i := 0; i < len(args); i++ {
-		if args[i] == "-C" || args[i] == "-cue" || args[i] == "--input" {
+		if args[i] == "-C" || args[i] == "-cue" || args[i] == "-p" || args[i] == "--input" {
 			flags = append(flags, args[i])
 			if i+1 < len(args) {
 				i++
@@ -238,20 +262,25 @@ func runQuery(args []string) error {
 
 func runEval(args []string) error {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
-	dir := fs.String("C", ".", "module root directory")
-	cueDir := fs.String("cue", "../cue", "cueto schema directory")
+	dir := fs.String("C", "", "module root directory (default: resolved project)")
+	projectID := fs.String("p", "", "project id under the cueto home")
+	cueDir := fs.String("cue", "", "cueto schema directory (default: embedded schema)")
 	input := fs.String("input", "", "input JSON file or - for stdin")
 	if err := fs.Parse(normalizeFlags(args)); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 || *input == "" {
-		return errors.New("usage: cueto eval <name> --input <json> -C <dir>")
+		return errors.New("usage: cueto eval <name> --input <json> [-C <dir> | -p <id>]")
 	}
 	raw, err := readJSONArg(*input)
 	if err != nil {
 		return err
 	}
-	runtime, project, err := runtimeFor(*dir, *cueDir)
+	moduleDir, schemaDir, err := resolveDirs(*dir, *projectID, *cueDir)
+	if err != nil {
+		return err
+	}
+	runtime, project, err := runtimeFor(moduleDir, schemaDir)
 	if err != nil {
 		return err
 	}
@@ -266,12 +295,17 @@ func runEval(args []string) error {
 // gates concreteness: an incomplete-but-valid module vets clean.
 func runVet(args []string) error {
 	fs := flag.NewFlagSet("vet", flag.ExitOnError)
-	dir := fs.String("C", ".", "module root directory")
-	cueDir := fs.String("cue", "../cue", "cueto diagram schema directory (unused by vet)")
+	dir := fs.String("C", "", "module root directory (default: resolved project)")
+	project := fs.String("p", "", "project id under the cueto home")
+	cueDir := fs.String("cue", "", "cueto diagram schema directory (unused by vet)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	engine, src, err := setup(*dir, *cueDir, "")
+	moduleDir, schemaDir, err := resolveDirs(*dir, *project, *cueDir)
+	if err != nil {
+		return err
+	}
+	engine, src, err := setup(moduleDir, schemaDir, "")
 	if err != nil {
 		return err
 	}
@@ -291,12 +325,17 @@ func runVet(args []string) error {
 // exits nonzero on any failure.
 func runCheck(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	dir := fs.String("C", ".", "module root directory")
-	cueDir := fs.String("cue", "../cue", "cueto diagram schema directory (unused by check)")
+	dir := fs.String("C", "", "module root directory (default: resolved project)")
+	project := fs.String("p", "", "project id under the cueto home")
+	cueDir := fs.String("cue", "", "cueto diagram schema directory (unused by check)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	engine, src, err := setup(*dir, *cueDir, "")
+	moduleDir, schemaDir, err := resolveDirs(*dir, *project, *cueDir)
+	if err != nil {
+		return err
+	}
+	engine, src, err := setup(moduleDir, schemaDir, "")
 	if err != nil {
 		return err
 	}
@@ -316,13 +355,18 @@ func runCheck(args []string) error {
 // nonzero when the rendered view is invalid or incomplete.
 func runGraph(args []string) error {
 	fs := flag.NewFlagSet("graph", flag.ExitOnError)
-	dir := fs.String("C", ".", "module root directory")
-	cueDir := fs.String("cue", "../cue", "cueto diagram schema directory")
+	dir := fs.String("C", "", "module root directory (default: resolved project)")
+	project := fs.String("p", "", "project id under the cueto home")
+	cueDir := fs.String("cue", "", "cueto diagram schema directory (default: embedded schema)")
 	view := fs.String("view", "", "discovered view to render")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	engine, src, err := setup(*dir, *cueDir, *view)
+	moduleDir, schemaDir, err := resolveDirs(*dir, *project, *cueDir)
+	if err != nil {
+		return err
+	}
+	engine, src, err := setup(moduleDir, schemaDir, *view)
 	if err != nil {
 		return err
 	}
