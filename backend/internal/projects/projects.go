@@ -14,6 +14,7 @@ package projects
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,6 +110,41 @@ func (m *Manager) Create(name string) (Project, error) {
 		return Project{}, err
 	}
 	if err := scaffold(dir, id); err != nil {
+		return Project{}, err
+	}
+	if err := initCommit(dir); err != nil {
+		return Project{}, err
+	}
+	return Project{ID: id, Name: id}, nil
+}
+
+// Seed creates a project by copying a prepared module tree (the embedded demo)
+// instead of the scaffold, then makes the same single initial commit Create
+// makes. Like Create it refuses an id that already names a non-empty directory,
+// so seeding can run on every startup and only ever act on a fresh root.
+func (m *Manager) Seed(id string, src fs.FS) (Project, error) {
+	if !projectIDPattern.MatchString(id) {
+		return Project{}, ErrInvalidName
+	}
+	dir := filepath.Join(m.root, id)
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		return Project{}, ErrExists
+	}
+	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		target := filepath.Join(dir, filepath.FromSlash(path))
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		content, err := fs.ReadFile(src, path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, content, 0o644)
+	})
+	if err != nil {
 		return Project{}, err
 	}
 	if err := initCommit(dir); err != nil {
