@@ -1,0 +1,58 @@
+name: binaries
+
+# Self-contained cueto binaries: the web UI is built once with an empty
+# VITE_API_URL (same-origin), copied over the placeholder embed dir, and the CLI
+# is cross-compiled for each release target. Pure-Go dependencies make
+# CGO_ENABLED=0 cross-compilation from one runner safe; backend tests verified
+# separately in backend-ci.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - backend/**
+      - frontend/**
+      - .github/workflows/binaries.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: install pnpm
+        run: npm install -g pnpm@11
+
+      - name: build web UI (same-origin API)
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: embed web UI
+        run: |
+          rm -rf backend/internal/assets/webui
+          cp -R frontend/dist backend/internal/assets/webui
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: build binaries
+        working-directory: backend
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/cueto-linux-amd64  ./cmd/cueto
+          GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/cueto-linux-arm64  ./cmd/cueto
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/cueto-darwin-arm64 ./cmd/cueto
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cueto-binaries
+          path: backend/dist/cueto-*
