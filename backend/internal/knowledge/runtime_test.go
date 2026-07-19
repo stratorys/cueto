@@ -9,6 +9,8 @@ package knowledge
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -132,6 +134,32 @@ func TestProvenanceUnknownName(t *testing.T) {
 	runtime := NewRuntime(New(evaluation.New("", time.Second, 1<<20)))
 	if _, err := runtime.Provenance(context.Background(), ProjectRef{ModuleDir: dir}, "nope"); err == nil {
 		t.Fatal("unknown name succeeded")
+	}
+}
+
+func TestSourceProvenanceRejectsPackageEscapingModuleRoot(t *testing.T) {
+	parent := t.TempDir()
+	module := filepath.Join(parent, "module")
+	if err := os.MkdirAll(filepath.Join(module, "cue.mod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(module, "cue.mod", "module.cue"), []byte("module: \"example.com/knowledge\"\nlanguage: version: \"v0.17.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(module, "data.cue"), []byte(describeGetFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(parent, "secret")
+	if err := os.MkdirAll(secret, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(secret, "leak.cue"), []byte("package main\nleaked: name: \"hidden\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, pkg := range []string{"..", "../secret", secret} {
+		if _, err := sourceProvenance(ProjectRef{ModuleDir: module, Package: pkg}); err == nil {
+			t.Fatalf("package %q escaped module root", pkg)
+		}
 	}
 }
 
