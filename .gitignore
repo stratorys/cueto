@@ -6,3 +6,6 @@
 
 # go build output for the CLI binary (e.g. `go build ./cmd/cueto`).
 /cueto
+
+# gotestsum JUnit report (backend-ci.yml).
+/backend/junit.xml
