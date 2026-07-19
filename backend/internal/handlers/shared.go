@@ -49,6 +49,8 @@ type handlers struct {
 	eval           evalService
 	authoring      authoringService
 	projects       *projects.Manager
+	projectsDir    string
+	selection      SelectionStore
 	cueDir         string
 	maxOutputBytes int
 	runtime        knowledge.Runtime

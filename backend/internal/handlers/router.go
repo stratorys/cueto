@@ -27,7 +27,7 @@ import (
 // every operation that touches a module is scoped to /projects/:id, so the module
 // root always comes from a resolved project. Git is the only history: saves write
 // the real file and the history panel reads commits read-only.
-func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.Engine {
+func NewRouter(eval evalService, auth authoringService, cfg config.Config, sel SelectionStore) *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: this backend is reached directly, so client-supplied
 	// X-Forwarded-For headers must not be believed.
@@ -38,6 +38,8 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 		eval:           eval,
 		authoring:      auth,
 		projects:       projects.New(cfg.ProjectsDir),
+		projectsDir:    cfg.ProjectsDir,
+		selection:      sel,
 		cueDir:         cfg.CueDir,
 		maxOutputBytes: cfg.MaxOutputBytes,
 	}
@@ -52,6 +54,8 @@ func NewRouter(eval evalService, auth authoringService, cfg config.Config) *gin.
 	r.POST("/rewrite", h.Rewrite)
 	r.GET("/projects", h.ListProjects)
 	r.POST("/projects", h.CreateProject)
+	r.GET("/session", h.Session)
+	r.POST("/session/project", h.SetSessionProject)
 
 	// Project-scoped operations: evaluation and git-backed persistence, all rooted
 	// at the resolved project module.

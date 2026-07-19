@@ -4,7 +4,10 @@
 // License: Mozilla Public License v2.0 (MPL v2.0)
 // SPDX-License-Identifier: MPL-2.0
 
-// Command backend serves CUE evaluation for the diagram app.
+// Command backend serves CUE evaluation for the diagram app in development: it
+// is configured through the environment (.env), pairs with the Vite dev server,
+// and serves no UI itself. The packaged, self-contained equivalent is `cueto
+// serve`, which embeds the UI and schema and needs no checkout.
 //
 // The hand-owned schema.cue is loaded fresh from disk (CUE_DIR, default ../cue)
 // and is never machine-written. The editable data.cue is supplied per request
@@ -15,14 +18,8 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -31,6 +28,8 @@ import (
 	"github.com/stratorys/cueto/backend/internal/config"
 	"github.com/stratorys/cueto/backend/internal/evaluation"
 	"github.com/stratorys/cueto/backend/internal/handlers"
+	"github.com/stratorys/cueto/backend/internal/home"
+	"github.com/stratorys/cueto/backend/internal/server"
 )
 
 func main() {
@@ -51,37 +50,17 @@ func main() {
 		log.Fatalf("Load config: %v", err)
 	}
 
-	// Explicit server timeouts bound the connection layer that the body cap and
-	// eval deadline do not: slow-client (slowloris) reads and stuck writes.
-	// WriteTimeout must exceed the eval deadline or long evaluations get cut off
-	// mid-response.
-	server := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           handlers.NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      cfg.EvalTimeout + 10*time.Second,
-		IdleTimeout:       60 * time.Second,
+	// Selection state lives in the standard cueto home even for the env-driven dev
+	// server, keyed by projects root, so dev and packaged serve never clobber each
+	// other. A home that cannot resolve only disables persistence.
+	var sel handlers.SelectionStore
+	if root, homeErr := home.DefaultRoot(); homeErr == nil {
+		sel = home.New(root)
 	}
 
-	// Serve until a termination signal, then drain in-flight requests so running
-	// evaluations finish (or hit their own deadline) instead of being cut off.
-	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Serve: %v", err)
-		}
-	}()
+	router := handlers.NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg, sel)
 	log.Printf("Listening on :%s, schema dir %s, projects dir %s", cfg.Port, cfg.CueDir, cfg.ProjectsDir)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	<-ctx.Done()
-	stop()
-	log.Println("Shutting down...")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Shutdown: %v", err)
+	if err := server.Run(router, cfg.Port, cfg.EvalTimeout); err != nil {
+		log.Fatalf("Serve: %v", err)
 	}
 }
