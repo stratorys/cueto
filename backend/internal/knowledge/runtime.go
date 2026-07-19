@@ -477,7 +477,14 @@ func sourceProvenance(project ProjectRef) (Provenance, error) {
 	}
 	packageDir := root
 	if project.Package != "" && project.Package != "." {
+		if filepath.IsAbs(project.Package) {
+			return Provenance{}, fmt.Errorf("package %q escapes module root", project.Package)
+		}
 		packageDir = filepath.Join(root, project.Package)
+		rel, err := filepath.Rel(root, packageDir)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return Provenance{}, fmt.Errorf("package %q escapes module root", project.Package)
+		}
 	}
 	err = filepath.WalkDir(packageDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
