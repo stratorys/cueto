@@ -102,7 +102,7 @@ Canvas and editor stay in sync through a source map, and a save writes the real 
 
 On first run the projects root is empty, so serve seeds the `service-catalog` demo and the app opens straight into it. Selection follows three rules, and no environment variable ever names a project: a single project is the default; with several, the last selected wins (the web app and `cueto use` write the same state); with several and none selected, you land on the project picker.
 
-The binaries workflow cross-compiles releases for linux amd64/arm64 and macOS arm64 with the UI embedded. To reproduce one locally:
+Releases are cut manually: run the release workflow from the Actions tab with a version number, and it creates the tag, cross-compiles for linux amd64/arm64 and macOS arm64 with the UI embedded, and publishes a GitHub release with the binaries attached. The binaries workflow runs the same build on pull requests as a check, without publishing anything. To reproduce a binary locally:
 
 ```
 cd frontend

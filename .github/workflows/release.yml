@@ -1,19 +1,24 @@
-name: binaries
+name: release
 
-# Build-only PR check that the web UI embed and the CGO_ENABLED=0
-# cross-compilation still work; the release workflow builds the binaries that
-# actually ship. Backend tests verified separately in backend-ci.
+# Manually dispatched with a version number: builds the self-contained cueto
+# binaries (web UI built once with an empty VITE_API_URL for same-origin,
+# copied over the placeholder embed dir, CLI cross-compiled per target), then
+# creates the v<version> tag and GitHub release with the binaries attached.
+# Pure-Go dependencies make CGO_ENABLED=0 cross-compilation from one runner
+# safe; backend tests verified separately in backend-ci.
 
 on:
-  pull_request:
-    paths:
-      - backend/**
-      - frontend/**
-      - .github/workflows/binaries.yml
-      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.2.0)"
+        required: true
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -46,3 +51,11 @@ jobs:
           GOOS=linux  GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/cueto-linux-amd64  ./cmd/cueto
           GOOS=linux  GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/cueto-linux-arm64  ./cmd/cueto
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/cueto-darwin-arm64 ./cmd/cueto
+
+      - name: create tag, release, upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          version="${RAW_VERSION#v}"
+          gh release create "v${version}" backend/dist/cueto-* --target "${GITHUB_SHA}" --title "v${version}" --generate-notes
