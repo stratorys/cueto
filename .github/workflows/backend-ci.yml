@@ -1,14 +1,20 @@
 name: backend-ci
 
+# cue/** and examples/** are included because backend tests pin the embedded
+# schema and demo assets byte-for-byte to those directories.
 on:
   push:
     branches: [main]
     paths:
       - backend/**
+      - cue/**
+      - examples/**
       - .github/workflows/backend-ci.yml
   pull_request:
     paths:
       - backend/**
+      - cue/**
+      - examples/**
       - .github/workflows/backend-ci.yml
 
 jobs:
