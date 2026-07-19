@@ -6,17 +6,16 @@
 
 // The workspace projects: the list under the projects root (each a git repo plus a
 // CUE module) and the open one. Module-level singleton like the other canvas
-// composables. The current id is mirrored into the URL (?project=) and localStorage
-// so a reload / shared link lands on the same project, set on the api layer so every
-// project-scoped request targets it, and switching reloads the canvas from the
-// project's files.
+// composables. The current project is resolved server-side (GET /session): the
+// persisted selection when it still exists, else the only project, else none.
+// The URL (?project=) still wins for shareable links, and every open persists
+// the choice back (POST /session/project), the same state `cueto use` writes,
+// so browsers and the CLI agree without any client-side storage.
 
 import { computed, ref } from "vue";
 import type { EvalErr, ProjectMeta, ProjectOk } from "../api";
-import { createProject as apiCreate, listProjects, setProject } from "../api";
+import { createProject as apiCreate, getSession, listProjects, setProject, setSessionProject } from "../api";
 import { loadProject } from "./useCueSync";
-
-const STORAGE_KEY = "cueto.currentProject";
 
 // The projects (sorted by id) and the id of the open one. currentProjectId is
 // exported at module level so other composables can read it without a circular
@@ -39,17 +38,18 @@ export const currentProject = computed(
   () => projects.value.find((p) => p.id === currentProjectId.value) ?? null,
 );
 
-// The desired project id from the URL query, else localStorage, else null.
+// The desired project id from the URL query (a shared or reloaded link).
 function preferredProjectId(): string | null {
-  const fromUrl = new URLSearchParams(window.location.search).get("project");
-  return fromUrl || localStorage.getItem(STORAGE_KEY);
+  return new URLSearchParams(window.location.search).get("project");
 }
 
-// Persist the current id to localStorage and reflect it in the URL (without a
-// navigation), so the address bar is shareable and a reload lands on it.
+// Persist the current id server-side and reflect it in the URL (without a
+// navigation), so the address bar is shareable and a reload lands on it. The
+// server write is best-effort: on failure the next bootstrap simply resolves
+// without it.
 function persistCurrent(): void {
   if (!currentProjectId.value) return;
-  localStorage.setItem(STORAGE_KEY, currentProjectId.value);
+  void setSessionProject(currentProjectId.value);
   const url = new URL(window.location.href);
   url.searchParams.set("project", currentProjectId.value);
   window.history.replaceState(null, "", url);
@@ -80,17 +80,19 @@ function leaveHome(): void {
   atHome.value = false;
 }
 
-// Bootstrap on app mount: load the list, then open the previously chosen project
-// (URL/localStorage) if it still exists. With no saved pick - or one that no longer
-// resolves - nothing is opened and the onboarding view takes over, listing the
-// projects to load or offering to create one. `ready` flips once the pick (if any)
-// has loaded, so the shell is never shown before its project is in.
+// Bootstrap on app mount: one GET /session returns the projects and the
+// server-resolved current project. A ?project= in the URL wins when it still
+// exists (shared links stay shareable). With nothing resolved - multiple
+// projects and no selection - nothing is opened and the onboarding view takes
+// over. `ready` flips once the pick (if any) has loaded, so the shell is never
+// shown before its project is in.
 async function init(): Promise<void> {
-  await refresh();
-  const preferred = preferredProjectId();
+  const session = await getSession();
+  projects.value = session.ok ? session.projects : [];
   const known = (id: string | null): id is string =>
     !!id && projects.value.some((p) => p.id === id);
-  const target = known(preferred) ? preferred : "";
+  const preferred = preferredProjectId();
+  const target = known(preferred) ? preferred : session.ok && known(session.currentProject) ? session.currentProject : "";
   if (target) await open(target);
   ready.value = true;
 }

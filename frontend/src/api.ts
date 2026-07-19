@@ -9,7 +9,10 @@
 
 import type { Diagram, DiagramEdge, DiagramNode, EditorFile, Provenance } from "./model";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8091";
+// Empty means same-origin: the packaged `cueto serve` binary serves the UI and
+// the API from one address. Dev keeps the Vite server and sets VITE_API_URL to
+// the Go backend (see .env.example).
+const BASE = import.meta.env.VITE_API_URL ?? "";
 
 // The current project id, woven into every project-scoped request path. Every
 // module-touching endpoint (eval, vet, repl, save, history, file, tree) is served
@@ -420,6 +423,22 @@ export function listProjects(): Promise<ProjectsOk | EvalErr> {
     const body = await readJson<{ projects?: ProjectMeta[] }>(response);
     return { projects: body.projects ?? [] };
   });
+}
+
+// getSession is the bootstrap request: the server resolves the current project
+// (the persisted selection when it still exists, else the only project, else "")
+// and returns the projects list with it, so the client needs no local storage.
+export function getSession(): Promise<({ ok: true; currentProject: string; projects: ProjectMeta[] }) | EvalErr> {
+  return get("/session", async (response) => {
+    const body = await readJson<{ currentProject?: string; projects?: ProjectMeta[] }>(response);
+    return { currentProject: body.currentProject ?? "", projects: body.projects ?? [] };
+  });
+}
+
+// setSessionProject persists the current project server-side, the same state
+// `cueto use` writes, so every browser and the CLI agree on the default.
+export function setSessionProject(id: string): Promise<{ ok: true } | EvalErr> {
+  return post("/session/project", { id }, async () => ({}));
 }
 
 // createProject git-initializes a new project directory under the root, scaffolds a
