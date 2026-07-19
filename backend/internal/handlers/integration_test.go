@@ -58,7 +58,7 @@ func testConfig(t *testing.T) config.Config {
 
 func realRouter(t *testing.T, cfg config.Config) *gin.Engine {
 	t.Helper()
-	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg)
+	return NewRouter(evaluation.New(cfg.CueDir, cfg.EvalTimeout, cfg.MaxOutputBytes), authoring.New(), cfg, nil)
 }
 
 // pp builds a path scoped to the default test project. ppid does the same for an
@@ -554,7 +554,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	be := &blockingEval{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	cfg := testConfig(t)
 	cfg.MaxConcurrent = 1
-	router := NewRouter(be, authoring.New(), cfg)
+	router := NewRouter(be, authoring.New(), cfg, nil)
 
 	// First request occupies the only slot and blocks inside the handler.
 	go func() {
