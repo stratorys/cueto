@@ -1,0 +1,13 @@
+[
+  {
+    "class": "ForbiddenField",
+    "message": "x.b: field not allowed",
+    "origins": [
+      {
+        "File": "",
+        "Line": 3
+      }
+    ],
+    "raw": "x.b: field not allowed"
+  }
+]

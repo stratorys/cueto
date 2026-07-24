@@ -1,0 +1,6 @@
+NonexistentReference: components.backend.owner: carol is not a known reference; expected one of alice, bob
+  testdata/membrane/broken-ref/components/components.cue:10
+  testdata/membrane/broken-ref/components/components.cue:15
+  testdata/membrane/broken-ref/components/components.cue:17
+  testdata/membrane/broken-ref/crew/crew.cue:18
+  alternatives: alice, bob

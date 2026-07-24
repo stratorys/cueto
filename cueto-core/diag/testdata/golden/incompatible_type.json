@@ -1,0 +1,17 @@
+[
+  {
+    "class": "IncompatibleType",
+    "message": "x: conflicting values string and 3 (mismatched types string and int)",
+    "origins": [
+      {
+        "File": "",
+        "Line": 1
+      },
+      {
+        "File": "",
+        "Line": 2
+      }
+    ],
+    "raw": "x: conflicting values string and 3 (mismatched types string and int)"
+  }
+]

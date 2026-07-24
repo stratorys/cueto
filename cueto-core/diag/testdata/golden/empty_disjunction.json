@@ -1,0 +1,17 @@
+[
+  {
+    "class": "EmptyDisjunction",
+    "message": "x: no disjunct matched",
+    "origins": [
+      {
+        "File": "",
+        "Line": 1
+      },
+      {
+        "File": "",
+        "Line": 2
+      }
+    ],
+    "raw": "x: 2 errors in empty disjunction:\nx: invalid value 5 (out of bound \u003e10)\nx: invalid value 5 (out of bound \u003c0)"
+  }
+]

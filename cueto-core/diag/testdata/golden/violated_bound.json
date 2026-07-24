@@ -1,0 +1,17 @@
+[
+  {
+    "class": "ViolatedBound",
+    "message": "x: invalid value 3 (out of bound \u003e5)",
+    "origins": [
+      {
+        "File": "",
+        "Line": 1
+      },
+      {
+        "File": "",
+        "Line": 2
+      }
+    ],
+    "raw": "x: invalid value 3 (out of bound \u003e5)"
+  }
+]

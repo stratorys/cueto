@@ -1,0 +1,13 @@
+[
+  {
+    "class": "Unclassified",
+    "message": "x: reference \"undefinedRef\" not found",
+    "origins": [
+      {
+        "File": "",
+        "Line": 1
+      }
+    ],
+    "raw": "x: reference \"undefinedRef\" not found"
+  }
+]

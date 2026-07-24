@@ -1,0 +1,29 @@
+[
+  {
+    "class": "NonexistentReference",
+    "message": "components.backend.owner: carol is not a known reference; expected one of alice, bob",
+    "origins": [
+      {
+        "File": "testdata/membrane/broken-ref/components/components.cue",
+        "Line": 10
+      },
+      {
+        "File": "testdata/membrane/broken-ref/components/components.cue",
+        "Line": 15
+      },
+      {
+        "File": "testdata/membrane/broken-ref/components/components.cue",
+        "Line": 17
+      },
+      {
+        "File": "testdata/membrane/broken-ref/crew/crew.cue",
+        "Line": 18
+      }
+    ],
+    "alternatives": [
+      "alice",
+      "bob"
+    ],
+    "raw": "components.backend.owner: 2 errors in empty disjunction:\ncomponents.backend.owner: conflicting values \"alice\" and \"carol\"\ncomponents.backend.owner: conflicting values \"bob\" and \"carol\""
+  }
+]
